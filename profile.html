@@ -1,0 +1,104 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clube do Jogo | Perfil</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="profile">
+    <nav class="navbar">
+        <a href="/" class="brand">
+            <img class="brand-logo" src="/uploads/site-logo-min.png" alt="Logo Clube do Jogo">
+        </a>
+        <div class="nav-links">
+            <a href="/">Inicio</a>
+            
+            <a href="/profile.html">Perfil</a>
+            <button id="logoutBtn" class="btn btn-outline" type="button">Sair</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <section class="card">
+            <h1 id="profileTitle">Perfil do Jogador</h1>
+            <div class="profile-head">
+                <img id="avatarPreview" class="avatar-large" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' rx='16' fill='%23101933'/%3E%3Ccircle cx='60' cy='46' r='22' fill='%2339d2ff'/%3E%3Crect x='25' y='77' width='70' height='28' rx='14' fill='%234f79ff'/%3E%3C/svg%3E" alt="Avatar do perfil">
+                <form id="avatarForm" class="avatar-form">
+                    <label>Imagem de perfil</label>
+                    <input name="avatar" type="file" accept="image/*" required>
+                    <button class="btn" type="submit">Enviar imagem</button>
+                </form>
+            </div>
+
+            <form id="profileForm">
+                <label>Nome de usuario (nao editavel)</label>
+                <input name="username" type="text" readonly>
+                <label id="emailFieldLabel">Email (nao editavel)</label>
+                <input name="email" type="email" readonly>
+                <label>Nickname</label>
+                <input name="nickname" type="text" maxlength="30" required>
+                <label>Telefone</label>
+                <input name="phone" type="text" maxlength="30">
+                <button class="btn" type="submit">Salvar perfil</button>
+            </form>
+            <p id="feedback" class="feedback"></p>
+        </section>
+
+        <section class="card">
+            <h2>Senha</h2>
+            <p>Para trocar a senha, enviaremos um link de confirmacao para o email da sua conta.</p>
+            <button id="sendResetFromProfile" class="btn" type="button">Enviar link de troca de senha</button>
+        </section>
+
+        <section id="profileActivitySection" class="card">
+            <h2>Atividade no Clube do Jogo</h2>
+            <div class="panel-grid">
+                <article class="card">
+                    <h3>Indicacoes Feitas</h3>
+                    <div id="profileGivenList" class="recommendation-grid"></div>
+                </article>
+                <article class="card">
+                    <h3>Indicacoes Recebidas</h3>
+                    <div id="profileReceivedList" class="recommendation-grid"></div>
+                </article>
+            </div>
+        </section>
+
+        <section id="profileCommentsSection" class="card">
+            <h2>Comentarios no Perfil</h2>
+            <div id="profileCommentsList" class="comment-list"></div>
+            <form id="profileCommentForm" class="comment-form">
+                <input type="text" name="commentText" maxlength="500" placeholder="Escreva um comentario neste perfil">
+                <button class="btn btn-outline" type="submit">Comentar</button>
+            </form>
+            <p id="profileCommentFeedback" class="feedback"></p>
+        </section>
+
+        <section id="adminPanel" class="card hidden">
+            <h2>Painel do Dono</h2>
+            <p>Gerencie contas e rodadas do Clube do Jogo.</p>
+
+            <div class="panel-grid">
+                <article class="card">
+                    <h3>Usuarios</h3>
+                    <div id="adminUsersList" class="recommendation-grid"></div>
+                </article>
+                <article class="card">
+                    <h3>Rodadas</h3>
+                    <div id="adminRoundsList" class="recommendation-grid"></div>
+                </article>
+            </div>
+            <p id="adminFeedback" class="feedback"></p>
+        </section>
+    </main>
+    <footer class="site-footer">
+        <div class="site-footer-inner">
+            <a href="https://wa.me/5535997569858" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
+

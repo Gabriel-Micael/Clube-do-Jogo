@@ -1,0 +1,35 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirmar Email | Clube do Jogo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="verify">
+    <main class="auth-shell">
+        <section class="auth-card">
+            <h1>Confirmar email</h1>
+            <p>Digite o codigo enviado para o email informado no cadastro.</p>
+            <form id="verifyForm">
+                <label>Email</label>
+                <input name="email" type="email" required>
+                <label>Codigo</label>
+                <input name="code" type="text" maxlength="6" required>
+                <button class="btn" type="submit">Confirmar cadastro</button>
+            </form>
+            <div class="auth-links">
+                <a href="/login.html">Voltar para login</a>
+            </div>
+            <p id="feedback" class="feedback"></p>
+        </section>
+    </main>
+    <footer class="site-footer">
+        <div class="site-footer-inner">
+            <a href="https://wa.me/5535997569858" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+        </div>
+    </footer>
+    <script src="script.js"></script>
+</body>
+</html>
+

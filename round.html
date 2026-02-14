@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -37,8 +37,14 @@
             <div id="participantSearchResults" class="search-results"></div>
             <h3>Participantes da rodada</h3>
             <div id="participantList" class="participant-list"></div>
+            <div id="pairExclusionsSection">
+                <h3>Restricoes de Sorteio</h3>
+                <p>Marque quem NAO pode receber indicacao de cada participante.</p>
+                <div id="pairExclusionsList" class="pair-exclusions-list"></div>
+
+            </div>
             <div class="inline-actions">
-                <button id="drawBtn" class="btn" type="button">Sortear IndicacÃµes</button>
+                <button id="drawBtn" class="btn" type="button">Sortear Indicacoes</button>
             </div>
         </section>
 
@@ -82,7 +88,7 @@
                         <label>Buscar na Steam (opcional)</label>
                         <div class="steam-search-shell">
                             <input id="steamTerm" type="text" placeholder="Ex.: Hollow Knight">
-                            <div id="steamResults" class="search-results steam-results-dropdown"></div>
+                            <div id="steamResults" class="search-results steam-results-dropdown hidden"></div>
                         </div>
                     </div>
 
@@ -109,6 +115,12 @@
                 <h3>Sessao de Notas Navais</h3>
                 <p id="ratingStatusText"></p>
 
+                <div id="ratingScheduleEditor" class="rating-schedule-editor hidden">
+                    <label for="ratingStartsAtEditInput">Data/hora da sessao de notas</label>
+                    <input id="ratingStartsAtEditInput" type="datetime-local">
+                    <button id="updateRatingStartsAtBtn" class="btn btn-outline" type="button">Atualizar Data das Notas</button>
+                </div>
+
                 <form id="ratingForm" class="hidden">
                     <label>Jogo recebido para avaliar</label>
                     <select id="ratingRecommendationSelect" name="recommendationId"></select>
@@ -132,14 +144,22 @@
 
                 <div class="naval-chart-wrap">
                     <div id="navalChart" class="naval-chart"></div>
-                    <div class="naval-axis-x">Interessancia (1-10)</div>
-                    <div class="naval-axis-y">Qualidade(A bom -> J ruim)</div>
+                    <div class="naval-scale-x" aria-hidden="true">
+                        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
+                    </div>
+                    <div class="naval-scale-y" aria-hidden="true">
+                        <span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span><span>G</span><span>H</span><span>I</span><span>J</span>
+                    </div>
+                    <div class="naval-axis-x">Interessância</div>
+                    <div class="naval-axis-y">Jogabilidade</div>
                 </div>
             </section>
         </section>
     </main>
     <footer class="site-footer">
         <div class="site-footer-inner">
+            <a href="https://github.com/Gabriel-Micael" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href="https://www.instagram.com/gabriel.micael/" target="_blank" rel="noopener noreferrer">Instagram</a>
             <a href="https://wa.me/5535997569858" target="_blank" rel="noopener noreferrer">WhatsApp</a>
         </div>
     </footer>
@@ -147,4 +167,7 @@
     <script src="script.js"></script>
 </body>
 </html>
+
+
+
 

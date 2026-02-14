@@ -128,7 +128,7 @@ function buildCommentDisplayRows(comments) {
         output.push({
             comment: node,
             depth,
-            parentAuthor: parent ? (parent.username || displayName(parent)) : ""
+            parentAuthor: parent ? displayName(parent) : ""
         });
         node._children.sort(sorter).forEach((child) => walk(child, depth + 1, node));
     };
@@ -431,6 +431,48 @@ function setFeedback(target, message, type = "error") {
     el.className = `feedback${type ? ` ${type}` : ""}`;
 }
 
+function setButtonLoading(button, isLoading, loadingText = "Carregando...") {
+    if (!button) return;
+    if (isLoading) {
+        if (!button.dataset.originalText) {
+            button.dataset.originalText = button.textContent || "";
+        }
+        button.classList.add("is-loading");
+        button.setAttribute("aria-busy", "true");
+        button.setAttribute("disabled", "disabled");
+        if (loadingText) button.textContent = loadingText;
+        return;
+    }
+
+    button.classList.remove("is-loading");
+    button.removeAttribute("aria-busy");
+    button.removeAttribute("disabled");
+    if (button.dataset.originalText) {
+        button.textContent = button.dataset.originalText;
+    }
+}
+
+async function withButtonLoading(button, loadingText, handler) {
+    if (!button) return handler();
+    setButtonLoading(button, true, loadingText);
+    try {
+        return await handler();
+    } finally {
+        setButtonLoading(button, false);
+    }
+}
+
+function setupGoogleButtonsLoading() {
+    const selectors = ["#googleLoginBtn", "#googleRegisterBtn"];
+    selectors.forEach((selector) => {
+        const link = document.querySelector(selector);
+        if (!link) return;
+        link.addEventListener("click", () => {
+            setButtonLoading(link, true, "Conectando...");
+        });
+    });
+}
+
 async function sendJson(url, method = "GET", payload) {
     const response = await fetch(url, {
         method,
@@ -529,8 +571,11 @@ async function handleLogin() {
         event.preventDefault();
         setFeedback("feedback", "", "");
         const payload = Object.fromEntries(new FormData(form).entries());
+        const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await sendJson("/api/auth/login", "POST", payload);
+            await withButtonLoading(submitBtn, "Entrando...", async () => {
+                await sendJson("/api/auth/login", "POST", payload);
+            });
             window.location.href = "/";
         } catch (error) {
             setFeedback("feedback", error.message, "error");
@@ -544,8 +589,11 @@ async function handleRegister() {
         event.preventDefault();
         setFeedback("feedback", "", "");
         const payload = Object.fromEntries(new FormData(form).entries());
+        const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await sendJson("/api/auth/register", "POST", payload);
+            await withButtonLoading(submitBtn, "Enviando codigo...", async () => {
+                await sendJson("/api/auth/register", "POST", payload);
+            });
             setFeedback("feedback", "Codigo enviado. Confira seu email e confirme seu cadastro.", "ok");
             setTimeout(() => {
                 window.location.href = `/verify-email.html?email=${encodeURIComponent(payload.email)}`;
@@ -566,8 +614,11 @@ async function handleVerifyEmail() {
         event.preventDefault();
         setFeedback("feedback", "", "");
         const payload = Object.fromEntries(new FormData(form).entries());
+        const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await sendJson("/api/auth/verify-email", "POST", payload);
+            await withButtonLoading(submitBtn, "Confirmando...", async () => {
+                await sendJson("/api/auth/verify-email", "POST", payload);
+            });
             setFeedback("feedback", "Email confirmado. Agora faca login.", "ok");
             setTimeout(() => {
                 window.location.href = "/login.html";
@@ -583,8 +634,11 @@ async function handleForgotPassword() {
         event.preventDefault();
         setFeedback("feedback", "", "");
         const payload = Object.fromEntries(new FormData(form).entries());
+        const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            const result = await sendJson("/api/auth/request-password-reset", "POST", payload);
+            const result = await withButtonLoading(submitBtn, "Enviando link...", async () =>
+                sendJson("/api/auth/request-password-reset", "POST", payload)
+            );
             setFeedback("feedback", result.message, "ok");
         } catch (error) {
             setFeedback("feedback", error.message, "error");
@@ -605,8 +659,11 @@ async function handleResetPassword() {
         setFeedback("feedback", "", "");
         const payload = Object.fromEntries(new FormData(form).entries());
         payload.token = token;
+        const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await sendJson("/api/auth/reset-password", "POST", payload);
+            await withButtonLoading(submitBtn, "Salvando...", async () => {
+                await sendJson("/api/auth/reset-password", "POST", payload);
+            });
             setFeedback("feedback", "Senha alterada com sucesso.", "ok");
             setTimeout(() => {
                 window.location.href = "/login.html";
@@ -776,22 +833,21 @@ async function loadProfile() {
             if (!(el instanceof HTMLElement)) return;
             if (canEdit) {
                 el.removeAttribute("disabled");
-            } else if (el.getAttribute("name") !== "username" && el.getAttribute("name") !== "nickname" && el.getAttribute("name") !== "phone" && el.getAttribute("name") !== "email") {
+            } else if (el.getAttribute("name") !== "username" && el.getAttribute("name") !== "nickname" && el.getAttribute("name") !== "email") {
                 el.setAttribute("disabled", "disabled");
             }
         });
         if (!canEdit) {
             form?.classList.add("profile-readonly");
-            form?.querySelector("button[type='submit']")?.setAttribute("disabled", "disabled");
+            form?.querySelector("button[type='submit']")?.classList.add("hidden");
             form?.elements?.nickname?.setAttribute("readonly", "readonly");
-            form?.elements?.phone?.setAttribute("readonly", "readonly");
             byId("avatarForm")?.classList.add("hidden");
             byId("sendResetFromProfile")?.closest(".card")?.classList.add("hidden");
             adminPanel?.classList.add("hidden");
         } else {
             form?.classList.remove("profile-readonly");
+            form?.querySelector("button[type='submit']")?.classList.remove("hidden");
             form?.elements?.nickname?.removeAttribute("readonly");
-            form?.elements?.phone?.removeAttribute("readonly");
             byId("avatarForm")?.classList.remove("hidden");
             byId("sendResetFromProfile")?.closest(".card")?.classList.remove("hidden");
         }
@@ -862,11 +918,13 @@ async function loadProfile() {
         if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
         setFeedback("feedback", "", "");
         const payload = {
-            nickname: form.elements.nickname.value,
-            phone: form.elements.phone.value
+            nickname: form.elements.nickname.value
         };
+        const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await sendJson("/api/user/profile", "PUT", payload);
+            await withButtonLoading(submitBtn, "Salvando...", async () => {
+                await sendJson("/api/user/profile", "PUT", payload);
+            });
             setFeedback("feedback", "Perfil atualizado com sucesso.", "ok");
             await refreshProfile();
         } catch (error) {
@@ -893,8 +951,11 @@ async function loadProfile() {
     const sendResetBtn = byId("sendResetFromProfile");
     sendResetBtn?.addEventListener("click", async () => {
         if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
+        setFeedback("feedback", "", "");
         try {
-            const result = await sendJson("/api/user/password-reset-link", "POST");
+            const result = await withButtonLoading(sendResetBtn, "Enviando link...", async () =>
+                sendJson("/api/user/password-reset-link", "POST")
+            );
             setFeedback("feedback", result.message, "ok");
         } catch (error) {
             setFeedback("feedback", error.message, "error");
@@ -1023,21 +1084,32 @@ function renderNavalChartForHome(round) {
             const y = Number(yRaw);
             const left = ((x - 1) / 9) * 100;
             const topPos = ((10 - y) / 9) * 100;
+            const pointGrade = navalGradeLabel(top);
             const stack = list
                 .map(
-                    (rec) => `
-                        <div class="naval-stack-item">
-                            <img src="${escapeHtml(rec.game_cover_url || baseAvatar)}" alt="${escapeHtml(rec.game_name)}">
-                            <div>${escapeHtml(rec.game_name)}</div>
-                        </div>
-                    `
+                    (rec) => {
+                        const grade = navalGradeLabel(rec);
+                        return `
+                            <div class="naval-stack-item">
+                                <div class="naval-stack-thumb">
+                                    <img src="${escapeHtml(rec.game_cover_url || baseAvatar)}" alt="${escapeHtml(rec.game_name)}">
+                                    <span class="naval-grade-badge naval-grade-badge-stack">${escapeHtml(grade)}</span>
+                                </div>
+                                <div>${escapeHtml(rec.game_name)}</div>
+                            </div>
+                        `;
+                    }
                 )
                 .join("");
             return `
                 <div class="naval-point" style="left:${left}%;top:${topPos}%;">
                     <img src="${escapeHtml(top.game_cover_url || baseAvatar)}" alt="${escapeHtml(top.game_name)}">
+                    <span class="naval-grade-badge">${escapeHtml(pointGrade)}</span>
                     ${list.length > 1 ? `<span class="naval-count">${list.length}</span>` : ""}
-                    <div class="naval-stack">${stack}</div>
+                    <div class="naval-stack">
+                        <div class="naval-stack-grade">${escapeHtml(pointGrade)}</div>
+                        <div class="naval-stack-items">${stack}</div>
+                    </div>
                 </div>
             `;
         })
@@ -1301,6 +1373,203 @@ function renderParticipantList(round) {
         .join("");
 }
 
+function pairExclusionKey(giverUserId, receiverUserId) {
+    return `${Number(giverUserId)}:${Number(receiverUserId)}`;
+}
+
+function clearPairExclusionInlineErrors() {
+    const list = byId("pairExclusionsList");
+    if (!list) return;
+    list.querySelectorAll("[data-pair-error-for]").forEach((el) => {
+        el.textContent = "";
+        el.classList.remove("active");
+    });
+}
+
+function showPairExclusionInlineError(giverUserId, message) {
+    const list = byId("pairExclusionsList");
+    if (!list) return;
+    const target = list.querySelector(`[data-pair-error-for="${Number(giverUserId)}"]`);
+    if (!target) return;
+    target.textContent = String(message || "");
+    target.classList.add("active");
+}
+
+function validatePairExclusionsConfig(participants, pairs, options = {}) {
+    const participantList = Array.isArray(participants) ? participants : [];
+    const participantIds = participantList
+        .map((item) => Number(item.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+    if (participantIds.length < 2) {
+        return { ok: true, message: "", invalidGiverId: 0 };
+    }
+
+    const namesById = new Map(participantList.map((item) => [Number(item.id), displayName(item)]));
+    const blocked = new Set();
+    (Array.isArray(pairs) ? pairs : []).forEach((item) => {
+        const giverUserId = Number(item?.giverUserId ?? item?.giver_user_id ?? 0);
+        const receiverUserId = Number(item?.receiverUserId ?? item?.receiver_user_id ?? 0);
+        if (!Number.isInteger(giverUserId) || !Number.isInteger(receiverUserId)) return;
+        if (giverUserId <= 0 || receiverUserId <= 0 || giverUserId === receiverUserId) return;
+        blocked.add(pairExclusionKey(giverUserId, receiverUserId));
+    });
+
+    const allowedMap = new Map();
+    for (const giverId of participantIds) {
+        const allowed = participantIds.filter(
+            (receiverId) => receiverId !== giverId && !blocked.has(pairExclusionKey(giverId, receiverId))
+        );
+        if (!allowed.length) {
+            const giverName = namesById.get(giverId) || "Participante";
+            return {
+                ok: false,
+                message: `${giverName} precisa ter pelo menos 1 pessoa disponivel para sortear.`,
+                invalidGiverId: giverId
+            };
+        }
+        allowedMap.set(giverId, allowed);
+    }
+
+    const givers = [...participantIds].sort(
+        (a, b) => (allowedMap.get(a) || []).length - (allowedMap.get(b) || []).length
+    );
+    const usedReceivers = new Set();
+    const backtrack = (index) => {
+        if (index >= givers.length) return true;
+        const giverId = givers[index];
+        const optionsList = (allowedMap.get(giverId) || []).filter((id) => !usedReceivers.has(id));
+        for (const receiverId of optionsList) {
+            usedReceivers.add(receiverId);
+            if (backtrack(index + 1)) return true;
+            usedReceivers.delete(receiverId);
+        }
+        return false;
+    };
+
+    if (!backtrack(0)) {
+        const fallbackGiverId = Number(options.changedGiverUserId || 0);
+        return {
+            ok: false,
+            message: "Restricoes inconsistentes: ajuste os bloqueios para permitir um sorteio valido para todos.",
+            invalidGiverId: Number.isInteger(fallbackGiverId) && fallbackGiverId > 0 ? fallbackGiverId : 0
+        };
+    }
+
+    return { ok: true, message: "", invalidGiverId: 0 };
+}
+
+function renderPairExclusionsEditor(round) {
+    const section = byId("pairExclusionsSection");
+    const list = byId("pairExclusionsList");
+    if (!section || !list) return;
+
+    if (!round?.isCreator || round.phase !== "draft") {
+        section.classList.add("hidden");
+        list.innerHTML = "";
+        return;
+    }
+
+    section.classList.remove("hidden");
+
+    const participants = round.participants || [];
+    if (participants.length < 2) {
+        list.innerHTML = "<p>Adicione ao menos 2 participantes para configurar restricoes.</p>";
+        return;
+    }
+
+    const exclusions = new Set(
+        (round.pair_exclusions || []).map((item) => pairExclusionKey(item.giver_user_id, item.receiver_user_id))
+    );
+
+    list.innerHTML = participants
+        .map((giver) => {
+            const receivers = participants.filter((receiver) => receiver.id !== giver.id);
+            const options = receivers
+                .map((receiver) => {
+                    const key = pairExclusionKey(giver.id, receiver.id);
+                    const checked = exclusions.has(key) ? "checked" : "";
+                    return `
+                        <label class="pair-exclusion-item">
+                            <input type="checkbox" data-pair-giver="${giver.id}" data-pair-receiver="${receiver.id}" ${checked}>
+                            <span>${escapeHtml(displayName(receiver))}</span>
+                        </label>
+                    `;
+                })
+                .join("");
+
+            return `
+                <div class="pair-exclusion-row" data-pair-giver-row="${giver.id}">
+                    <div class="pair-exclusion-row-feedback" data-pair-error-for="${giver.id}"></div>
+                    <div class="pair-exclusion-giver">${escapeHtml(displayName(giver))}</div>
+                    <div class="pair-exclusion-options">${options}</div>
+                </div>
+            `;
+        })
+        .join("");
+}
+
+function collectPairExclusionsFromScreen() {
+    const list = byId("pairExclusionsList");
+    if (!list) return [];
+    return [...list.querySelectorAll("input[type='checkbox'][data-pair-giver][data-pair-receiver]:checked")]
+        .map((input) => ({
+            giverUserId: Number(input.getAttribute("data-pair-giver") || 0),
+            receiverUserId: Number(input.getAttribute("data-pair-receiver") || 0)
+        }))
+        .filter((item) => Number.isInteger(item.giverUserId) && item.giverUserId > 0 && Number.isInteger(item.receiverUserId) && item.receiverUserId > 0 && item.giverUserId !== item.receiverUserId);
+}
+
+function validatePairExclusionsFromScreen(options = {}) {
+    const participants = currentRound?.participants || [];
+    const pairs = collectPairExclusionsFromScreen();
+    const showFeedback = options.showFeedback !== false;
+    const validation = validatePairExclusionsConfig(participants, pairs, {
+        changedGiverUserId: Number(options.changedGiverUserId || 0)
+    });
+
+    if (!showFeedback) return validation;
+
+    clearPairExclusionInlineErrors();
+    if (!validation.ok) {
+        if (validation.invalidGiverId > 0) {
+            showPairExclusionInlineError(validation.invalidGiverId, validation.message);
+            setFeedback("roundFeedback", "", "");
+        } else {
+            setFeedback("roundFeedback", validation.message, "error");
+        }
+        return validation;
+    }
+
+    setFeedback("roundFeedback", "", "");
+    return validation;
+}
+
+async function persistPairExclusionsForCurrentRound() {
+    if (!currentRound || !currentRound.isCreator || currentRound.phase !== "draft") return;
+    const pairs = collectPairExclusionsFromScreen();
+    const validation = validatePairExclusionsConfig(currentRound.participants || [], pairs);
+    if (!validation.ok) {
+        throw new Error(validation.message);
+    }
+    const result = await sendJson(`/api/rounds/${currentRound.id}/pair-exclusions`, "PUT", { pairs });
+    currentRound = result.round;
+    renderRoundState(currentRound);
+}
+
+async function autosavePairExclusionsForCurrentRound() {
+    if (!currentRound || !currentRound.isCreator || currentRound.phase !== "draft") return;
+    const token = ++pairExclusionAutosaveToken;
+    setFeedback("roundFeedback", "Salvando restricoes...", "");
+    try {
+        await persistPairExclusionsForCurrentRound();
+        if (token !== pairExclusionAutosaveToken) return;
+        setFeedback("roundFeedback", "Restricoes atualizadas.", "ok");
+    } catch (error) {
+        if (token !== pairExclusionAutosaveToken) return;
+        setFeedback("roundFeedback", error.message, "error");
+    }
+}
+
 function renderRoundRecommendations(round) {
     const container = byId("roundRecommendations");
     if (!container) return;
@@ -1399,6 +1668,21 @@ function letterToY(letter) {
     return idx >= 0 ? 10 - idx : 1;
 }
 
+function navalGradeLabel(rec) {
+    const letter = String(rec?.rating_letter || "").toUpperCase();
+    const score = Math.max(1, Math.min(10, Number(rec?.interest_score || 0)));
+    if (!letter || !"ABCDEFGHIJ".includes(letter) || !Number.isFinite(score)) return "";
+    return `${letter}${score}`;
+}
+
+function toDateTimeLocalValue(timestampSeconds) {
+    const ts = Number(timestampSeconds || 0);
+    if (!Number.isInteger(ts) || ts <= 0) return "";
+    const d = new Date(ts * 1000);
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+}
+
 function renderNavalChart(round) {
     const chart = byId("navalChart");
     if (!chart) return;
@@ -1427,22 +1711,33 @@ function renderNavalChart(round) {
             const y = Number(yRaw);
             const left = ((x - 1) / 9) * 100;
             const topPos = ((10 - y) / 9) * 100;
+            const pointGrade = navalGradeLabel(top);
             const stack = list
                 .map(
-                    (rec) => `
-                        <div class="naval-stack-item">
-                            <img src="${escapeHtml(rec.game_cover_url || baseAvatar)}" alt="${escapeHtml(rec.game_name)}">
-                            <div>${escapeHtml(rec.game_name)}</div>
-                        </div>
-                    `
+                    (rec) => {
+                        const grade = navalGradeLabel(rec);
+                        return `
+                            <div class="naval-stack-item">
+                                <div class="naval-stack-thumb">
+                                    <img src="${escapeHtml(rec.game_cover_url || baseAvatar)}" alt="${escapeHtml(rec.game_name)}">
+                                    <span class="naval-grade-badge naval-grade-badge-stack">${escapeHtml(grade)}</span>
+                                </div>
+                                <div>${escapeHtml(rec.game_name)}</div>
+                            </div>
+                        `;
+                    }
                 )
                 .join("");
 
             return `
                 <div class="naval-point" style="left:${left}%;top:${topPos}%;">
                     <img src="${escapeHtml(top.game_cover_url || baseAvatar)}" alt="${escapeHtml(top.game_name)}">
+                    <span class="naval-grade-badge">${escapeHtml(pointGrade)}</span>
                     ${list.length > 1 ? `<span class="naval-count">${list.length}</span>` : ""}
-                    ${stack ? `<div class="naval-stack">${stack}</div>` : ""}
+                    <div class="naval-stack">
+                        <div class="naval-stack-grade">${escapeHtml(pointGrade)}</div>
+                        <div class="naval-stack-items">${stack}</div>
+                    </div>
                 </div>
             `;
         })
@@ -1500,6 +1795,7 @@ function renderRoundState(round) {
         if (round.isCreator) {
             byId("draftCreatorSection")?.classList.remove("hidden");
             renderParticipantList(round);
+            renderPairExclusionsEditor(round);
         } else {
             byId("draftSpectatorSection")?.classList.remove("hidden");
             const creatorName = displayName({
@@ -1519,9 +1815,13 @@ function renderRoundState(round) {
         if (round.isCreator) {
             tools?.classList.remove("hidden");
             const input = byId("ratingStartsAtInput");
-            if (input && !input.value) {
-                const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
-                input.value = future.toISOString().slice(0, 16);
+            if (input && document.activeElement !== input) {
+                const fromRound = toDateTimeLocalValue(round.rating_starts_at);
+                if (fromRound) input.value = fromRound;
+                else if (!input.value) {
+                    const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
+                    input.value = future.toISOString().slice(0, 16);
+                }
             }
         } else tools?.classList.add("hidden");
         return;
@@ -1574,27 +1874,30 @@ function renderRoundState(round) {
             if (canIndicate) byId("recommendationForm")?.classList.remove("hidden");
             else byId("recommendationForm")?.classList.add("hidden");
 
-            if (canIndicate && round.myRecommendation) {
-                const form = byId("recommendationForm");
-                form.elements.gameName.value = round.myRecommendation.game_name || "";
-                form.elements.gameDescription.value = round.myRecommendation.game_description || "";
-                form.elements.reason.value = round.myRecommendation.reason || "";
-                byId("coverUrlInput").value = round.myRecommendation.game_cover_url || "";
-                const preview = byId("coverPreview");
-                if (round.myRecommendation.game_cover_url && preview) {
-                    preview.src = round.myRecommendation.game_cover_url;
-                    preview.classList.remove("hidden");
-                }
-                const submitBtn = form.querySelector("button[type='submit']");
-                if (submitBtn) submitBtn.textContent = "Atualizar Indicacao";
-            } else if (canIndicate) {
+            if (canIndicate) {
                 const form = byId("recommendationForm");
                 const submitBtn = form?.querySelector("button[type='submit']");
-                if (submitBtn) submitBtn.textContent = "Salvar Indicacao";
+                if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar Indicacao" : "Salvar Indicacao";
             }
         } else {
             byId("assignmentText").textContent = "Voce esta espectando esta rodada.";
             byId("recommendationForm")?.classList.add("hidden");
+        }
+
+        const ratingScheduleEditor = byId("ratingScheduleEditor");
+        const ratingStartsAtEditInput = byId("ratingStartsAtEditInput");
+        if (round.isCreator && round.phase !== "closed") {
+            ratingScheduleEditor?.classList.remove("hidden");
+            if (ratingStartsAtEditInput && document.activeElement !== ratingStartsAtEditInput) {
+                const localValue = toDateTimeLocalValue(round.rating_starts_at);
+                if (localValue) ratingStartsAtEditInput.value = localValue;
+                else if (!ratingStartsAtEditInput.value) {
+                    const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
+                    ratingStartsAtEditInput.value = future.toISOString().slice(0, 16);
+                }
+            }
+        } else {
+            ratingScheduleEditor?.classList.add("hidden");
         }
 
         renderNavalChart(round);
@@ -1711,32 +2014,42 @@ async function refreshRoundData(forceRoundId) {
     }
 }
 let steamSuggestTimer = null;
+let steamSelectionToken = 0;
 
 function renderSteamResults(items) {
     const resultsBox = byId("steamResults");
     if (!resultsBox) return;
     if (!items.length) {
         resultsBox.innerHTML = "";
+        resultsBox.classList.add("hidden");
         return;
     }
+    resultsBox.classList.remove("hidden");
     resultsBox.innerHTML = items
         .map(
-            (item) => `
+            (item) => {
+                const fallbackPortrait = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appId}/library_600x900_2x.jpg`;
+                const fallbackHeader = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appId}/header.jpg`;
+                const cover = item.libraryImage || item.largeCapsule || fallbackPortrait || fallbackHeader || baseAvatar;
+                const fallbackCover = item.largeCapsule || fallbackHeader || baseAvatar;
+                return `
                 <div class="search-item steam-pick-item" data-steam-pick='${JSON.stringify({
                     appId: item.appId,
                     name: item.name,
-                    cover: item.libraryImage || item.largeCapsule || item.tinyImage,
+                    cover,
+                    fallbackCover,
                     description: item.description || ""
                 }).replaceAll("'", "&#39;")}'>
                     <div class="search-item-main">
-                        <img class="steam-result-cover" src="${escapeHtml(item.libraryImage || item.largeCapsule || item.tinyImage || baseAvatar)}" alt="capa">
+                        <img class="steam-result-cover" src="${escapeHtml(cover)}" data-fallback-src="${escapeHtml(fallbackCover)}" alt="capa">
                         <div>
                             <strong>${escapeHtml(item.name)}</strong>
                             <div>AppID: ${escapeHtml(item.appId)}</div>
                         </div>
                     </div>
                 </div>
-            `
+            `;
+            }
         )
         .join("");
 }
@@ -1744,7 +2057,11 @@ function renderSteamResults(items) {
 async function requestSteamSuggestions(term) {
     const trimmed = (term || "").trim();
     if (trimmed.length < 2) {
-        byId("steamResults").innerHTML = "";
+        const box = byId("steamResults");
+        if (box) {
+            box.innerHTML = "";
+            box.classList.add("hidden");
+        }
         return;
     }
     const data = await sendJson(`/api/steam/search?term=${encodeURIComponent(trimmed)}`);
@@ -1801,13 +2118,44 @@ async function handleRoundPage() {
         }
     });
 
-    byId("drawBtn")?.addEventListener("click", async () => {
+    byId("pairExclusionsList")?.addEventListener("change", async (event) => {
+        const input = event.target?.closest?.("input[type='checkbox'][data-pair-giver][data-pair-receiver]");
+        if (!input) return;
+
+        const changedGiverUserId = Number(input.getAttribute("data-pair-giver") || 0);
+        const validation = validatePairExclusionsFromScreen({
+            showFeedback: false,
+            changedGiverUserId
+        });
+        if (!validation.ok) {
+            input.checked = !input.checked;
+            clearPairExclusionInlineErrors();
+            if (validation.invalidGiverId > 0) {
+                showPairExclusionInlineError(validation.invalidGiverId, validation.message);
+                setFeedback("roundFeedback", "", "");
+            } else {
+                setFeedback("roundFeedback", validation.message, "error");
+            }
+            return;
+        }
+
+        clearPairExclusionInlineErrors();
+        setFeedback("roundFeedback", "", "");
+        await autosavePairExclusionsForCurrentRound();
+    });
+
+    byId("drawBtn")?.addEventListener("click", async (event) => {
         if (!currentRound) return;
+        const btn = event.currentTarget;
+        setFeedback("roundFeedback", "", "");
         try {
-            const result = await sendJson(`/api/rounds/${currentRound.id}/draw`, "POST", {});
-            currentRound = result.round;
-            renderRoundState(currentRound);
-            setFeedback("roundFeedback", result.message, "ok");
+            await withButtonLoading(btn, "Sorteando...", async () => {
+                await persistPairExclusionsForCurrentRound();
+                const result = await sendJson(`/api/rounds/${currentRound.id}/draw`, "POST", {});
+                currentRound = result.round;
+                renderRoundState(currentRound);
+                setFeedback("roundFeedback", result.message, "ok");
+            });
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
         }
@@ -1827,35 +2175,61 @@ async function handleRoundPage() {
         }
     });
 
-    byId("startIndicationBtn")?.addEventListener("click", async () => {
+    byId("startIndicationBtn")?.addEventListener("click", async (event) => {
         if (!currentRound) return;
+        const btn = event.currentTarget;
         try {
             const raw = byId("ratingStartsAtInput")?.value || "";
             const ts = Math.floor(new Date(raw).getTime() / 1000);
-            const result = await sendJson(`/api/rounds/${currentRound.id}/start-indication`, "POST", {
-                ratingStartsAt: ts
+            await withButtonLoading(btn, "Abrindo sessao...", async () => {
+                const result = await sendJson(`/api/rounds/${currentRound.id}/start-indication`, "POST", {
+                    ratingStartsAt: ts
+                });
+                currentRound = result.round;
+                renderRoundState(currentRound);
+                setFeedback("roundFeedback", result.message, "ok");
             });
-            currentRound = result.round;
-            renderRoundState(currentRound);
-            setFeedback("roundFeedback", result.message, "ok");
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
         }
     });
 
-    const closeCurrentRound = async () => {
+    byId("updateRatingStartsAtBtn")?.addEventListener("click", async (event) => {
+        if (!currentRound || !currentRound.isCreator || currentRound.phase === "closed") return;
+        const btn = event.currentTarget;
+        try {
+            const raw = byId("ratingStartsAtEditInput")?.value || "";
+            const ts = Math.floor(new Date(raw).getTime() / 1000);
+            if (!Number.isInteger(ts) || ts <= 0) {
+                throw new Error("Defina uma data valida para as notas navais.");
+            }
+            await withButtonLoading(btn, "Atualizando...", async () => {
+                const result = await sendJson(`/api/rounds/${currentRound.id}`, "PUT", {
+                    ratingStartsAt: ts
+                });
+                currentRound = result.round;
+                renderRoundState(currentRound);
+                setFeedback("roundFeedback", "Data da sessao de notas atualizada.", "ok");
+            });
+        } catch (error) {
+            setFeedback("roundFeedback", error.message, "error");
+        }
+    });
+    const closeCurrentRound = async (button) => {
         if (!currentRound) return;
         try {
-            const result = await sendJson(`/api/rounds/${currentRound.id}/close`, "POST", {});
-            setFeedback("roundFeedback", result.message, "ok");
-            await refreshRoundData(currentRound.id);
+            await withButtonLoading(button, "Finalizando...", async () => {
+                const result = await sendJson(`/api/rounds/${currentRound.id}/close`, "POST", {});
+                setFeedback("roundFeedback", result.message, "ok");
+                await refreshRoundData(currentRound.id);
+            });
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
         }
     };
 
-    byId("closeRoundBtn")?.addEventListener("click", closeCurrentRound);
-    byId("finalizeRoundBtn")?.addEventListener("click", closeCurrentRound);
+    byId("closeRoundBtn")?.addEventListener("click", (event) => closeCurrentRound(event.currentTarget));
+    byId("finalizeRoundBtn")?.addEventListener("click", (event) => closeCurrentRound(event.currentTarget));
 
     byId("coverInput")?.addEventListener("change", (event) => {
         const file = event.target.files?.[0] || null;
@@ -1874,37 +2248,116 @@ async function handleRoundPage() {
         }, 240);
     });
 
+    byId("steamResults")?.addEventListener(
+        "error",
+        (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLImageElement) || !target.classList.contains("steam-result-cover")) return;
+
+            const fallbackSrc = target.getAttribute("data-fallback-src") || "";
+            if (fallbackSrc && target.dataset.fallbackStep !== "header") {
+                target.dataset.fallbackStep = "header";
+                target.src = fallbackSrc;
+                return;
+            }
+
+            if (target.dataset.fallbackStep === "avatar") return;
+            target.dataset.fallbackStep = "avatar";
+            target.src = baseAvatar;
+        },
+        true
+    );
+
     byId("steamResults")?.addEventListener("click", async (event) => {
         const itemEl = event.target.closest("[data-steam-pick]");
         if (!itemEl) return;
-        const raw = itemEl.dataset.steamPick || "{}";
-        const picked = JSON.parse(raw.replaceAll("&#39;", "'"));
+
+        let picked = {};
+        try {
+            const raw = itemEl.dataset.steamPick || "{}";
+            picked = JSON.parse(raw.replaceAll("&#39;", "'"));
+        } catch {
+            return;
+        }
 
         const form = byId("recommendationForm");
+        if (!form) return;
+
+        const coverInput = byId("coverInput");
+        if (coverInput) coverInput.value = "";
+
+        const appIdText = String(picked.appId || "");
         form.elements.gameName.value = picked.name || "";
-        form.elements.steamAppId.value = picked.appId || "";
-        byId("coverUrlInput").value = picked.cover || "";
         form.elements.gameDescription.value = picked.description || "";
+        form.elements.steamAppId.value = appIdText;
+
+        const selectedCover = picked.cover && picked.cover !== baseAvatar
+            ? picked.cover
+            : (picked.fallbackCover || "");
+        const fallbackFromPick = picked.fallbackCover || "";
+        byId("coverUrlInput").value = selectedCover;
+
         const preview = byId("coverPreview");
-        if (picked.cover && preview) {
-            preview.src = picked.cover;
+        if (selectedCover && preview) {
+            preview.src = selectedCover;
             preview.classList.remove("hidden");
+            preview.onerror = () => {
+                preview.onerror = null;
+                if (fallbackFromPick) {
+                    preview.src = fallbackFromPick;
+                    byId("coverUrlInput").value = fallbackFromPick;
+                    return;
+                }
+                preview.src = baseAvatar;
+            };
         }
-        byId("steamResults").innerHTML = "";
+
+        const resultsBox = byId("steamResults");
+        resultsBox.innerHTML = "";
+        resultsBox.classList.add("hidden");
         byId("steamTerm").value = picked.name || "";
-        if (!form.elements.gameDescription.value.trim() && picked.appId) {
-            try {
-                const details = await sendJson(`/api/steam/app/${encodeURIComponent(picked.appId)}`);
+
+        if (!appIdText) return;
+
+        const selectionToken = ++steamSelectionToken;
+        const descriptionSnapshot = form.elements.gameDescription.value;
+        const coverSnapshot = byId("coverUrlInput").value;
+        const needsDescription = !descriptionSnapshot.trim();
+        const needsCover = !coverSnapshot.trim();
+        if (!needsDescription && !needsCover) return;
+
+        try {
+            const details = await sendJson(`/api/steam/app/${encodeURIComponent(appIdText)}`);
+            if (selectionToken !== steamSelectionToken) return;
+            if (String(form.elements.steamAppId.value || "") !== appIdText) return;
+
+            if (needsDescription && form.elements.gameDescription.value === descriptionSnapshot) {
                 form.elements.gameDescription.value = details.item?.description || "";
-            } catch {
-                // descricao opcional em fallback
             }
+            if (needsCover && byId("coverUrlInput").value === coverSnapshot) {
+                const fallbackCover = details.item?.libraryImage || details.item?.headerImage || "";
+                if (fallbackCover) {
+                    byId("coverUrlInput").value = fallbackCover;
+                    if (preview) {
+                        preview.src = fallbackCover;
+                        preview.classList.remove("hidden");
+                    }
+                }
+            }
+        } catch {
+            // fallback silencioso
         }
     });
 
     document.addEventListener("click", (event) => {
         const shell = event.target.closest(".steam-search-shell");
-        if (!shell) byId("steamResults").innerHTML = "";
+        if (!shell) {
+            const box = byId("steamResults");
+            if (box) {
+                box.innerHTML = "";
+                box.classList.add("hidden");
+            }
+        }
     });
 
     byId("recommendationForm")?.addEventListener("submit", async (event) => {
@@ -1956,6 +2409,7 @@ async function handleRoundPage() {
     if (roundPollTimer) clearInterval(roundPollTimer);
     roundPollTimer = setInterval(async () => {
         if (!currentRound) return;
+        if (currentRound.phase === "draft" && currentRound.isCreator) return;
         try {
             await refreshRoundData(currentRound.id);
         } catch {
@@ -1966,7 +2420,10 @@ async function handleRoundPage() {
 async function init() {
     await handleLogoutButton();
 
-    if (page === "login" || page === "register") showOAuthFeedbackFromQuery();
+    if (page === "login" || page === "register") {
+        showOAuthFeedbackFromQuery();
+        setupGoogleButtonsLoading();
+    }
 
     if (page === "login") await handleLogin();
     if (page === "register") await handleRegister();
@@ -1979,3 +2436,7 @@ async function init() {
 }
 
 init();
+
+
+
+

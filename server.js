@@ -20,7 +20,106 @@ const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
 const OWNER_EMAIL = "gabrielmicaelhenrique@gmail.com";
 const BRAND_NAME = "Clube do Jogo";
 const isProduction = process.env.NODE_ENV === "production";
-const allowedOrigin = new URL(baseUrl).origin;
+
+const parseOrigin = (value) => {
+    try {
+        return new URL(String(value || "").trim()).origin;
+    } catch {
+        return null;
+    }
+};
+
+const publicAppUrl = parseOrigin(process.env.PUBLIC_APP_URL || process.env.PUBLIC_BASE_URL || "");
+
+const envAllowedOrigins = String(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((value) => parseOrigin(value))
+    .filter(Boolean);
+
+const allowedOrigins = new Set([
+    parseOrigin(baseUrl),
+    publicAppUrl,
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    "https://clubedojogo.app.br",
+    "http://clubedojogo.app.br",
+    ...envAllowedOrigins
+].filter(Boolean));
+
+function getRequestOrigin(req) {
+    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+    const protocol = forwardedProto || req.protocol;
+    const host = String(req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
+    if (!host) return null;
+    return `${protocol}://${host}`;
+}
+
+function isNgrokOrigin(origin) {
+    return /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i.test(origin)
+        || /^https:\/\/[a-z0-9-]+\.ngrok\.app$/i.test(origin);
+}
+
+function isAllowedOrigin(origin, req) {
+    if (!origin) return true;
+    const normalizedOrigin = parseOrigin(origin);
+    if (!normalizedOrigin) return false;
+    if (allowedOrigins.has(normalizedOrigin)) return true;
+    if (isNgrokOrigin(normalizedOrigin)) return true;
+
+    const requestOrigin = parseOrigin(getRequestOrigin(req));
+    return Boolean(requestOrigin && normalizedOrigin === requestOrigin);
+}
+
+function getPublicBaseUrl(req) {
+    const envBase = publicAppUrl;
+    if (envBase) return envBase;
+
+    const originHeader = req?.get ? req.get("origin") : "";
+    const refererHeader = req?.get ? req.get("referer") : "";
+    const refererOrigin = parseOrigin(refererHeader);
+    const originFromHeader = parseOrigin(originHeader);
+    if (originFromHeader && isAllowedOrigin(originFromHeader, req)) {
+        return originFromHeader;
+    }
+    if (refererOrigin && isAllowedOrigin(refererOrigin, req)) {
+        return refererOrigin;
+    }
+
+    const reqOrigin = parseOrigin(req ? getRequestOrigin(req) : "");
+    if (reqOrigin) return reqOrigin;
+    return parseOrigin(baseUrl) || `http://localhost:${port}`;
+}
+
+function getGoogleCallbackUrl(req) {
+    const originHeader = req?.get ? req.get("origin") : "";
+    const refererHeader = req?.get ? req.get("referer") : "";
+    const refererOrigin = parseOrigin(refererHeader);
+    const originFromHeader = parseOrigin(originHeader);
+    if (originFromHeader && isAllowedOrigin(originFromHeader, req)) {
+        return `${originFromHeader}/auth/google/callback`;
+    }
+    if (refererOrigin && isAllowedOrigin(refererOrigin, req)) {
+        return `${refererOrigin}/auth/google/callback`;
+    }
+
+    const reqOrigin = parseOrigin(req ? getRequestOrigin(req) : "");
+    if (reqOrigin) {
+        return `${reqOrigin}/auth/google/callback`;
+    }
+
+    const configured = sanitizeText(process.env.GOOGLE_CALLBACK_URL, 260);
+    if (configured) {
+        try {
+            return new URL(configured).toString();
+        } catch {
+            // fallback para localhost/base
+        }
+    }
+    const fallbackBase = publicAppUrl || parseOrigin(baseUrl) || `http://localhost:${port}`;
+    return `${fallbackBase}/auth/google/callback`;
+}
 
 const db = new sqlite3.Database(path.join(__dirname, "app.db"));
 const SQLiteStore = SQLiteStoreFactory(session);
@@ -179,8 +278,8 @@ async function searchSteamGames(term, limit = 5) {
     const normalizeItem = (appId, name) => ({
         appId: Number(appId),
         name: String(name || "").trim() || `App ${appId}`,
-        tinyImage: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/capsule_231x87.jpg`,
-        largeCapsule: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/capsule_616x353.jpg`,
+        tinyImage: "",
+        largeCapsule: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`,
         libraryImage: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/library_600x900_2x.jpg`,
         description: ""
     });
@@ -210,12 +309,12 @@ async function searchSteamGames(term, limit = 5) {
         if (!response.ok) return [];
         const data = await response.json();
         return (data.items || [])
-            .filter((item) => item && item.id && (item.large_capsule_image || item.tiny_image))
+            .filter((item) => item && item.id)
             .slice(0, limit)
             .map((item) => ({
                 ...normalizeItem(item.id, item.name),
-                tinyImage: item.tiny_image || "",
-                largeCapsule: item.large_capsule_image || item.tiny_image || "",
+                tinyImage: "",
+                largeCapsule: `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.id}/header.jpg`,
                 libraryImage: `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.id}/library_600x900_2x.jpg`,
                 description: ""
             }));
@@ -245,7 +344,7 @@ async function searchSteamGames(term, limit = 5) {
                     const details = await fetchSteamAppDetails(item.appId);
                     return {
                         ...item,
-                        largeCapsule: details?.capsuleImage || details?.headerImage || item.largeCapsule,
+                        largeCapsule: details?.headerImage || item.largeCapsule,
                         libraryImage: item.libraryImage,
                         description: details?.description || ""
                     };
@@ -255,7 +354,7 @@ async function searchSteamGames(term, limit = 5) {
             if (!items.length) items = await fallbackStoreSearch();
         }
         return items
-            .filter((item) => item && (item.largeCapsule || item.libraryImage || item.tinyImage))
+            .filter((item) => item && (item.largeCapsule || item.libraryImage))
             .slice(0, limit);
     } catch (error) {
         console.warn("[steam-search fallback]", error.message);
@@ -265,7 +364,7 @@ async function searchSteamGames(term, limit = 5) {
             items = [normalizeItem(Number(cleaned), `App ${cleaned}`)];
         }
         return items
-            .filter((item) => item && (item.largeCapsule || item.libraryImage || item.tinyImage))
+            .filter((item) => item && (item.largeCapsule || item.libraryImage))
             .slice(0, limit);
     }
 }
@@ -325,6 +424,48 @@ async function generateAvailableUsername(seedText) {
 
 function nicknameFromUsername(username) {
     return sanitizeText(username, 30) || "Jogador";
+}
+
+async function nicknameExists(nickname, excludeUserId = 0) {
+    const clean = sanitizeText(nickname, 30);
+    if (!clean) return false;
+    const exists = await dbGet(
+        `SELECT id FROM users
+         WHERE LOWER(COALESCE(nickname, '')) = LOWER(?)
+           AND id <> ?
+         LIMIT 1`,
+        [clean, Number(excludeUserId) || 0]
+    );
+    return Boolean(exists);
+}
+
+async function pendingNicknameExists(nickname) {
+    const clean = sanitizeText(nickname, 30);
+    if (!clean) return false;
+    const exists = await dbGet(
+        `SELECT email FROM pending_registrations
+         WHERE LOWER(COALESCE(nickname, '')) = LOWER(?)
+         LIMIT 1`,
+        [clean]
+    );
+    return Boolean(exists);
+}
+
+async function generateAvailableNickname(seedText, fallbackUsername) {
+    const baseSeed = sanitizeText(seedText, 30) || nicknameFromUsername(fallbackUsername);
+    const compactBase = sanitizeText(baseSeed.replace(/\s+/g, " "), 30) || "Jogador";
+
+    for (let i = 0; i < 200; i += 1) {
+        const suffix = i === 0 ? "" : ` ${i}`;
+        const candidate = sanitizeText(`${compactBase}${suffix}`, 30);
+        if (!candidate) continue;
+        const inUsers = await nicknameExists(candidate);
+        if (inUsers) continue;
+        const inPending = await pendingNicknameExists(candidate);
+        if (!inPending) return candidate;
+    }
+
+    return sanitizeText(`${compactBase} ${Date.now().toString().slice(-4)}`, 30) || "Jogador";
 }
 
 function shuffleArray(values) {
@@ -450,6 +591,19 @@ async function initDb() {
             PRIMARY KEY (round_id, user_id),
             FOREIGN KEY (round_id) REFERENCES rounds(id),
             FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    await dbRun(`
+        CREATE TABLE IF NOT EXISTS round_pair_exclusions (
+            round_id INTEGER NOT NULL,
+            giver_user_id INTEGER NOT NULL,
+            receiver_user_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (round_id, giver_user_id, receiver_user_id),
+            FOREIGN KEY (round_id) REFERENCES rounds(id),
+            FOREIGN KEY (giver_user_id) REFERENCES users(id),
+            FOREIGN KEY (receiver_user_id) REFERENCES users(id)
         )
     `);
 
@@ -586,7 +740,7 @@ if (googleEnabled) {
             {
                 clientID: process.env.GOOGLE_CLIENT_ID,
                 clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-                callbackURL: process.env.GOOGLE_CALLBACK_URL || `${baseUrl}/auth/google/callback`
+                callbackURL: process.env.GOOGLE_CALLBACK_URL || `${(publicAppUrl || parseOrigin(baseUrl) || `http://localhost:${port}`)}/auth/google/callback`
             },
             (accessToken, refreshToken, profile, done) => done(null, profile)
         )
@@ -686,8 +840,9 @@ async function sendVerificationEmail(email, code) {
     });
 }
 
-async function sendPasswordResetEmail(email, token) {
-    const link = `${baseUrl}/reset-password.html?token=${encodeURIComponent(token)}`;
+async function sendPasswordResetEmail(email, token, linkBaseUrl) {
+    const safeBase = parseOrigin(linkBaseUrl) || parseOrigin(baseUrl) || `http://localhost:${port}`;
+    const link = `${safeBase}/reset-password.html?token=${encodeURIComponent(token)}`;
     const html = renderEmailShell({
         title: "Alteracao de senha",
         intro: "Recebemos um pedido para alterar a senha da sua conta.",
@@ -706,7 +861,7 @@ async function sendPasswordResetEmail(email, token) {
     });
 }
 
-async function createPasswordResetForUser(userId, email) {
+async function createPasswordResetForUser(userId, email, linkBaseUrl) {
     const token = createToken();
     const tokenHash = sha256(token);
     const expiresAt = nowInSeconds() + 60 * 60;
@@ -717,7 +872,7 @@ async function createPasswordResetForUser(userId, email) {
          VALUES (?, ?, ?, 0, ?)`,
         [userId, tokenHash, expiresAt, nowInSeconds()]
     );
-    await sendPasswordResetEmail(email, token);
+    await sendPasswordResetEmail(email, token, linkBaseUrl);
 }
 
 function requireAuth(req, res, next) {
@@ -795,6 +950,129 @@ async function getRoundParticipantsCompact(roundId) {
          WHERE rp.round_id = ?
          ORDER BY COALESCE(u.nickname, u.username) COLLATE NOCASE ASC`,
         [roundId]
+    );
+}
+
+function pairKey(giverUserId, receiverUserId) {
+    return `${Number(giverUserId)}:${Number(receiverUserId)}`;
+}
+
+function pairIdsFromAny(item) {
+    const giverUserId = Number(item?.giver_user_id ?? item?.giverUserId ?? 0);
+    const receiverUserId = Number(item?.receiver_user_id ?? item?.receiverUserId ?? 0);
+    return { giverUserId, receiverUserId };
+}
+
+function toBlockedPairsSet(blockedPairs = []) {
+    const set = new Set();
+    (Array.isArray(blockedPairs) ? blockedPairs : []).forEach((item) => {
+        const { giverUserId, receiverUserId } = pairIdsFromAny(item);
+        if (!Number.isInteger(giverUserId) || !Number.isInteger(receiverUserId)) return;
+        if (giverUserId <= 0 || receiverUserId <= 0) return;
+        if (giverUserId === receiverUserId) return;
+        set.add(pairKey(giverUserId, receiverUserId));
+    });
+    return set;
+}
+
+function createBadRequestError(message) {
+    const error = new Error(message);
+    error.statusCode = 400;
+    return error;
+}
+
+function validatePairRestrictions(participantIds, blockedPairs = []) {
+    const uniqueIds = [...new Set((participantIds || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (uniqueIds.length < 2) return;
+
+    const blockedPairsSet = toBlockedPairsSet(blockedPairs);
+    const allowedMap = new Map();
+
+    for (const giverId of uniqueIds) {
+        const receivers = uniqueIds.filter(
+            (id) => id !== giverId && !blockedPairsSet.has(pairKey(giverId, id))
+        );
+        if (!receivers.length) {
+            throw createBadRequestError(
+                "Cada participante precisa ter pelo menos 1 pessoa possivel para receber sua indicacao."
+            );
+        }
+        allowedMap.set(giverId, receivers);
+    }
+
+    const assignmentMap = findDerangementAssignments(uniqueIds, allowedMap);
+    if (!assignmentMap) {
+        throw createBadRequestError(
+            "Restricoes inconsistentes. Ajuste os bloqueios para permitir um sorteio valido para todos."
+        );
+    }
+}
+
+async function getRoundPairExclusions(roundId) {
+    return dbAll(
+        `SELECT giver_user_id, receiver_user_id
+         FROM round_pair_exclusions
+         WHERE round_id = ?`,
+        [roundId]
+    );
+}
+
+async function sanitizeAndSavePairExclusions(roundId, rawPairs) {
+    const participants = await dbAll(
+        "SELECT user_id FROM round_participants WHERE round_id = ?",
+        [roundId]
+    );
+    const participantIds = participants
+        .map((row) => Number(row.user_id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+    const validUserIds = new Set(participantIds);
+    const normalizedMap = new Map();
+
+    (Array.isArray(rawPairs) ? rawPairs : []).forEach((item) => {
+        const { giverUserId, receiverUserId } = pairIdsFromAny(item);
+        if (!Number.isInteger(giverUserId) || !Number.isInteger(receiverUserId)) return;
+        if (giverUserId <= 0 || receiverUserId <= 0) return;
+        if (giverUserId === receiverUserId) return;
+        if (!validUserIds.has(giverUserId) || !validUserIds.has(receiverUserId)) return;
+        normalizedMap.set(pairKey(giverUserId, receiverUserId), {
+            giverUserId,
+            receiverUserId
+        });
+    });
+
+    const normalizedPairs = [...normalizedMap.values()];
+    validatePairRestrictions(participantIds, normalizedPairs);
+
+    await dbRun("DELETE FROM round_pair_exclusions WHERE round_id = ?", [roundId]);
+    for (const item of normalizedPairs) {
+        await dbRun(
+            `INSERT INTO round_pair_exclusions (round_id, giver_user_id, receiver_user_id, created_at)
+             VALUES (?, ?, ?, ?)`,
+            [roundId, item.giverUserId, item.receiverUserId, nowInSeconds()]
+        );
+    }
+
+    return normalizedPairs;
+}
+
+async function cleanupRoundPairExclusions(roundId) {
+    const participants = await dbAll(
+        "SELECT user_id FROM round_participants WHERE round_id = ?",
+        [roundId]
+    );
+    const ids = participants.map((row) => Number(row.user_id)).filter((id) => Number.isInteger(id) && id > 0);
+    if (!ids.length) {
+        await dbRun("DELETE FROM round_pair_exclusions WHERE round_id = ?", [roundId]);
+        return;
+    }
+    const placeholders = ids.map(() => "?").join(", ");
+    await dbRun(
+        `DELETE FROM round_pair_exclusions
+         WHERE round_id = ?
+           AND (giver_user_id NOT IN (${placeholders})
+                OR receiver_user_id NOT IN (${placeholders})
+                OR giver_user_id = receiver_user_id)`,
+        [roundId, ...ids, ...ids]
     );
 }
 
@@ -914,6 +1192,7 @@ async function getRoundPayload(roundId, currentUserId) {
 
     const participants = await getRoundParticipants(roundId);
     const assignmentsRaw = await getRoundAssignments(roundId);
+    const pairExclusions = await getRoundPairExclusions(roundId);
     const assignments = assignmentsRaw.map((item) => {
         if (item.revealed) return item;
         return {
@@ -942,6 +1221,7 @@ async function getRoundPayload(roundId, currentUserId) {
         participants,
         assignments,
         recommendations,
+        pair_exclusions: pairExclusions,
         myAssignment,
         myRecommendation,
         ratingsToDo,
@@ -965,10 +1245,13 @@ async function ensurePairRows(participantIds) {
     }
 }
 
-async function resetExhaustedGivers(participantIds) {
+async function resetExhaustedGivers(participantIds, blockedPairsSet = new Set()) {
     for (const giverId of participantIds) {
-        const receiverIds = participantIds.filter((id) => id !== giverId);
+        const receiverIds = participantIds.filter(
+            (id) => id !== giverId && !blockedPairsSet.has(pairKey(giverId, id))
+        );
         if (!receiverIds.length) continue;
+
         const placeholders = receiverIds.map(() => "?").join(", ");
         const rows = await dbAll(
             `SELECT receiver_user_id, used_in_cycle
@@ -976,6 +1259,7 @@ async function resetExhaustedGivers(participantIds) {
              WHERE giver_user_id = ? AND receiver_user_id IN (${placeholders})`,
             [giverId, ...receiverIds]
         );
+
         const allUsed = rows.length === receiverIds.length && rows.every((row) => row.used_in_cycle === 1);
         if (allUsed) {
             await dbRun(
@@ -988,14 +1272,17 @@ async function resetExhaustedGivers(participantIds) {
     }
 }
 
-async function buildAllowedReceivers(participantIds) {
+async function buildAllowedReceivers(participantIds, blockedPairsSet = new Set()) {
     const allowed = new Map();
     for (const giverId of participantIds) {
-        const receiverIds = participantIds.filter((id) => id !== giverId);
+        const receiverIds = participantIds.filter(
+            (id) => id !== giverId && !blockedPairsSet.has(pairKey(giverId, id))
+        );
         if (!receiverIds.length) {
             allowed.set(giverId, []);
             continue;
         }
+
         const placeholders = receiverIds.map(() => "?").join(", ");
         const rows = await dbAll(
             `SELECT receiver_user_id, used_in_cycle
@@ -1034,19 +1321,23 @@ function findDerangementAssignments(participantIds, allowedMap) {
 
     return backtrack(0) ? result : null;
 }
-async function generateAssignmentsWithRotation(participantIds) {
+async function generateAssignmentsWithRotation(participantIds, blockedPairs = []) {
     if (participantIds.length < 2) {
         throw new Error("Voce precisa de ao menos 2 participantes para sortear.");
     }
 
+    const blockedPairsSet = toBlockedPairsSet(blockedPairs);
+
     await ensurePairRows(participantIds);
-    await resetExhaustedGivers(participantIds);
-    let allowed = await buildAllowedReceivers(participantIds);
+    await resetExhaustedGivers(participantIds, blockedPairsSet);
+    let allowed = await buildAllowedReceivers(participantIds, blockedPairsSet);
     let assignmentMap = findDerangementAssignments(participantIds, allowed);
 
     if (!assignmentMap) {
         for (const giverId of participantIds) {
-            const receiverIds = participantIds.filter((id) => id !== giverId);
+            const receiverIds = participantIds.filter(
+                (id) => id !== giverId && !blockedPairsSet.has(pairKey(giverId, id))
+            );
             if (!receiverIds.length) continue;
             const placeholders = receiverIds.map(() => "?").join(", ");
             await dbRun(
@@ -1055,13 +1346,13 @@ async function generateAssignmentsWithRotation(participantIds) {
                 [giverId, ...receiverIds]
             );
         }
-        allowed = await buildAllowedReceivers(participantIds);
+        allowed = await buildAllowedReceivers(participantIds, blockedPairsSet);
         assignmentMap = findDerangementAssignments(participantIds, allowed);
     }
 
     if (!assignmentMap) {
         throw new Error(
-            "Nao foi possivel montar um sorteio valido com as restricoes atuais. Tente ajustar participantes."
+            "Nao foi possivel montar um sorteio valido com as restricoes atuais. Tente ajustar participantes/pares."
         );
     }
 
@@ -1097,6 +1388,7 @@ async function deleteRoundCascade(roundId) {
     }
     await dbRun("DELETE FROM recommendations WHERE round_id = ?", [roundId]);
     await dbRun("DELETE FROM round_assignments WHERE round_id = ?", [roundId]);
+    await dbRun("DELETE FROM round_pair_exclusions WHERE round_id = ?", [roundId]);
     await dbRun("DELETE FROM round_participants WHERE round_id = ?", [roundId]);
     await dbRun("DELETE FROM rounds WHERE id = ?", [roundId]);
 }
@@ -1123,6 +1415,7 @@ async function deleteUserCascade(userId) {
     await dbRun("DELETE FROM recommendation_ratings WHERE rater_user_id = ?", [userId]);
     await dbRun("DELETE FROM profile_comments WHERE profile_user_id = ? OR author_user_id = ?", [userId, userId]);
     await dbRun("DELETE FROM round_assignments WHERE giver_user_id = ? OR receiver_user_id = ?", [userId, userId]);
+    await dbRun("DELETE FROM round_pair_exclusions WHERE giver_user_id = ? OR receiver_user_id = ?", [userId, userId]);
     await dbRun("DELETE FROM round_participants WHERE user_id = ?", [userId]);
     await dbRun("DELETE FROM pair_history WHERE giver_user_id = ? OR receiver_user_id = ?", [userId, userId]);
     await dbRun("DELETE FROM password_resets WHERE user_id = ?", [userId]);
@@ -1144,6 +1437,21 @@ function requireRoundCreator(round, req, res) {
 function normalizeNickname(nickname, username) {
     const cleaned = sanitizeText(nickname, 30);
     return cleaned || nicknameFromUsername(username);
+}
+
+async function assertNicknameAvailable(nickname, excludeUserId = 0) {
+    const clean = sanitizeText(nickname, 30);
+    if (!clean) return;
+
+    const inUsers = await nicknameExists(clean, excludeUserId);
+    if (inUsers) {
+        throw new Error("Nickname ja esta em uso.");
+    }
+
+    const inPending = await pendingNicknameExists(clean);
+    if (inPending) {
+        throw new Error("Nickname ja esta reservado em um cadastro pendente.");
+    }
 }
 
 const sessionSecret = process.env.SESSION_SECRET || (isProduction ? null : randomSecretHex());
@@ -1208,18 +1516,21 @@ app.use((req, res, next) => {
 
     const origin = req.get("origin");
     const referer = req.get("referer");
-    if (origin && origin !== allowedOrigin) {
+
+    if (origin && !isAllowedOrigin(origin, req)) {
         return res.status(403).json({ message: "Origem da requisicao nao permitida." });
     }
+
     if (!origin && referer) {
-        try {
-            if (new URL(referer).origin !== allowedOrigin) {
-                return res.status(403).json({ message: "Referer da requisicao nao permitido." });
-            }
-        } catch {
+        const refererOrigin = parseOrigin(referer);
+        if (!refererOrigin) {
             return res.status(403).json({ message: "Referer invalido." });
         }
+        if (!isAllowedOrigin(refererOrigin, req)) {
+            return res.status(403).json({ message: "Referer da requisicao nao permitido." });
+        }
     }
+
     return next();
 });
 
@@ -1277,9 +1588,11 @@ app.get("/auth/google", (req, res, next) => {
     if (!googleEnabled) {
         return res.redirect("/login.html?error=google_not_configured");
     }
+    const callbackURL = getGoogleCallbackUrl(req);
     return passport.authenticate("google", {
         scope: ["profile", "email"],
-        prompt: "select_account"
+        prompt: "select_account",
+        callbackURL
     })(req, res, next);
 });
 
@@ -1288,16 +1601,24 @@ app.get("/auth/google/callback", (req, res, next) => {
         return res.redirect("/login.html?error=google_not_configured");
     }
 
-    return passport.authenticate("google", { session: false }, async (error, profile) => {
+    const callbackURL = getGoogleCallbackUrl(req);
+    const redirectBase = parseOrigin(req ? getRequestOrigin(req) : "")
+        || parseOrigin(req?.get ? req.get("origin") : "")
+        || parseOrigin(req?.get ? req.get("referer") : "")
+        || publicAppUrl
+        || parseOrigin(baseUrl)
+        || `http://localhost:${port}`;
+    const toLoginError = (code) => `${redirectBase}/login.html?error=${encodeURIComponent(code)}`;
+    return passport.authenticate("google", { session: false, callbackURL }, async (error, profile) => {
         try {
             if (error || !profile) {
                 console.error("[google callback error]", error);
-                return res.redirect("/login.html?error=google_auth_failed");
+                return res.redirect(toLoginError("google_auth_failed"));
             }
 
             const googleEmail = sanitizeText(profile?.emails?.[0]?.value, 120).toLowerCase();
             if (!googleEmail || !isValidEmail(googleEmail)) {
-                return res.redirect("/login.html?error=google_email_unavailable");
+                return res.redirect(toLoginError("google_email_unavailable"));
             }
 
             let user = await dbGet(
@@ -1306,9 +1627,9 @@ app.get("/auth/google/callback", (req, res, next) => {
             );
 
             if (!user) {
-                const seed = profile.displayName || googleEmail.split("@")[0];
-                const username = await generateAvailableUsername(seed);
-                const nickname = normalizeNickname(seed, username);
+                const beforeAt = googleEmail.split("@")[0] || "jogador";
+                const username = await generateAvailableUsername(beforeAt);
+                const nickname = await generateAvailableNickname(beforeAt, username);
                 const randomPasswordHash = await bcrypt.hash(createToken(), 12);
 
                 try {
@@ -1330,8 +1651,11 @@ app.get("/auth/google/callback", (req, res, next) => {
                 );
             }
 
+            if (!user) {
+                return res.redirect(toLoginError("google_auth_failed"));
+            }
             if (Number(user.blocked) === 1) {
-                return res.redirect("/login.html?error=google_auth_failed");
+                return res.redirect(toLoginError("google_auth_failed"));
             }
 
             req.session.userId = user.id;
@@ -1340,13 +1664,13 @@ app.get("/auth/google/callback", (req, res, next) => {
             return req.session.save((sessionError) => {
                 if (sessionError) {
                     console.error("[google session save error]", sessionError);
-                    return res.redirect("/login.html?error=google_auth_failed");
+                    return res.redirect(toLoginError("google_auth_failed"));
                 }
-                return res.redirect("/");
+                return res.redirect(`${redirectBase}/`);
             });
         } catch (callbackError) {
             console.error(callbackError);
-            return res.redirect("/login.html?error=google_auth_failed");
+            return res.redirect(toLoginError("google_auth_failed"));
         }
     })(req, res, next);
 });
@@ -1376,12 +1700,13 @@ app.post("/api/auth/register", async (req, res) => {
             return res.status(409).json({ message: "Email ou nome de usuario ja cadastrados." });
         }
 
+        await dbRun("DELETE FROM pending_registrations WHERE email = ?", [email]);
+        await assertNicknameAvailable(nickname);
+
         const passwordHash = await bcrypt.hash(password, 12);
         const code = createVerificationCode();
         const codeHash = await bcrypt.hash(code, 10);
         const expiresAt = nowInSeconds() + 60 * 10;
-
-        await dbRun("DELETE FROM pending_registrations WHERE email = ?", [email]);
         await dbRun(
             `INSERT INTO pending_registrations
                 (email, username, nickname, password_hash, phone, code_hash, expires_at, created_at)
@@ -1393,6 +1718,9 @@ app.post("/api/auth/register", async (req, res) => {
         return res.json({ message: "Codigo enviado para o email informado." });
     } catch (error) {
         console.error(error);
+        if (String(error.message || "").includes("Nickname ja")) {
+            return res.status(409).json({ message: error.message });
+        }
         if (String(error.message || "").includes("Falha no envio de email")) {
             return res.status(502).json({ message: error.message });
         }
@@ -1422,6 +1750,9 @@ app.post("/api/auth/verify-email", async (req, res) => {
             return res.status(400).json({ message: "Codigo invalido." });
         }
 
+        const finalNickname = normalizeNickname(pending.nickname, pending.username);
+        await assertNicknameAvailable(finalNickname);
+
         await dbRun(
             `INSERT INTO users
                 (username, email, password_hash, email_verified, nickname, phone, created_at)
@@ -1430,7 +1761,7 @@ app.post("/api/auth/verify-email", async (req, res) => {
                 pending.username,
                 pending.email,
                 pending.password_hash,
-                normalizeNickname(pending.nickname, pending.username),
+                finalNickname,
                 pending.phone || "",
                 nowInSeconds()
             ]
@@ -1439,6 +1770,9 @@ app.post("/api/auth/verify-email", async (req, res) => {
 
         return res.json({ message: "Email confirmado com sucesso." });
     } catch (error) {
+        if (String(error.message || "").includes("Nickname ja")) {
+            return res.status(409).json({ message: error.message });
+        }
         if (String(error.message || "").includes("UNIQUE")) {
             return res.status(409).json({ message: "Conta ja confirmada para este email/usuario." });
         }
@@ -1497,7 +1831,7 @@ app.post("/api/auth/logout", (req, res) => {
 app.get("/api/user/profile", requireAuth, async (req, res) => {
     try {
         const user = await dbGet(
-            `SELECT id, username, email, phone, nickname, avatar_url
+            `SELECT id, username, email, nickname, avatar_url
              FROM users WHERE id = ? LIMIT 1`,
             [req.session.userId]
         );
@@ -1575,16 +1909,18 @@ app.put("/api/user/profile", requireAuth, async (req, res) => {
         }
 
         const nickname = normalizeNickname(req.body.nickname, current.username);
-        const phone = sanitizeText(req.body.phone, 30);
+        await assertNicknameAvailable(nickname, req.session.userId);
 
-        await dbRun("UPDATE users SET nickname = ?, phone = ? WHERE id = ?", [
+        await dbRun("UPDATE users SET nickname = ? WHERE id = ?", [
             nickname,
-            phone,
             req.session.userId
         ]);
-        return res.json({ message: "Perfil atualizado.", profile: { nickname, phone } });
+        return res.json({ message: "Perfil atualizado.", profile: { nickname } });
     } catch (error) {
         console.error(error);
+        if (String(error.message || "").includes("Nickname ja")) {
+            return res.status(409).json({ message: error.message });
+        }
         return res.status(500).json({ message: "Erro ao atualizar perfil." });
     }
 });
@@ -1616,7 +1952,7 @@ app.post("/api/user/password-reset-link", requireAuth, async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: "Usuario nao encontrado." });
         }
-        await createPasswordResetForUser(user.id, user.email);
+        await createPasswordResetForUser(user.id, user.email, getPublicBaseUrl(req));
         return res.json({ message: "Link de troca de senha enviado para seu email." });
     } catch (error) {
         console.error(error);
@@ -1730,7 +2066,7 @@ app.post("/api/auth/request-password-reset", async (req, res) => {
 
         const user = await dbGet("SELECT id, email FROM users WHERE email = ? LIMIT 1", [email]);
         if (user) {
-            await createPasswordResetForUser(user.id, user.email);
+            await createPasswordResetForUser(user.id, user.email, getPublicBaseUrl(req));
         }
 
         return res.json({
@@ -1943,6 +2279,7 @@ app.post("/api/rounds/:roundId/participants", requireAuth, async (req, res) => {
              VALUES (?, ?, ?)`,
             [roundId, userId, nowInSeconds()]
         );
+        await cleanupRoundPairExclusions(roundId);
 
         const participants = await getRoundParticipants(roundId);
         return res.json({ message: "Participante adicionado.", participants });
@@ -1966,11 +2303,33 @@ app.delete("/api/rounds/:roundId/participants/:userId", requireAuth, async (req,
         }
 
         await dbRun("DELETE FROM round_participants WHERE round_id = ? AND user_id = ?", [roundId, userId]);
+        await cleanupRoundPairExclusions(roundId);
         const participants = await getRoundParticipants(roundId);
         return res.json({ message: "Participante removido.", participants });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao remover participante." });
+    }
+});
+
+app.put("/api/rounds/:roundId/pair-exclusions", requireAuth, async (req, res) => {
+    try {
+        const roundId = Number(req.params.roundId);
+        const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
+        if (!requireRoundCreator(round, req, res)) return;
+        if (round.status !== "draft") {
+            return res.status(400).json({ message: "So e possivel editar restricoes na fase de sorteio." });
+        }
+
+        const pairs = Array.isArray(req.body?.pairs) ? req.body.pairs : [];
+        await sanitizeAndSavePairExclusions(roundId, pairs);
+
+        const payload = await getRoundPayload(roundId, req.session.userId);
+        return res.json({ message: "Restricoes de pares salvas.", round: payload });
+    } catch (error) {
+        console.error(error);
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao salvar restricoes de pares." });
     }
 });
 
@@ -1992,7 +2351,9 @@ app.post("/api/rounds/:roundId/draw", requireAuth, async (req, res) => {
             return res.status(400).json({ message: "Adicione ao menos 2 participantes para sortear." });
         }
 
-        const assignmentMap = await generateAssignmentsWithRotation(participantIds);
+        const pairExclusions = await getRoundPairExclusions(roundId);
+        validatePairRestrictions(participantIds, pairExclusions);
+        const assignmentMap = await generateAssignmentsWithRotation(participantIds, pairExclusions);
         await saveAssignments(roundId, assignmentMap);
         await dbRun("UPDATE rounds SET status = 'reveal', started_at = ? WHERE id = ?", [
             nowInSeconds(),
@@ -2003,7 +2364,8 @@ app.post("/api/rounds/:roundId/draw", requireAuth, async (req, res) => {
         return res.json({ message: "Sorteio realizado. Agora revele os pares antes das indicacoes.", round: payload });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: error.message || "Erro ao realizar sorteio." });
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao realizar sorteio." });
     }
 });
 
@@ -2167,11 +2529,45 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 return res.status(403).json({ message: "Voce nao possui indicacao ativa nesta rodada." });
             }
 
-            const gameName = sanitizeText(req.body.gameName, 120);
-            const gameDescription = sanitizeText(req.body.gameDescription, 500);
+            let gameName = sanitizeText(req.body.gameName, 120);
+            let gameDescription = sanitizeText(req.body.gameDescription, 500);
             const reason = sanitizeText(req.body.reason, 500);
             const steamAppId = sanitizeText(req.body.steamAppId, 20);
             const coverUrlFromBody = sanitizeText(req.body.coverUrl, 400);
+
+            const existing = await dbGet(
+                "SELECT id, game_cover_url FROM recommendations WHERE round_id = ? AND giver_user_id = ? LIMIT 1",
+                [roundId, req.session.userId]
+            );
+
+            let gameCoverUrl = coverUrlFromBody || "";
+            if (req.file) {
+                gameCoverUrl = `/uploads/covers/${req.file.filename}`;
+            }
+
+            let steamDetails = null;
+            if (steamAppId && (!gameName || !gameDescription || !gameCoverUrl)) {
+                steamDetails = await getSteamAppDetails(steamAppId);
+                if (!gameName) {
+                    gameName = sanitizeText(steamDetails?.name || "", 120);
+                }
+                if (!gameDescription) {
+                    gameDescription = sanitizeText(steamDetails?.description || "", 500);
+                }
+                if (!gameCoverUrl) {
+                    gameCoverUrl = sanitizeText(
+                        steamDetails?.headerImage || steamDetails?.libraryImage || "",
+                        400
+                    );
+                }
+            }
+
+            if (!gameCoverUrl && /^\d+$/.test(steamAppId)) {
+                gameCoverUrl = `https://cdn.cloudflare.steamstatic.com/steam/apps/${steamAppId}/header.jpg`;
+            }
+            if (!gameDescription && steamAppId && gameName) {
+                gameDescription = sanitizeText("Descricao curta indisponivel na Steam.", 500);
+            }
 
             if (!gameName) {
                 return res.status(400).json({ message: "Informe o nome do jogo." });
@@ -2179,14 +2575,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
             if (!gameDescription) {
                 return res.status(400).json({ message: "Informe uma descricao curta do jogo." });
             }
-            const existing = await dbGet(
-                "SELECT id, game_cover_url FROM recommendations WHERE round_id = ? AND giver_user_id = ? LIMIT 1",
-                [roundId, req.session.userId]
-            );
-            let gameCoverUrl = coverUrlFromBody || "";
-            if (req.file) {
-                gameCoverUrl = `/uploads/covers/${req.file.filename}`;
-            }
+
             if (!gameCoverUrl && existing?.game_cover_url) {
                 gameCoverUrl = existing.game_cover_url;
             }
@@ -2533,3 +2922,4 @@ initDb()
         console.error("Falha ao inicializar banco de dados.", error);
         process.exit(1);
     });
+

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clube do Jogo | Inicio</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="home">
+    <nav class="navbar">
+        <a href="/" class="brand">
+            <img class="brand-logo" src="/uploads/site-logo-min.png" alt="Logo Clube do Jogo">
+        </a>
+        <div class="nav-links">
+            <a href="/">Inicio</a>
+            
+            <a href="/profile.html">Perfil</a>
+            <button id="logoutBtn" class="btn btn-outline" type="button">Sair</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <section class="hero-card">
+            <p class="kicker">Comunidade gamer</p>
+            <h1>Clube do Jogo</h1>
+            <p>
+                Indique um jogo que voce zerou, participe do sorteio de quem indica para quem
+                e compartilhe avaliacoes em rodadas.
+            </p>
+        </section>
+
+        <section class="panel-grid">
+            <article class="card">
+                <h2>Rodada Atual</h2>
+                <p id="activeRoundText">Carregando status...</p>
+                <div class="inline-actions">
+                    <button id="newRoundBtn" class="btn" type="button">Nova Rodada</button>
+                </div>
+                <p id="homeFeedback" class="feedback"></p>
+            </article>
+
+            <article class="card">
+                <h2>Como funciona</h2>
+                <ul>
+                    <li>1. O criador inicia uma nova rodada e adiciona participantes.</li>
+                    <li>2. O sistema sorteia quem indica para quem sem repeticoes antes da rotacao acabar.</li>
+                    <li>3. Cada participante envia capa, nota e comentario da sua indicacao.</li>
+                </ul>
+            </article>
+        </section>
+
+        <section class="card">
+            <div class="row-between">
+                <h2>Jogos Indicados Recentemente</h2>
+                <button id="refreshFeedBtn" class="btn btn-outline" type="button">Atualizar</button>
+            </div>
+            <div id="roundCarousels" class="round-carousels"></div>
+        </section>
+
+        <section id="navalModal" class="modal hidden">
+            <article class="modal-card">
+                <div class="row-between">
+                    <h3 id="navalModalTitle">Plano Naval</h3>
+                    <button id="closeNavalModalBtn" class="btn btn-outline" type="button">Fechar</button>
+                </div>
+                <div class="naval-chart-wrap">
+                    <div id="homeNavalChart" class="naval-chart"></div>
+                    <div class="naval-scale-x" aria-hidden="true">
+                        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
+                    </div>
+                    <div class="naval-scale-y" aria-hidden="true">
+                        <span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span><span>G</span><span>H</span><span>I</span><span>J</span>
+                    </div>
+                    <div class="naval-axis-x">Interessância</div>
+                    <div class="naval-axis-y">Jogabilidade</div>
+                </div>
+            </article>
+        </section>
+    </main>
+    <footer class="site-footer">
+        <div class="site-footer-inner">
+            <a href="https://github.com/Gabriel-Micael" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href="https://www.instagram.com/gabriel.micael/" target="_blank" rel="noopener noreferrer">Instagram</a>
+            <a href="https://wa.me/5535997569858" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
+
+

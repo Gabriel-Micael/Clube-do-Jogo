@@ -20,6 +20,7 @@ const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
 const OWNER_EMAIL = "gabrielmicaelhenrique@gmail.com";
 const BRAND_NAME = "Clube do Jogo";
 const isProduction = process.env.NODE_ENV === "production";
+const publicDir = path.join(__dirname, "public");
 
 const parseOrigin = (value) => {
     try {
@@ -121,7 +122,10 @@ function getGoogleCallbackUrl(req) {
     return `${fallbackBase}/auth/google/callback`;
 }
 
-const db = new sqlite3.Database(path.join(__dirname, "app.db"));
+const dbFilePath = path.join(__dirname, "database.sqlite");
+const legacyDbFilePath = path.join(__dirname, "app.db");
+const resolvedDbPath = fs.existsSync(dbFilePath) ? dbFilePath : legacyDbFilePath;
+const db = new sqlite3.Database(resolvedDbPath);
 const SQLiteStore = SQLiteStoreFactory(session);
 
 const uploadRoot = path.join(__dirname, "uploads");
@@ -1579,10 +1583,10 @@ app.use((req, res, next) => {
 });
 
 app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "index.html"));
+    res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.use(express.static(__dirname, { index: false }));
+app.use(express.static(publicDir, { index: false }));
 
 app.get("/auth/google", (req, res, next) => {
     if (!googleEnabled) {

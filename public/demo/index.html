@@ -1,0 +1,135 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Clube do Jogo - Demonstracao visual do projeto com video e recursos implementados.">
+  <title>Clube do Jogo - Demo</title>
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <main class="demo-page">
+    <section class="hero">
+      <h1>Clube do Jogo - Demo</h1>
+      <p class="hero-subtitle">Esta pagina é apenas uma exposição do projeto. O sistema completo roda com backend Node.js + SQLite.</p>
+
+      <div class="video-frame">
+        <video id="demoVideo" autoplay muted loop playsinline preload="auto" aria-label="Demonstracao do projeto Clube do Jogo">
+          <source src="demo_looping.mp4" type="video/mp4">
+          Seu navegador não suporta reproducao de vídeo MP4.
+        </video>
+      </div>
+    </section>
+
+    <section class="readme-view">
+      <h2>Sobre o Projeto</h2>
+      <p>
+        O Clube do Jogo foi criado para grupos que gostam de compartilhar experiências de games.
+        Cada rodada define quem indica um jogo para quem, depois as recomendações sao avaliadas em um plano naval (nota de A-J e 1-10).
+      </p>
+
+      <h3>Funcionalidades Principais</h3>
+      <ul>
+        <li>Autenticacao com login/senha, verificação de email e recuperação de senha por link.</li>
+        <li>Login com Google (OAuth) com criação ou vinculação de conta automaticamente.</li>
+        <li>Rodadas com sorteio de pares, restrições de quem pode sair com quem e fases de indicação/nota.</li>
+        <li>Busca de jogos da Steam com preenchimento de nome, descrição e capa.</li>
+        <li>Comentários em recomendações com resposta, edição e exclusão.</li>
+        <li>Perfis com avatar, nickname e histórico de indicações feitas/recebidas.</li>
+      </ul>
+
+      <h3>Arquitetura e Stack</h3>
+      <ul>
+        <li>Backend: Node.js + Express.</li>
+        <li>Banco de dados: SQLite.</li>
+        <li>Sessões: express-session + connect-sqlite3.</li>
+        <li>Frontend: HTML, CSS e JavaScript puro.</li>
+      </ul>
+
+      <h3>Segurança</h3>
+      <ul>
+        <li>Headers com Helmet, validação de origem e rate limit nas rotas sensiveis.</li>
+        <li>Hash de senha com bcrypt e controle de sessao por cookie HTTP-only.</li>
+        <li>Fluxo de confirmação por email para cadastro e troca de senha.</li>
+      </ul>
+    </section>
+
+    <section class="gallery-wrap" aria-label="Capturas de tela do sistema">
+      <div class="gallery-head">
+        <h2>Screenshots</h2>
+        <p>Carrossel automático (troca a cada 5 segundos).</p>
+      </div>
+
+      <div class="carousel" id="shotsCarousel" data-interval="5000">
+        <button class="carousel-nav prev" id="carouselPrev" type="button" aria-label="Imagem anterior">&#10094;</button>
+        <button class="carousel-nav next" id="carouselNext" type="button" aria-label="Proxima imagem">&#10095;</button>
+
+        <figure class="carousel-slide is-active">
+          <img src="screenshots/login.jpg" alt="Tela de login">
+          <figcaption>Login</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/home.jpg" alt="Home do projeto">
+          <figcaption>Home</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/home2.jpg" alt="Home com feed de rodadas">
+          <figcaption>Home - Feed</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/home3.jpg" alt="Home com destaques">
+          <figcaption>Home - Destaques</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/sorteio.jpg" alt="Tela de sorteio da rodada">
+          <figcaption>Sorteio</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/sorteio2.jpg" alt="Tela de sorteio com participantes">
+          <figcaption>Sorteio - Participantes</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/sorteio3.jpg" alt="Tela de sorteio com resultados">
+          <figcaption>Sorteio - Resultado</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/indicacao1.jpg" alt="Tela de indicacao de jogo 1">
+          <figcaption>Indicação 1</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/indicacao2.jpg" alt="Tela de indicacao de jogo 2">
+          <figcaption>Indicação 2</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/indicacao3.jpg" alt="Tela de indicacao de jogo 3">
+          <figcaption>Indicação 3</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/indicacao4.jpg" alt="Tela de indicacao de jogo 4">
+          <figcaption>Indicação 4</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/indicacao5.jpg" alt="Tela de indicacao de jogo 5">
+          <figcaption>Indicação 5</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/notanaval1.jpg" alt="Tela de nota naval 1">
+          <figcaption>Nota Naval 1</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/notanaval2.jpg" alt="Tela de nota naval 2">
+          <figcaption>Nota Naval 2</figcaption>
+        </figure>
+        <figure class="carousel-slide">
+          <img src="screenshots/perfil.jpg" alt="Tela de perfil do usuario">
+          <figcaption>Perfil</figcaption>
+        </figure>
+      </div>
+
+      <div class="carousel-dots" id="carouselDots" aria-hidden="true"></div>
+    </section>
+  </main>
+
+  <script src="demo.js"></script>
+</body>
+</html>

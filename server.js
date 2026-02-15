@@ -21,6 +21,132 @@ const OWNER_EMAIL = "gabrielmicaelhenrique@gmail.com";
 const BRAND_NAME = "Clube do Jogo";
 const isProduction = process.env.NODE_ENV === "production";
 const publicDir = path.join(__dirname, "public");
+const ACHIEVEMENT_DEFINITIONS = [
+    {
+        key: "CGFerro",
+        name: "CGFerro",
+        requiredRounds: 1,
+        imageUrl: "/uploads/trofeus/ferro.png",
+        description: "participe de 1 rodada ate o fim"
+    },
+    {
+        key: "CGBronze",
+        name: "CGBronze",
+        requiredRounds: 2,
+        imageUrl: "/uploads/trofeus/bronze.png",
+        description: "participe de 2 rodadas ate o fim"
+    },
+    {
+        key: "CGPrata",
+        name: "CGPrata",
+        requiredRounds: 3,
+        imageUrl: "/uploads/trofeus/prata.png",
+        description: "participe de 3 rodadas ate o fim"
+    },
+    {
+        key: "CGOuro",
+        name: "CGOuro",
+        requiredRounds: 4,
+        imageUrl: "/uploads/trofeus/ouro.png",
+        description: "participe de 4 rodadas ate o fim"
+    },
+    {
+        key: "CGDiamante",
+        name: "CGDiamante",
+        requiredRounds: 5,
+        imageUrl: "/uploads/trofeus/diamante.png",
+        description: "participe de 5 rodadas ate o fim"
+    },
+    {
+        key: "CGMaster",
+        name: "CGMaster",
+        requiredRounds: 6,
+        imageUrl: "/uploads/trofeus/master.png",
+        description: "participe de 6 rodadas ate o fim"
+    },
+    {
+        key: "CGAcao",
+        name: "CGAcao",
+        criterion: "action",
+        imageUrl: "/uploads/trofeus/acao.png",
+        description: "indique um jogo de Acao"
+    },
+    {
+        key: "CGTiro",
+        name: "CGTiro",
+        criterion: "shooter",
+        imageUrl: "/uploads/trofeus/tiro.png",
+        description: "indique um jogo de Tiro"
+    },
+    {
+        key: "CGTerror",
+        name: "CGTerror",
+        criterion: "horror",
+        imageUrl: "/uploads/trofeus/terror.png",
+        description: "indique um jogo de Terror"
+    },
+    {
+        key: "CGSouls",
+        name: "CGSouls",
+        criterion: "soulslike",
+        imageUrl: "/uploads/trofeus/souls.png",
+        description: "indique um jogo soulslike"
+    },
+    {
+        key: "CGAwards",
+        name: "CGAwards",
+        criterion: "awards",
+        imageUrl: "/uploads/trofeus/CGAwards.png",
+        description: "indique um jogo do ano (The Game Awards)"
+    },
+    {
+        key: "CGOld",
+        name: "CGOld",
+        criterion: "old",
+        imageUrl: "/uploads/trofeus/CGOld.png",
+        description: "indique um jogo antigo (<2010)"
+    },
+    {
+        key: "CGNewba",
+        name: "CGNewba",
+        criterion: "first_rating",
+        imageUrl: "/uploads/trofeus/CGNewba.png",
+        description: "avalie uma indicacao"
+    }
+];
+
+const ACHIEVEMENT_KEYWORDS = {
+    action: ["acao", "action", "hack and slash", "hack n slash", "beat em up", "brawler"],
+    shooter: ["tiro", "shooter", "fps", "tps", "first person shooter", "third person shooter"],
+    horror: ["terror", "horror", "survival horror"],
+    soulslike: [
+        "soulslike",
+        "souls-like",
+        "dark souls",
+        "demon's souls",
+        "demons souls",
+        "bloodborne",
+        "elden ring",
+        "sekiro",
+        "nioh",
+        "lies of p"
+    ],
+    awards: ["goty", "game of the year", "the game awards", "jogo do ano"]
+};
+
+const TGA_GOTY_WINNERS_NORMALIZED = [
+    "dragon age inquisition",
+    "the witcher 3 wild hunt",
+    "overwatch",
+    "the legend of zelda breath of the wild",
+    "god of war",
+    "sekiro shadows die twice",
+    "the last of us part ii",
+    "it takes two",
+    "elden ring",
+    "baldur s gate 3",
+    "astro bot"
+];
 
 const parseOrigin = (value) => {
     try {
@@ -189,6 +315,50 @@ function isValidEmail(email) {
 
 function sanitizeText(value, max = 200) {
     return String(value || "").trim().slice(0, max);
+}
+
+function normalizeMatchText(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function containsKeyword(text, keyword) {
+    const source = String(text || "");
+    const needle = String(keyword || "");
+    return Boolean(needle) && source.includes(needle);
+}
+
+function containsAnyKeyword(text, keywords) {
+    return (keywords || []).some((keyword) => containsKeyword(text, keyword));
+}
+
+function parseYearFromText(value) {
+    const matches = String(value || "").match(/\b(19\d{2}|20\d{2})\b/g) || [];
+    for (const token of matches) {
+        const year = Number(token);
+        if (Number.isInteger(year) && year >= 1970 && year <= 2099) {
+            return year;
+        }
+    }
+    return 0;
+}
+
+function maskEmailForDisplay(email) {
+    const clean = String(email || "").trim();
+    if (!clean.includes("@")) return clean;
+    const [localPart, domainPart] = clean.split("@");
+    if (!localPart || !domainPart) return clean;
+    if (localPart.length <= 2) {
+        return `${localPart.slice(0, 1)}******@${domainPart}`;
+    }
+    const prefix = localPart.slice(0, 2);
+    const suffix = localPart.length > 4 ? localPart.slice(-2) : localPart.slice(-1);
+    return `${prefix}******${suffix}@${domainPart}`;
 }
 
 function isOwnerEmail(email) {
@@ -373,6 +543,22 @@ async function searchSteamGames(term, limit = 5) {
     }
 }
 
+function parseSteamReleaseYear(releaseDateText) {
+    const normalized = sanitizeText(releaseDateText, 120);
+    if (!normalized) return 0;
+    const year = parseYearFromText(normalized);
+    return Number.isInteger(year) ? year : 0;
+}
+
+function collectSteamGenreLabels(data) {
+    const genreRows = Array.isArray(data?.genres) ? data.genres : [];
+    const categoryRows = Array.isArray(data?.categories) ? data.categories : [];
+    const combined = [...genreRows, ...categoryRows]
+        .map((row) => sanitizeText(row?.description || "", 80))
+        .filter(Boolean);
+    return [...new Set(combined)];
+}
+
 async function getSteamAppDetails(appId) {
     const numericAppId = Number(appId);
     if (!Number.isInteger(numericAppId) || numericAppId <= 0) return null;
@@ -384,12 +570,16 @@ async function getSteamAppDetails(appId) {
         const node = payload?.[String(numericAppId)];
         if (!node?.success || !node?.data) return null;
         const data = node.data;
+        const genres = collectSteamGenreLabels(data);
+        const releaseYear = parseSteamReleaseYear(data?.release_date?.date || "");
         return {
             appId: numericAppId,
             name: sanitizeText(data.name || `App ${numericAppId}`, 120),
             description: sanitizeText(data.short_description || "", 600),
             headerImage: data.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${numericAppId}/header.jpg`,
-            libraryImage: `https://cdn.cloudflare.steamstatic.com/steam/apps/${numericAppId}/library_600x900_2x.jpg`
+            libraryImage: `https://cdn.cloudflare.steamstatic.com/steam/apps/${numericAppId}/library_600x900_2x.jpg`,
+            genres,
+            releaseYear: releaseYear > 0 ? releaseYear : null
         };
     } catch {
         return null;
@@ -494,15 +684,23 @@ async function ensureColumn(tableName, columnDefinition) {
 function createUploader(targetDir, maxSizeBytes = 6 * 1024 * 1024) {
     const extByMime = {
         "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/pjpeg": ".jpg",
         "image/png": ".png",
+        "image/x-png": ".png",
         "image/webp": ".webp",
         "image/gif": ".gif",
-        "image/avif": ".avif"
+        "image/avif": ".avif",
+        "image/heic": ".heic",
+        "image/heif": ".heif"
     };
     const storage = multer.diskStorage({
         destination: (req, file, cb) => cb(null, targetDir),
         filename: (req, file, cb) => {
-            const ext = extByMime[String(file.mimetype || "").toLowerCase()] || ".png";
+            const mimeType = String(file.mimetype || "").toLowerCase();
+            const extFromName = path.extname(String(file.originalname || "")).toLowerCase();
+            const extFromMime = extByMime[mimeType] || "";
+            const ext = extFromMime || (/^\.[a-z0-9]{2,6}$/i.test(extFromName) ? extFromName : ".png");
             cb(null, `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`);
         }
     });
@@ -519,7 +717,7 @@ function createUploader(targetDir, maxSizeBytes = 6 * 1024 * 1024) {
     });
 }
 
-const avatarUpload = createUploader(avatarDir, 5 * 1024 * 1024);
+const avatarUpload = createUploader(avatarDir, 12 * 1024 * 1024);
 const coverUpload = createUploader(coverDir, 8 * 1024 * 1024);
 
 async function initDb() {
@@ -651,6 +849,8 @@ async function initDb() {
             rating_letter TEXT NOT NULL,
             interest_score INTEGER NOT NULL,
             steam_app_id TEXT,
+            game_genres TEXT,
+            game_release_year INTEGER,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             UNIQUE (round_id, giver_user_id),
@@ -659,6 +859,8 @@ async function initDb() {
             FOREIGN KEY (receiver_user_id) REFERENCES users(id)
         )
     `);
+    await ensureColumn("recommendations", "game_genres TEXT");
+    await ensureColumn("recommendations", "game_release_year INTEGER");
 
     await dbRun(`
         CREATE TABLE IF NOT EXISTS recommendation_comments (
@@ -701,6 +903,18 @@ async function initDb() {
             FOREIGN KEY (rater_user_id) REFERENCES users(id)
         )
     `);
+
+    await dbRun(`
+        CREATE TABLE IF NOT EXISTS user_achievements (
+            user_id INTEGER NOT NULL,
+            achievement_key TEXT NOT NULL,
+            unlocked_at INTEGER NOT NULL,
+            notified_at INTEGER,
+            PRIMARY KEY (user_id, achievement_key),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+    await ensureColumn("user_achievements", "notified_at INTEGER");
 }
 
 function buildMailer() {
@@ -1170,6 +1384,228 @@ async function getUserProfileActivity(userId) {
     return { given, received };
 }
 
+async function countCompletedRoundsForUser(userId) {
+    const row = await dbGet(
+        `SELECT COUNT(*) AS total
+         FROM rounds r
+         WHERE r.status = 'closed'
+           AND EXISTS (
+                SELECT 1
+                FROM recommendations rec
+                WHERE rec.round_id = r.id
+                  AND rec.giver_user_id = ?
+           )
+           AND EXISTS (
+                SELECT 1
+                FROM recommendations rec2
+                JOIN recommendation_ratings rr ON rr.recommendation_id = rec2.id
+                WHERE rec2.round_id = r.id
+                  AND rec2.receiver_user_id = ?
+                  AND rr.rater_user_id = ?
+           )`,
+        [userId, userId, userId]
+    );
+    return Number(row?.total || 0);
+}
+
+async function hydrateRecommendationMetadataForAchievements(userId) {
+    const missing = await dbAll(
+        `SELECT rec.id, rec.steam_app_id
+         FROM recommendations rec
+         JOIN rounds r ON r.id = rec.round_id
+         WHERE rec.giver_user_id = ?
+           AND r.status = 'closed'
+           AND COALESCE(rec.steam_app_id, '') <> ''
+           AND (rec.game_release_year IS NULL OR rec.game_release_year <= 0 OR COALESCE(rec.game_genres, '') = '')
+         ORDER BY rec.id DESC
+         LIMIT 24`,
+        [userId]
+    );
+    for (const row of missing) {
+        const appId = sanitizeText(row?.steam_app_id || "", 20);
+        if (!appId) continue;
+        const details = await getSteamAppDetails(appId);
+        if (!details) continue;
+        const genresText = sanitizeText((details.genres || []).join(", "), 320);
+        const releaseYear = Number(details.releaseYear || 0);
+        await dbRun(
+            `UPDATE recommendations
+             SET game_genres = CASE
+                                   WHEN COALESCE(?, '') <> '' THEN ?
+                                   ELSE game_genres
+                               END,
+                 game_release_year = CASE
+                                         WHEN ? > 0 THEN ?
+                                         ELSE game_release_year
+                                     END
+             WHERE id = ?`,
+            [genresText, genresText, releaseYear, releaseYear, row.id]
+        );
+    }
+}
+
+function detectRecommendationSignals(recommendation) {
+    const name = normalizeMatchText(recommendation?.game_name || "");
+    const description = normalizeMatchText(recommendation?.game_description || "");
+    const reason = normalizeMatchText(recommendation?.reason || "");
+    const genres = normalizeMatchText(recommendation?.game_genres || "");
+    const allText = `${name} ${description} ${reason} ${genres}`.replace(/\s+/g, " ").trim();
+    const releaseYear = Number(recommendation?.game_release_year || 0);
+    const fallbackYear = parseYearFromText(allText);
+    const effectiveYear = releaseYear > 0 ? releaseYear : fallbackYear;
+
+    const gotyByName = name.length >= 3 && TGA_GOTY_WINNERS_NORMALIZED.some((winnerName) =>
+        name.includes(winnerName) || winnerName.includes(name)
+    );
+    const awardsByKeyword = containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.awards);
+
+    return {
+        action: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.action),
+        shooter: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.shooter),
+        horror: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.horror),
+        soulslike: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.soulslike),
+        awards: awardsByKeyword || gotyByName,
+        old: effectiveYear > 0 && effectiveYear < 2010
+    };
+}
+
+async function getRecommendationAchievementSignals(userId) {
+    await hydrateRecommendationMetadataForAchievements(userId);
+    const rows = await dbAll(
+        `SELECT rec.game_name, rec.game_description, rec.reason, rec.game_genres, rec.game_release_year
+         FROM recommendations rec
+         JOIN rounds r ON r.id = rec.round_id
+         WHERE rec.giver_user_id = ?
+           AND r.status = 'closed'`,
+        [userId]
+    );
+
+    const aggregate = {
+        action: false,
+        shooter: false,
+        horror: false,
+        soulslike: false,
+        awards: false,
+        old: false
+    };
+
+    for (const row of rows) {
+        const detected = detectRecommendationSignals(row);
+        aggregate.action = aggregate.action || detected.action;
+        aggregate.shooter = aggregate.shooter || detected.shooter;
+        aggregate.horror = aggregate.horror || detected.horror;
+        aggregate.soulslike = aggregate.soulslike || detected.soulslike;
+        aggregate.awards = aggregate.awards || detected.awards;
+        aggregate.old = aggregate.old || detected.old;
+        if (Object.values(aggregate).every(Boolean)) break;
+    }
+    return aggregate;
+}
+
+async function countRatedRecommendationsForUser(userId) {
+    const row = await dbGet(
+        `SELECT COUNT(*) AS total
+         FROM recommendation_ratings
+         WHERE rater_user_id = ?`,
+        [userId]
+    );
+    return Number(row?.total || 0);
+}
+
+function shouldUnlockAchievement(definition, completedRounds, recommendationSignals, ratedRecommendations) {
+    if (Number.isInteger(definition.requiredRounds) && definition.requiredRounds > 0) {
+        return completedRounds >= definition.requiredRounds;
+    }
+    if (definition.criterion === "action") return Boolean(recommendationSignals.action);
+    if (definition.criterion === "shooter") return Boolean(recommendationSignals.shooter);
+    if (definition.criterion === "horror") return Boolean(recommendationSignals.horror);
+    if (definition.criterion === "soulslike") return Boolean(recommendationSignals.soulslike);
+    if (definition.criterion === "awards") return Boolean(recommendationSignals.awards);
+    if (definition.criterion === "old") return Boolean(recommendationSignals.old);
+    if (definition.criterion === "first_rating") return Number(ratedRecommendations || 0) >= 1;
+    return false;
+}
+
+function buildAchievementsPayload(completedRounds, achievementRows) {
+    const rowMap = new Map(
+        (achievementRows || []).map((row) => [String(row.achievement_key), row])
+    );
+    const achievements = ACHIEVEMENT_DEFINITIONS.map((definition) => {
+        const row = rowMap.get(definition.key);
+        return {
+            key: definition.key,
+            name: definition.name || definition.key,
+            requiredRounds: Number.isInteger(definition.requiredRounds) ? definition.requiredRounds : 0,
+            description: definition.description,
+            imageUrl: definition.imageUrl,
+            unlocked: Boolean(row),
+            unlockedAt: row?.unlocked_at || null
+        };
+    });
+    const newlyUnlocked = achievements.filter((achievement) => {
+        const row = rowMap.get(achievement.key);
+        return Boolean(row) && !row.notified_at;
+    });
+    return {
+        completedRounds,
+        achievements,
+        newlyUnlocked
+    };
+}
+
+async function syncUserAchievements(userId, { markNewAsNotified = false } = {}) {
+    const completedRounds = await countCompletedRoundsForUser(userId);
+    const recommendationSignals = await getRecommendationAchievementSignals(userId);
+    const ratedRecommendations = await countRatedRecommendationsForUser(userId);
+    const now = nowInSeconds();
+    const shouldBeUnlocked = ACHIEVEMENT_DEFINITIONS
+        .filter((definition) =>
+            shouldUnlockAchievement(definition, completedRounds, recommendationSignals, ratedRecommendations)
+        )
+        .map((definition) => definition.key);
+
+    for (const achievementKey of shouldBeUnlocked) {
+        await dbRun(
+            `INSERT OR IGNORE INTO user_achievements (user_id, achievement_key, unlocked_at)
+             VALUES (?, ?, ?)`,
+            [userId, achievementKey, now]
+        );
+    }
+
+    let rows = await dbAll(
+        `SELECT achievement_key, unlocked_at, notified_at
+         FROM user_achievements
+         WHERE user_id = ?`,
+        [userId]
+    );
+    let payload = buildAchievementsPayload(completedRounds, rows);
+
+    if (markNewAsNotified && payload.newlyUnlocked.length) {
+        const keys = payload.newlyUnlocked.map((item) => item.key);
+        const placeholders = keys.map(() => "?").join(", ");
+        await dbRun(
+            `UPDATE user_achievements
+             SET notified_at = ?
+             WHERE user_id = ?
+               AND achievement_key IN (${placeholders})
+               AND notified_at IS NULL`,
+            [now, userId, ...keys]
+        );
+        rows = await dbAll(
+            `SELECT achievement_key, unlocked_at, notified_at
+             FROM user_achievements
+             WHERE user_id = ?`,
+            [userId]
+        );
+        payload = buildAchievementsPayload(completedRounds, rows);
+        payload.newlyUnlocked = payload.achievements.filter((achievement) =>
+            keys.includes(achievement.key)
+        );
+    }
+
+    return payload;
+}
+
 async function getProfileComments(profileUserId) {
     return dbAll(
         `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
@@ -1474,7 +1910,7 @@ app.use(
                 scriptSrc: ["'self'"],
                 styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
                 fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-                imgSrc: ["'self'", "data:", "https:"],
+                imgSrc: ["'self'", "data:", "blob:", "https:"],
                 connectSrc: ["'self'"],
                 objectSrc: ["'none'"],
                 frameAncestors: ["'none'"],
@@ -1857,7 +2293,7 @@ app.get("/api/users/:userId/profile-view", requireAuth, async (req, res) => {
             return res.status(400).json({ message: "Usuario invalido." });
         }
         const user = await dbGet(
-            `SELECT id, username, nickname, avatar_url
+            `SELECT id, username, email, nickname, avatar_url
              FROM users WHERE id = ? LIMIT 1`,
             [userId]
         );
@@ -1865,6 +2301,9 @@ app.get("/api/users/:userId/profile-view", requireAuth, async (req, res) => {
             return res.status(404).json({ message: "Usuario nao encontrado." });
         }
         user.nickname = normalizeNickname(user.nickname, user.username);
+        if (userId !== req.currentUser.id) {
+            user.email = maskEmailForDisplay(user.email);
+        }
         const activity = await getUserProfileActivity(userId);
         return res.json({
             profile: user,
@@ -1882,7 +2321,7 @@ app.get("/api/user/profile-view", requireAuth, async (req, res) => {
         const rawUserId = req.query.userId !== undefined ? Number(req.query.userId) : req.currentUser.id;
         const userId = Number.isInteger(rawUserId) && rawUserId > 0 ? rawUserId : req.currentUser.id;
         const user = await dbGet(
-            `SELECT id, username, nickname, avatar_url
+            `SELECT id, username, email, nickname, avatar_url
              FROM users WHERE id = ? LIMIT 1`,
             [userId]
         );
@@ -1890,6 +2329,9 @@ app.get("/api/user/profile-view", requireAuth, async (req, res) => {
             return res.status(404).json({ message: "Usuario nao encontrado." });
         }
         user.nickname = normalizeNickname(user.nickname, user.username);
+        if (userId !== req.currentUser.id) {
+            user.email = maskEmailForDisplay(user.email);
+        }
         const activity = await getUserProfileActivity(userId);
         return res.json({
             profile: user,
@@ -1899,6 +2341,37 @@ app.get("/api/user/profile-view", requireAuth, async (req, res) => {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao carregar perfil." });
+    }
+});
+
+app.get("/api/user/achievements", requireAuth, async (req, res) => {
+    try {
+        const requestedUserId = Number(req.query.userId);
+        const targetUserId =
+            Number.isInteger(requestedUserId) && requestedUserId > 0
+                ? requestedUserId
+                : req.currentUser.id;
+        const targetExists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [targetUserId]);
+        if (!targetExists) {
+            return res.status(404).json({ message: "Usuario nao encontrado." });
+        }
+
+        const claimRequested =
+            String(req.query.claim || "").toLowerCase() === "1"
+            || String(req.query.claim || "").toLowerCase() === "true";
+        const canClaim = claimRequested && targetUserId === req.currentUser.id;
+
+        const payload = await syncUserAchievements(targetUserId, {
+            markNewAsNotified: canClaim
+        });
+        return res.json({
+            userId: targetUserId,
+            canEdit: targetUserId === req.currentUser.id,
+            ...payload
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao carregar conquistas." });
     }
 });
 
@@ -1929,10 +2402,72 @@ app.put("/api/user/profile", requireAuth, async (req, res) => {
     }
 });
 
+async function handleNicknameAvailabilityRequest(req, res) {
+    try {
+        const current = await dbGet(
+            "SELECT id, username, nickname FROM users WHERE id = ? LIMIT 1",
+            [req.session.userId]
+        );
+        if (!current) {
+            return res.status(404).json({ message: "Usuario nao encontrado." });
+        }
+
+        const rawNickname =
+            req.method === "POST"
+                ? req.body?.nickname
+                : req.query?.nickname;
+        const requested = sanitizeText(rawNickname, 30);
+        if (!requested) {
+            return res.status(400).json({ message: "Informe um nickname para verificar." });
+        }
+
+        const normalized = normalizeNickname(requested, current.username);
+        const currentNormalized = normalizeNickname(current.nickname, current.username);
+        const sameAsCurrent = normalized.toLowerCase() === currentNormalized.toLowerCase();
+        if (sameAsCurrent) {
+            return res.json({
+                nickname: normalized,
+                available: true,
+                sameAsCurrent: true,
+                message: "Esse ja e o seu nickname atual."
+            });
+        }
+
+        try {
+            await assertNicknameAvailable(normalized, req.session.userId);
+            return res.json({
+                nickname: normalized,
+                available: true,
+                sameAsCurrent: false,
+                message: "Nickname disponivel."
+            });
+        } catch (error) {
+            if (String(error.message || "").includes("Nickname ja")) {
+                return res.json({
+                    nickname: normalized,
+                    available: false,
+                    sameAsCurrent: false,
+                    message: "Nickname ja esta em uso."
+                });
+            }
+            throw error;
+        }
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao verificar nickname." });
+    }
+}
+
+app.get("/api/user/nickname-availability", requireAuth, handleNicknameAvailabilityRequest);
+app.post("/api/user/nickname-availability", requireAuth, handleNicknameAvailabilityRequest);
+
 app.post("/api/user/avatar", requireAuth, (req, res) => {
     avatarUpload.single("avatar")(req, res, async (error) => {
         try {
             if (error) {
+                if (error.code === "LIMIT_FILE_SIZE") {
+                    return res.status(400).json({ message: "A imagem excede o limite de 12MB." });
+                }
                 return res.status(400).json({ message: error.message || "Erro no upload da imagem." });
             }
             if (!req.file) {
@@ -2165,10 +2700,58 @@ app.get("/api/admin/dashboard", requireAuth, requireOwner, async (req, res) => {
              ORDER BY r.id DESC
              LIMIT 200`
         );
-        return res.json({ users, rounds });
+        const userAchievements = await dbAll(
+            `SELECT user_id,
+                    COUNT(*) AS unlocked_count,
+                    GROUP_CONCAT(achievement_key, ',') AS keys
+             FROM user_achievements
+             GROUP BY user_id`
+        );
+        return res.json({ users, rounds, userAchievements });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao carregar painel admin." });
+    }
+});
+
+app.post("/api/admin/users/:userId/achievements", requireAuth, requireOwner, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: "Usuario invalido." });
+        }
+        const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
+        if (!exists) {
+            return res.status(404).json({ message: "Usuario nao encontrado." });
+        }
+
+        const action = String(req.body.action || "").trim().toLowerCase();
+        const achievementKey = String(req.body.achievementKey || "").trim();
+        const validAchievement = ACHIEVEMENT_DEFINITIONS.find((item) => item.key === achievementKey);
+        const now = nowInSeconds();
+
+        if (action === "grant") {
+            if (!validAchievement) {
+                return res.status(400).json({ message: "Conquista invalida." });
+            }
+            await dbRun(
+                `INSERT INTO user_achievements (user_id, achievement_key, unlocked_at, notified_at)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(user_id, achievement_key) DO UPDATE SET unlocked_at = excluded.unlocked_at`,
+                [userId, achievementKey, now, now]
+            );
+            return res.json({ message: `Conquista ${achievementKey} concedida.` });
+        }
+
+        if (action === "reset_all") {
+            await dbRun("DELETE FROM user_achievements WHERE user_id = ?", [userId]);
+            return res.json({ message: "Conquistas zeradas." });
+        }
+
+        return res.status(400).json({ message: "Acao invalida." });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao atualizar conquistas do usuario." });
     }
 });
 
@@ -2427,16 +3010,33 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
     try {
         const roundId = Number(req.params.roundId);
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
-        if (!requireRoundCreator(round, req, res)) return;
+        if (!round) {
+            return res.status(404).json({ message: "Rodada nao encontrada." });
+        }
+        const canManageRound = Boolean(req.currentUser?.isOwner) || Number(round.creator_user_id) === Number(req.currentUser.id);
+        if (!canManageRound) {
+            return res.status(403).json({ message: "Sem permissao para gerenciar essa rodada." });
+        }
+
         if (round.status === "closed") {
-            return res.status(400).json({ message: "A rodada ja esta encerrada." });
+            const reopenAt = nowInSeconds();
+            await dbRun(
+                "UPDATE rounds SET status = 'indication', rating_starts_at = ?, closed_at = NULL WHERE id = ?",
+                [reopenAt, roundId]
+            );
+            const payload = await getRoundPayload(roundId, req.currentUser.id);
+            return res.json({
+                message: "Rodada reaberta. A sessao de notas navais foi liberada novamente.",
+                round: payload
+            });
         }
 
         await dbRun("UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?", [
             nowInSeconds(),
             roundId
         ]);
-        return res.json({ message: "Rodada encerrada." });
+        const payload = await getRoundPayload(roundId, req.currentUser.id);
+        return res.json({ message: "Rodada encerrada.", round: payload });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao encerrar rodada." });
@@ -2540,7 +3140,9 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
             const coverUrlFromBody = sanitizeText(req.body.coverUrl, 400);
 
             const existing = await dbGet(
-                "SELECT id, game_cover_url FROM recommendations WHERE round_id = ? AND giver_user_id = ? LIMIT 1",
+                `SELECT id, game_cover_url, game_genres, game_release_year
+                 FROM recommendations
+                 WHERE round_id = ? AND giver_user_id = ? LIMIT 1`,
                 [roundId, req.session.userId]
             );
 
@@ -2550,8 +3152,10 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
             }
 
             let steamDetails = null;
-            if (steamAppId && (!gameName || !gameDescription || !gameCoverUrl)) {
+            if (steamAppId) {
                 steamDetails = await getSteamAppDetails(steamAppId);
+            }
+            if (steamDetails && (!gameName || !gameDescription || !gameCoverUrl)) {
                 if (!gameName) {
                     gameName = sanitizeText(steamDetails?.name || "", 120);
                 }
@@ -2587,11 +3191,19 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 return res.status(400).json({ message: "Envie a capa do jogo (arquivo ou capa da Steam)." });
             }
 
+            const steamGenres = sanitizeText((steamDetails?.genres || []).join(", "), 320);
+            const steamReleaseYear = Number(steamDetails?.releaseYear || 0);
+            const resolvedGenres = steamGenres || sanitizeText(existing?.game_genres || "", 320) || null;
+            const resolvedReleaseYear =
+                steamReleaseYear > 0
+                    ? steamReleaseYear
+                    : (Number(existing?.game_release_year || 0) > 0 ? Number(existing?.game_release_year) : null);
+
             if (existing) {
                 await dbRun(
                     `UPDATE recommendations
                      SET receiver_user_id = ?, game_name = ?, game_cover_url = ?, game_description = ?,
-                         reason = ?, steam_app_id = ?, updated_at = ?
+                         reason = ?, steam_app_id = ?, game_genres = ?, game_release_year = ?, updated_at = ?
                      WHERE id = ?`,
                     [
                         assignment.receiver_user_id,
@@ -2600,6 +3212,8 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                         gameDescription,
                         reason,
                         steamAppId || null,
+                        resolvedGenres,
+                        resolvedReleaseYear,
                         nowInSeconds(),
                         existing.id
                     ]
@@ -2609,8 +3223,8 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 await dbRun(
                     `INSERT INTO recommendations
                         (round_id, giver_user_id, receiver_user_id, game_name, game_cover_url, game_description,
-                         reason, rating_letter, interest_score, steam_app_id, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                         reason, rating_letter, interest_score, steam_app_id, game_genres, game_release_year, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         roundId,
                         req.session.userId,
@@ -2622,6 +3236,8 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                         "J",
                         1,
                         steamAppId || null,
+                        resolvedGenres,
+                        resolvedReleaseYear,
                         now,
                         now
                     ]
@@ -2691,8 +3307,29 @@ app.post("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
             );
         }
 
+        // CGNewba: desbloqueio imediato ao avaliar uma indicacao.
+        await dbRun(
+            `INSERT OR IGNORE INTO user_achievements (user_id, achievement_key, unlocked_at)
+             VALUES (?, 'CGNewba', ?)`,
+            [req.session.userId, now]
+        );
+
+        let newlyUnlocked = [];
+        try {
+            const achievementPayload = await syncUserAchievements(req.session.userId, {
+                markNewAsNotified: true
+            });
+            newlyUnlocked = achievementPayload?.newlyUnlocked || [];
+        } catch (achievementError) {
+            console.error("[achievement-sync-on-rating]", achievementError);
+        }
+
         const payload = await getRoundPayload(roundId, req.session.userId);
-        return res.json({ message: "Nota naval registrada.", round: payload });
+        return res.json({
+            message: "Nota naval registrada.",
+            round: payload,
+            newlyUnlocked
+        });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao registrar nota naval." });
@@ -2805,8 +3442,9 @@ app.delete("/api/recommendation-comments/:commentId", requireAuth, async (req, r
         if (!existing) {
             return res.status(404).json({ message: "Comentario nao encontrado." });
         }
-        if (Number(existing.user_id) !== Number(req.currentUser.id)) {
-            return res.status(403).json({ message: "Voce so pode excluir seus proprios comentarios." });
+        const isOwnComment = Number(existing.user_id) === Number(req.currentUser.id);
+        if (!isOwnComment && !req.currentUser?.isOwner) {
+            return res.status(403).json({ message: "Sem permissao para excluir este comentario." });
         }
         await dbRun(
             `UPDATE recommendation_comments

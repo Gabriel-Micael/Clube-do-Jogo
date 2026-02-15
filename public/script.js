@@ -3,11 +3,32 @@ const baseAvatar =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' rx='16' fill='%23101933'/%3E%3Ccircle cx='60' cy='46' r='22' fill='%2339d2ff'/%3E%3Crect x='25' y='77' width='70' height='28' rx='14' fill='%234f79ff'/%3E%3C/svg%3E";
 let sessionUserId = 0;
 let sessionUserLoaded = false;
+let sessionProfileLoaded = false;
+let sessionProfile = null;
+let sessionIsOwner = false;
 const recommendationCommentFormState = new Map();
 const recommendationCommentSignatureCaches = {
     home: new Map(),
     round: new Map()
 };
+const achievementKeysOrdered = [
+    "CGFerro",
+    "CGBronze",
+    "CGPrata",
+    "CGOuro",
+    "CGDiamante",
+    "CGMaster",
+    "CGAcao",
+    "CGTiro",
+    "CGTerror",
+    "CGSouls",
+    "CGAwards",
+    "CGOld",
+    "CGNewba"
+];
+let achievementClaimInFlight = false;
+let achievementPollTimer = null;
+let achievementSound = null;
 
 function byId(id) {
     return document.getElementById(id);
@@ -73,6 +94,7 @@ function commentItemHtml(comment, options = {}) {
     const recommendationId = Number(options.recommendationId || comment.recommendation_id || 0);
     const interactive = options.interactive === true && recommendationId > 0;
     const ownComment = sessionUserId > 0 && Number(comment.user_id) === sessionUserId;
+    const canDeleteComment = ownComment || sessionIsOwner;
     const depth = Math.max(0, Math.min(4, Number(options.depth || 0)));
     const parentAuthor = String(options.parentAuthor || "").trim();
     const actions = interactive
@@ -80,7 +102,7 @@ function commentItemHtml(comment, options = {}) {
             <div class="comment-actions">
                 <button class="comment-action" type="button" data-comment-action="reply" data-comment-id="${Number(comment.id) || 0}" data-recommendation-id="${recommendationId}">Responder</button>
                 ${ownComment ? `<button class="comment-action" type="button" data-comment-action="edit" data-comment-id="${Number(comment.id) || 0}" data-recommendation-id="${recommendationId}">Editar</button>` : ""}
-                ${ownComment ? `<button class="comment-action danger" type="button" data-comment-action="delete" data-comment-id="${Number(comment.id) || 0}" data-recommendation-id="${recommendationId}">Excluir</button>` : ""}
+                ${canDeleteComment ? `<button class="comment-action danger" type="button" data-comment-action="delete" data-comment-id="${Number(comment.id) || 0}" data-recommendation-id="${recommendationId}">Excluir</button>` : ""}
             </div>
           `
         : "";
@@ -306,17 +328,224 @@ function removeRecommendationComment(scope, recommendationId, commentId) {
     return recommendation;
 }
 
-async function ensureSessionUserId() {
-    if (sessionUserLoaded) return sessionUserId;
+async function ensureSessionProfile() {
+    if (sessionProfileLoaded) return sessionProfile;
     try {
         const data = await sendJson("/api/user/profile");
         const parsed = Number(data?.profile?.id || 0);
         sessionUserId = Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+        sessionIsOwner = Boolean(data?.isOwner);
+        sessionProfile = data;
     } catch {
+        sessionProfile = null;
         sessionUserId = 0;
+        sessionIsOwner = false;
     }
+    sessionProfileLoaded = true;
     sessionUserLoaded = true;
+    return sessionProfile;
+}
+
+async function ensureSessionUserId() {
+    if (!sessionProfileLoaded) {
+        await ensureSessionProfile();
+    }
     return sessionUserId;
+}
+
+function syncOwnerNavLinkVisibility() {
+    const adminNavLink = byId("adminNavLink");
+    if (!adminNavLink) return;
+    if (sessionIsOwner) adminNavLink.classList.remove("hidden");
+    else adminNavLink.classList.add("hidden");
+}
+
+async function setupOwnerNavLink() {
+    await ensureSessionProfile();
+    syncOwnerNavLinkVisibility();
+}
+
+function achievementSelectOptionsHtml() {
+    return achievementKeysOrdered
+        .map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(key)}</option>`)
+        .join("");
+}
+
+function parseAchievementKeys(rawKeys) {
+    const value = String(rawKeys || "").trim();
+    if (!value) return [];
+    return value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+function formatAchievementKeys(keys) {
+    if (!Array.isArray(keys) || !keys.length) return "Sem conquistas";
+    return keys.join(", ");
+}
+
+function renderAdminDashboardUsers(users, userAchievementsMap) {
+    return (users || [])
+        .map((user) => {
+            const achievementState = userAchievementsMap.get(Number(user.id)) || {
+                unlocked_count: 0,
+                keys: []
+            };
+            return `
+                <div class="search-item admin-user-item">
+                    <div>
+                        <strong>${escapeHtml(displayName(user))}</strong>
+                        <div>${escapeHtml(user.email)}</div>
+                        <div>Status: ${user.blocked ? "Bloqueado" : "Ativo"}</div>
+                        <div>Conquistas: ${escapeHtml(formatAchievementKeys(achievementState.keys))}</div>
+                    </div>
+                    <div class="inline-actions">
+                        <button class="btn btn-outline" data-admin-toggle-block="${user.id}" data-admin-blocked="${user.blocked ? 1 : 0}" type="button">
+                            ${user.blocked ? "Desbloquear" : "Bloquear"}
+                        </button>
+                        <button class="btn btn-outline" data-admin-delete-user="${user.id}" type="button">Excluir</button>
+                    </div>
+                    <div class="admin-achievement-tools">
+                        <select data-admin-achievement-key="${user.id}">
+                            ${achievementSelectOptionsHtml()}
+                        </select>
+                        <button class="btn btn-outline" data-admin-grant-achievement="${user.id}" type="button">Dar conquista</button>
+                        <button class="btn btn-outline" data-admin-reset-achievements="${user.id}" type="button">Zerar conquistas</button>
+                    </div>
+                </div>
+            `;
+        })
+        .join("");
+}
+
+function renderAdminDashboardRounds(rounds) {
+    return (rounds || [])
+        .map(
+            (round) => `
+                <div class="search-item">
+                    <div>
+                        <strong>Rodada - ${formatRoundDateTime(round.created_at)}</strong>
+                        <div>Status: ${escapeHtml(round.status)}</div>
+                        <div>Criador: ${escapeHtml(displayName({ nickname: round.creator_nickname, username: round.creator_username }))}</div>
+                    </div>
+                    <div class="inline-actions">
+                        <button class="btn btn-outline" data-admin-close-round="${round.id}" type="button">Fechar</button>
+                        <button class="btn btn-outline" data-admin-delete-round="${round.id}" type="button">Excluir</button>
+                    </div>
+                </div>
+            `
+        )
+        .join("");
+}
+
+async function handleAdminPage() {
+    const adminPanel = byId("adminPanel");
+    const adminUsersList = byId("adminUsersList");
+    const adminRoundsList = byId("adminRoundsList");
+    if (!adminPanel || !adminUsersList || !adminRoundsList) return;
+
+    if (!sessionIsOwner) {
+        window.location.href = "/";
+        return;
+    }
+
+    async function refreshAdmin() {
+        const data = await sendJson("/api/admin/dashboard");
+        const userAchievementsMap = new Map(
+            (data.userAchievements || []).map((item) => [
+                Number(item.user_id),
+                {
+                    unlocked_count: Number(item.unlocked_count || 0),
+                    keys: parseAchievementKeys(item.keys)
+                }
+            ])
+        );
+        adminUsersList.innerHTML = renderAdminDashboardUsers(data.users, userAchievementsMap);
+        adminRoundsList.innerHTML = renderAdminDashboardRounds(data.rounds);
+    }
+
+    try {
+        await refreshAdmin();
+    } catch (error) {
+        setFeedback("adminFeedback", error.message, "error");
+    }
+
+    adminPanel.addEventListener("click", async (event) => {
+        const toggleBtn = event.target.closest("button[data-admin-toggle-block]");
+        const deleteUserBtn = event.target.closest("button[data-admin-delete-user]");
+        const closeRoundBtn = event.target.closest("button[data-admin-close-round]");
+        const deleteRoundBtn = event.target.closest("button[data-admin-delete-round]");
+        const grantAchievementBtn = event.target.closest("button[data-admin-grant-achievement]");
+        const resetAchievementsBtn = event.target.closest("button[data-admin-reset-achievements]");
+
+        try {
+            if (toggleBtn) {
+                const userId = Number(toggleBtn.dataset.adminToggleBlock);
+                const blocked = Number(toggleBtn.dataset.adminBlocked) === 1 ? 0 : 1;
+                const result = await sendJson(`/api/admin/users/${userId}/block`, "PATCH", { blocked });
+                setFeedback("adminFeedback", result.message, "ok");
+                await refreshAdmin();
+                return;
+            }
+            if (deleteUserBtn) {
+                const userId = Number(deleteUserBtn.dataset.adminDeleteUser);
+                await fetch(`/api/admin/users/${userId}`, {
+                    method: "DELETE",
+                    credentials: "include"
+                }).then(async (response) => {
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(data.message || "Erro ao excluir conta.");
+                });
+                setFeedback("adminFeedback", "Conta excluida.", "ok");
+                await refreshAdmin();
+                return;
+            }
+            if (closeRoundBtn) {
+                const roundId = Number(closeRoundBtn.dataset.adminCloseRound);
+                const result = await sendJson(`/api/rounds/${roundId}`, "PUT", { status: "closed" });
+                setFeedback("adminFeedback", result.message, "ok");
+                await refreshAdmin();
+                return;
+            }
+            if (deleteRoundBtn) {
+                const roundId = Number(deleteRoundBtn.dataset.adminDeleteRound);
+                await fetch(`/api/rounds/${roundId}`, {
+                    method: "DELETE",
+                    credentials: "include"
+                }).then(async (response) => {
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(data.message || "Erro ao excluir rodada.");
+                });
+                setFeedback("adminFeedback", "Rodada excluida.", "ok");
+                await refreshAdmin();
+                return;
+            }
+            if (grantAchievementBtn) {
+                const userId = Number(grantAchievementBtn.dataset.adminGrantAchievement);
+                const select = adminPanel.querySelector(`select[data-admin-achievement-key='${userId}']`);
+                const achievementKey = String(select?.value || "").trim();
+                if (!achievementKey) throw new Error("Selecione uma conquista.");
+                const result = await sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
+                    action: "grant",
+                    achievementKey
+                });
+                setFeedback("adminFeedback", result.message, "ok");
+                await refreshAdmin();
+                return;
+            }
+            if (resetAchievementsBtn) {
+                const userId = Number(resetAchievementsBtn.dataset.adminResetAchievements);
+                const result = await sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
+                    action: "reset_all"
+                });
+                setFeedback("adminFeedback", result.message, "ok");
+                await refreshAdmin();
+            }
+        } catch (error) {
+            setFeedback("adminFeedback", error.message, "error");
+        }
+    });
 }
 
 async function submitRecommendationCommentForm(form, scope, feedbackTarget) {
@@ -427,8 +656,114 @@ async function handleRecommendationCommentAction(event, scope, feedbackTarget) {
 function setFeedback(target, message, type = "error") {
     const el = typeof target === "string" ? byId(target) : target;
     if (!el) return;
-    el.textContent = message || "";
-    el.className = `feedback${type ? ` ${type}` : ""}`;
+    const text = String(message || "").trim();
+    el.textContent = text;
+    el.className = `feedback${text && type ? ` ${type}` : ""}`;
+    if (!text) {
+        el.classList.add("hidden");
+    } else {
+        el.classList.remove("hidden");
+    }
+}
+
+function ensureAchievementToastStack() {
+    let stack = byId("achievementToastStack");
+    if (stack) return stack;
+    stack = document.createElement("div");
+    stack.id = "achievementToastStack";
+    stack.className = "achievement-toast-stack";
+    document.body.appendChild(stack);
+    return stack;
+}
+
+function playAchievementUnlockSound() {
+    if (!achievementSound) {
+        achievementSound = new Audio("/uploads/trofeus/som.ogg");
+    }
+    achievementSound.currentTime = 0;
+    achievementSound.play().catch(() => {
+        // navegadores podem bloquear autoplay sem gesto
+    });
+}
+
+function showAchievementUnlockNotification(achievement) {
+    const stack = ensureAchievementToastStack();
+    const existingToasts = [...stack.querySelectorAll(".achievement-toast")];
+    const previousTops = new Map(
+        existingToasts.map((item) => [item, item.getBoundingClientRect().top])
+    );
+    const description = String(achievement?.description || "").trim();
+
+    const toast = document.createElement("article");
+    toast.className = "achievement-toast";
+    toast.innerHTML = `
+        <img src="${escapeHtml(achievement.imageUrl || baseAvatar)}" alt="${escapeHtml(achievement.name || "Conquista")}">
+        <div>
+            <small>Conquista desbloqueada</small>
+            <strong>${escapeHtml(achievement.name || "Nova conquista")}</strong>
+            ${description ? `<p class="achievement-toast-description">${escapeHtml(description)}</p>` : ""}
+        </div>
+    `;
+    stack.prepend(toast);
+
+    requestAnimationFrame(() => {
+        existingToasts.forEach((item) => {
+            const previousTop = previousTops.get(item);
+            if (!Number.isFinite(previousTop)) return;
+            const currentTop = item.getBoundingClientRect().top;
+            const delta = previousTop - currentTop;
+            if (Math.abs(delta) < 1) return;
+            item.style.transition = "none";
+            item.style.transform = `translateY(${delta}px)`;
+            requestAnimationFrame(() => {
+                item.style.transition = "transform 0.35s ease";
+                item.style.transform = "translateY(0)";
+            });
+            item.addEventListener(
+                "transitionend",
+                () => {
+                    item.style.removeProperty("transition");
+                    item.style.removeProperty("transform");
+                },
+                { once: true }
+            );
+        });
+    });
+
+    playAchievementUnlockSound();
+    requestAnimationFrame(() => toast.classList.add("is-visible"));
+    setTimeout(() => {
+        toast.classList.remove("is-visible");
+        setTimeout(() => toast.remove(), 450);
+    }, 10000);
+}
+
+function showAchievementUnlockNotifications(achievements) {
+    if (!Array.isArray(achievements) || !achievements.length) return;
+    achievements.forEach((achievement, index) => {
+        setTimeout(() => showAchievementUnlockNotification(achievement), index * 2000);
+    });
+}
+
+async function claimAchievementUnlocksAndNotify() {
+    if (achievementClaimInFlight) return null;
+    achievementClaimInFlight = true;
+    try {
+        const data = await sendJson("/api/user/achievements?claim=1");
+        showAchievementUnlockNotifications(data.newlyUnlocked || []);
+        return data;
+    } catch {
+        return null;
+    } finally {
+        achievementClaimInFlight = false;
+    }
+}
+
+function startAchievementPolling() {
+    if (achievementPollTimer) clearInterval(achievementPollTimer);
+    achievementPollTimer = setInterval(() => {
+        claimAchievementUnlocksAndNotify();
+    }, 25000);
 }
 
 function setButtonLoading(button, isLoading, loadingText = "Carregando...") {
@@ -522,12 +857,52 @@ function showOAuthFeedbackFromQuery() {
 function recommendationCardTemplate(rec, options = {}) {
     const showGradeOverlay = options.showGradeOverlay !== false;
     const showInlineGrade = options.showInlineGrade === true;
+    const isRoundIndicationLayout = options.layout === "round-indication";
     const grade = rec.rating_letter && rec.interest_score ? `${rec.rating_letter}${rec.interest_score}` : "";
     const cover = rec.game_cover_url || baseAvatar;
     const commentsHtml = recommendationCommentsHtml(rec.id, rec.comments || [], { interactive: true });
+    const cardClass = `recommendation-card${isRoundIndicationLayout ? " recommendation-card-indication" : ""}`;
+    const reasonHtml = rec.reason
+        ? `<p class="recommendation-reason"><strong>Motivo da indicacao:</strong> ${escapeHtml(rec.reason)}</p>`
+        : "";
+
+    if (isRoundIndicationLayout) {
+        return `
+            <article class="${cardClass}" data-recommendation-id="${rec.id}">
+                <div class="recommendation-cover-wrap">
+                    <img class="recommendation-cover-bg" src="${escapeHtml(cover)}" alt="">
+                    <img class="recommendation-cover" src="${escapeHtml(cover)}" alt="Capa ${escapeHtml(rec.game_name)}">
+                    ${showGradeOverlay && grade ? `<span class="grade-overlay">${escapeHtml(grade)}</span>` : ""}
+                </div>
+                <div class="recommendation-indication-main">
+                    <div class="recommendation-indication-top">
+                        <h3>${escapeHtml(rec.game_name)}</h3>
+                        <div class="meta-row">
+                            <span class="pill">De: ${userLinkHtml({ nickname: rec.giver_nickname, username: rec.giver_username }, rec.giver_user_id)}</span>
+                            <span class="pill">Para: ${userLinkHtml({ nickname: rec.receiver_nickname, username: rec.receiver_username }, rec.receiver_user_id)}</span>
+                        </div>
+                        <div class="desc-grade-row">
+                            ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
+                            <p>${escapeHtml(rec.game_description)}</p>
+                        </div>
+                        ${reasonHtml}
+                    </div>
+                    <div class="recommendation-comments-shell">
+                        <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentarios ainda.</div>'}</div>
+                        <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
+                        <form class="comment-form" data-comment-form="${rec.id}">
+                            <input type="hidden" name="parentCommentId" value="">
+                            <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliacao">
+                            <button class="btn btn-outline" type="submit">Comentar</button>
+                        </form>
+                    </div>
+                </div>
+            </article>
+        `;
+    }
 
     return `
-        <article class="recommendation-card" data-recommendation-id="${rec.id}">
+        <article class="${cardClass}" data-recommendation-id="${rec.id}">
             <div class="recommendation-cover-wrap">
                 <img class="recommendation-cover-bg" src="${escapeHtml(cover)}" alt="">
                 <img class="recommendation-cover" src="${escapeHtml(cover)}" alt="Capa ${escapeHtml(rec.game_name)}">
@@ -542,7 +917,7 @@ function recommendationCardTemplate(rec, options = {}) {
                 ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
                 <p>${escapeHtml(rec.game_description)}</p>
             </div>
-            ${rec.reason ? `<p><strong>Motivo da indicacao:</strong> ${escapeHtml(rec.reason)}</p>` : ""}
+            ${reasonHtml}
             <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentarios ainda.</div>'}</div>
             <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
             <form class="comment-form" data-comment-form="${rec.id}">
@@ -677,15 +1052,22 @@ async function handleResetPassword() {
 async function loadProfile() {
     const form = byId("profileForm");
     const avatarPreview = byId("avatarPreview");
-    const adminPanel = byId("adminPanel");
-    const adminUsersList = byId("adminUsersList");
-    const adminRoundsList = byId("adminRoundsList");
+    const avatarInput = byId("avatarInput");
+    const avatarSelectBtn = byId("avatarSelectBtn");
+    const profileSaveBtn = byId("profileSaveBtn");
+    const nicknameFieldWrap = byId("nicknameFieldWrap");
+    const checkNicknameBtn = byId("checkNicknameBtn");
+    const nicknameCheckFeedback = byId("nicknameCheckFeedback");
+    const profileNicknameDisplay = byId("profileNicknameDisplay");
+    const emailFieldLabel = byId("emailFieldLabel");
     const profileTitle = byId("profileTitle");
     const profileGivenList = byId("profileGivenList");
     const profileReceivedList = byId("profileReceivedList");
     const profileCommentsList = byId("profileCommentsList");
     const profileCommentForm = byId("profileCommentForm");
     const profileActivitySection = byId("profileActivitySection");
+    const achievementsGrid = byId("achievementsGrid");
+    const achievementsProgress = byId("achievementsProgress");
     const viewedUserId = Number(getQueryParam("userId") || 0);
     let currentProfileUserId = 0;
     let ownUserId = 0;
@@ -698,6 +1080,118 @@ async function loadProfile() {
         given: [],
         received: []
     };
+    let currentNickname = "";
+    let nicknameCheckInFlight = false;
+    let nicknameAvailabilityState = {
+        value: "",
+        checked: false,
+        available: false
+    };
+    let pendingAvatarFile = null;
+    let pendingAvatarPreviewUrl = "";
+    const defaultEmailLabel = "Email (nao editavel)";
+
+    function clearPendingAvatarSelection() {
+        pendingAvatarFile = null;
+        if (avatarInput) avatarInput.value = "";
+        if (pendingAvatarPreviewUrl && pendingAvatarPreviewUrl.startsWith("blob:")) {
+            URL.revokeObjectURL(pendingAvatarPreviewUrl);
+        }
+        pendingAvatarPreviewUrl = "";
+    }
+
+    function maskEmailForDisplay(emailText) {
+        const email = String(emailText || "").trim();
+        if (!email || !email.includes("@")) return email;
+        const [localPart, domainPart] = email.split("@");
+        if (!localPart || !domainPart) return email;
+        if (localPart.length <= 2) {
+            return `${localPart[0] || ""}******@${domainPart}`;
+        }
+        const prefix = localPart.slice(0, Math.min(2, localPart.length));
+        const suffix = localPart.length > 4 ? localPart.slice(-2) : localPart.slice(-1);
+        return `${prefix}******${suffix}@${domainPart}`;
+    }
+
+    function readNicknameInputValue() {
+        const raw = String(form?.elements?.nickname?.value || "");
+        return raw.trim().slice(0, 30);
+    }
+
+    function isSameNicknameAsCurrent(value) {
+        return String(value || "").trim().toLowerCase() === String(currentNickname || "").trim().toLowerCase();
+    }
+
+    function isNicknameValidatedForSave(candidate) {
+        const normalizedCandidate = String(candidate || "").trim().toLowerCase();
+        const normalizedChecked = String(nicknameAvailabilityState.value || "").trim().toLowerCase();
+        if (!normalizedCandidate) return false;
+        if (isSameNicknameAsCurrent(normalizedCandidate)) return true;
+        return nicknameAvailabilityState.checked
+            && nicknameAvailabilityState.available
+            && normalizedCandidate === normalizedChecked;
+    }
+
+    function syncProfileSaveButtonState() {
+        if (!profileSaveBtn) return;
+        if (!nicknameFieldWrap || nicknameFieldWrap.classList.contains("hidden")) {
+            profileSaveBtn.removeAttribute("disabled");
+            return;
+        }
+        if (nicknameCheckInFlight) {
+            profileSaveBtn.setAttribute("disabled", "disabled");
+            return;
+        }
+        profileSaveBtn.removeAttribute("disabled");
+    }
+
+    function syncNicknameCheckButtonState() {
+        if (!checkNicknameBtn || !nicknameFieldWrap || nicknameFieldWrap.classList.contains("hidden")) return;
+        const candidate = readNicknameInputValue();
+        const shouldDisable = !candidate || isSameNicknameAsCurrent(candidate) || nicknameCheckInFlight;
+        if (shouldDisable) checkNicknameBtn.setAttribute("disabled", "disabled");
+        else checkNicknameBtn.removeAttribute("disabled");
+        checkNicknameBtn.classList.toggle("nickname-check-ready", !shouldDisable);
+        syncProfileSaveButtonState();
+    }
+
+    async function requestNicknameAvailability(nicknameCandidate) {
+        const candidate = String(nicknameCandidate || "").trim().slice(0, 30);
+        if (!candidate) {
+            return {
+                nickname: candidate,
+                available: false,
+                sameAsCurrent: false,
+                message: "Informe um nickname para verificar."
+            };
+        }
+        if (isSameNicknameAsCurrent(candidate)) {
+            return {
+                nickname: candidate,
+                available: true,
+                sameAsCurrent: true,
+                message: "Esse ja e o seu nickname atual."
+            };
+        }
+
+        // Verificacao por busca de usuarios (evita 404 quando o endpoint dedicado nao existe no servidor em execucao).
+        const usersPayload = await sendJson(`/api/users?term=${encodeURIComponent(candidate)}`);
+        const users = Array.isArray(usersPayload?.users) ? usersPayload.users : [];
+        const normalizedCandidate = candidate.toLowerCase();
+        const inUse = users.some((user) => {
+            if (Number(user?.id) === Number(ownUserId)) return false;
+            const normalizedUsername = String(user?.username || "").trim().toLowerCase();
+            const normalizedNickname = String(user?.nickname || "").trim().toLowerCase();
+            return normalizedUsername === normalizedCandidate || normalizedNickname === normalizedCandidate;
+        });
+
+        return {
+            nickname: candidate,
+            available: !inUse,
+            sameAsCurrent: false,
+            message: inUse ? "Nickname ja esta em uso." : "Nickname disponivel."
+        };
+    }
 
     function activityCardHtml(item, mode) {
         const who = mode === "given"
@@ -705,17 +1199,33 @@ async function loadProfile() {
             : `De: ${userLinkHtml({ nickname: item.giver_nickname, username: item.giver_username }, item.giver_id)}`;
         const grade = item.rating_letter && item.interest_score ? `${item.rating_letter}${item.interest_score}` : "Sem nota";
         const cover = item.game_cover_url || baseAvatar;
+        const gradeClass = item.rating_letter && item.interest_score
+            ? "grade-inline"
+            : "grade-inline grade-inline-muted";
+        const reasonHtml = item.reason
+            ? `<p class="recommendation-reason"><strong>Motivo:</strong> ${escapeHtml(item.reason)}</p>`
+            : "";
         return `
-            <article class="recommendation-card">
+            <article class="recommendation-card recommendation-card-indication recommendation-card-profile-activity">
                 <div class="recommendation-cover-wrap">
                     <img class="recommendation-cover-bg" src="${escapeHtml(cover)}" alt="">
                     <img class="recommendation-cover" src="${escapeHtml(cover)}" alt="Capa ${escapeHtml(item.game_name)}">
                     ${item.rating_letter && item.interest_score ? `<span class="grade-overlay">${escapeHtml(grade)}</span>` : ""}
                 </div>
-                <h3>${escapeHtml(item.game_name)}</h3>
-                <div class="meta-row"><span class="pill">${who}</span><span class="pill">Rodada: ${escapeHtml(formatRoundDateTime(item.created_at))}</span></div>
-                <p>${escapeHtml(item.game_description || "")}</p>
-                ${item.reason ? `<p><strong>Motivo:</strong> ${escapeHtml(item.reason)}</p>` : ""}
+                <div class="recommendation-indication-main">
+                    <div class="recommendation-indication-top">
+                        <h3>${escapeHtml(item.game_name)}</h3>
+                        <div class="meta-row">
+                            <span class="pill">${who}</span>
+                            <span class="pill">Rodada: ${escapeHtml(formatRoundDateTime(item.created_at))}</span>
+                        </div>
+                        <div class="desc-grade-row">
+                            <span class="${gradeClass}">${escapeHtml(grade)}</span>
+                            <p>${escapeHtml(item.game_description || "")}</p>
+                        </div>
+                        ${reasonHtml}
+                    </div>
+                </div>
             </article>
         `;
     }
@@ -763,6 +1273,40 @@ async function loadProfile() {
             .join("");
     }
 
+    function renderProfileAchievements(achievementData) {
+        if (achievementsProgress) {
+            achievementsProgress.textContent = "";
+            achievementsProgress.classList.add("hidden");
+        }
+        if (!achievementsGrid) return;
+        const achievementMap = new Map(
+            (achievementData?.achievements || []).map((achievement) => [achievement.key, achievement])
+        );
+        achievementsGrid.querySelectorAll("[data-achievement-key]").forEach((item) => {
+            const key = item.getAttribute("data-achievement-key");
+            const achievement = achievementMap.get(key);
+            const unlocked = Boolean(achievement?.unlocked);
+            item.classList.toggle("unlocked", unlocked);
+            item.classList.toggle("locked", !unlocked);
+            const nameEl = item.querySelector("strong");
+            const savedName =
+                String(item.getAttribute("data-achievement-name") || "").trim() ||
+                String(nameEl?.textContent || "").trim() ||
+                String(key || "").trim();
+            if (savedName) item.setAttribute("data-achievement-name", savedName);
+            if (nameEl) {
+                nameEl.textContent = unlocked ? savedName : "??????";
+            }
+            const descriptionEl = item.querySelector(".achievement-description, .achievement-state");
+            if (descriptionEl) {
+                const description = String(achievement?.description || "").trim();
+                descriptionEl.textContent = unlocked
+                    ? (description || "Conquista desbloqueada")
+                    : "???????";
+            }
+        });
+    }
+
     async function refreshProfile() {
         const data = await sendJson("/api/user/profile");
         const parsedOwnUserId = Number(data.profile?.id);
@@ -776,6 +1320,7 @@ async function loadProfile() {
 
         let profileView = null;
         let profileComments = { comments: [] };
+        let profileAchievements = { completedRounds: 0, achievements: [] };
         if (targetUserId > 0 || viewedUserId > 0) {
             try {
                 profileView = await sendJson(`/api/user/profile-view?userId=${encodeURIComponent(targetUserId || viewedUserId)}`);
@@ -808,19 +1353,39 @@ async function loadProfile() {
                 };
             }
         }
+        try {
+            const achievementUserId = targetUserId || viewedUserId || ownUserId;
+            profileAchievements = await sendJson(`/api/user/achievements?userId=${encodeURIComponent(achievementUserId)}`);
+        } catch {
+            profileAchievements = { completedRounds: 0, achievements: [] };
+        }
 
         const canEdit = Boolean(profileView?.canEdit);
         const profile = canEdit ? data.profile : profileView.profile;
+        currentNickname = profile.nickname || profile.username || "";
 
         Object.keys(profile).forEach((key) => {
             if (form?.elements?.[key]) {
                 form.elements[key].value = profile[key] || "";
             }
         });
-        if (!canEdit && form?.elements?.email) form.elements.email.value = "";
-        if (!canEdit && byId("emailFieldLabel")) byId("emailFieldLabel").textContent = "Email (oculto no modo visualizacao)";
+        if (profileNicknameDisplay) {
+            profileNicknameDisplay.textContent = displayName(profile);
+        }
+        if (form?.elements?.email) {
+            form.elements.email.value = maskEmailForDisplay(profile.email);
+        }
+        if (form?.elements?.nickname) {
+            form.elements.nickname.value = currentNickname;
+        }
+        nicknameAvailabilityState = {
+            value: currentNickname,
+            checked: true,
+            available: true
+        };
+        if (emailFieldLabel) emailFieldLabel.textContent = defaultEmailLabel;
 
-        if (avatarPreview) {
+        if (avatarPreview && !pendingAvatarFile) {
             avatarPreview.src = profile.avatar_url || baseAvatar;
         }
         if (profileTitle) {
@@ -833,82 +1398,34 @@ async function loadProfile() {
             if (!(el instanceof HTMLElement)) return;
             if (canEdit) {
                 el.removeAttribute("disabled");
-            } else if (el.getAttribute("name") !== "username" && el.getAttribute("name") !== "nickname" && el.getAttribute("name") !== "email") {
+            } else if (el.getAttribute("name") !== "username" && el.getAttribute("name") !== "email") {
                 el.setAttribute("disabled", "disabled");
             }
         });
         if (!canEdit) {
             form?.classList.add("profile-readonly");
-            form?.querySelector("button[type='submit']")?.classList.add("hidden");
-            form?.elements?.nickname?.setAttribute("readonly", "readonly");
-            byId("avatarForm")?.classList.add("hidden");
+            profileSaveBtn?.classList.add("hidden");
+            avatarSelectBtn?.setAttribute("disabled", "disabled");
             byId("sendResetFromProfile")?.closest(".card")?.classList.add("hidden");
-            adminPanel?.classList.add("hidden");
+            nicknameFieldWrap?.classList.add("hidden");
+            setFeedback(nicknameCheckFeedback, "", "");
         } else {
             form?.classList.remove("profile-readonly");
-            form?.querySelector("button[type='submit']")?.classList.remove("hidden");
-            form?.elements?.nickname?.removeAttribute("readonly");
-            byId("avatarForm")?.classList.remove("hidden");
+            profileSaveBtn?.classList.remove("hidden");
+            avatarSelectBtn?.removeAttribute("disabled");
             byId("sendResetFromProfile")?.closest(".card")?.classList.remove("hidden");
+            nicknameFieldWrap?.classList.remove("hidden");
+            syncNicknameCheckButtonState();
         }
 
         renderProfileActivity(profileView.activity);
+        renderProfileAchievements(profileAchievements);
         renderProfileComments(profileComments.comments || []);
         return { ...data, canEdit };
     }
 
-    function renderAdmin(data) {
-        if (!adminUsersList || !adminRoundsList) return;
-        adminUsersList.innerHTML = (data.users || [])
-            .map(
-                (user) => `
-                    <div class="search-item">
-                        <div>
-                            <strong>${escapeHtml(displayName(user))}</strong>
-                            <div>${escapeHtml(user.email)}</div>
-                            <div>Status: ${user.blocked ? "Bloqueado" : "Ativo"}</div>
-                        </div>
-                        <div class="inline-actions">
-                            <button class="btn btn-outline" data-admin-toggle-block="${user.id}" data-admin-blocked="${user.blocked ? 1 : 0}" type="button">
-                                ${user.blocked ? "Desbloquear" : "Bloquear"}
-                            </button>
-                            <button class="btn btn-outline" data-admin-delete-user="${user.id}" type="button">Excluir</button>
-                        </div>
-                    </div>
-                `
-            )
-            .join("");
-
-        adminRoundsList.innerHTML = (data.rounds || [])
-            .map(
-                (round) => `
-                    <div class="search-item">
-                        <div>
-                            <strong>Rodada - ${formatRoundDateTime(round.created_at)}</strong>
-                            <div>Status: ${escapeHtml(round.status)}</div>
-                            <div>Criador: ${escapeHtml(displayName({ nickname: round.creator_nickname, username: round.creator_username }))}</div>
-                        </div>
-                        <div class="inline-actions">
-                            <button class="btn btn-outline" data-admin-close-round="${round.id}" type="button">Fechar</button>
-                            <button class="btn btn-outline" data-admin-delete-round="${round.id}" type="button">Excluir</button>
-                        </div>
-                    </div>
-                `
-            )
-            .join("");
-    }
-
-    async function refreshAdmin() {
-        const data = await sendJson("/api/admin/dashboard");
-        renderAdmin(data);
-    }
-
     try {
-        const profileData = await refreshProfile();
-        if (profileData.canEdit && profileData.isOwner && adminPanel) {
-            adminPanel.classList.remove("hidden");
-            await refreshAdmin();
-        }
+        await refreshProfile();
     } catch (error) {
         setFeedback("feedback", error.message, "error");
     }
@@ -917,34 +1434,190 @@ async function loadProfile() {
         event.preventDefault();
         if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
         setFeedback("feedback", "", "");
-        const payload = {
-            nickname: form.elements.nickname.value
-        };
-        const submitBtn = event.submitter || form.querySelector("button[type='submit']");
+        setFeedback(nicknameCheckFeedback, "", "");
+        const nicknameCandidate = readNicknameInputValue() || form?.elements?.username?.value || "";
+        if (!isNicknameValidatedForSave(nicknameCandidate)) {
+            setFeedback(
+                "feedback",
+                "Verifique a disponibilidade do nickname antes de salvar",
+                "error"
+            );
+            return;
+        }
+        const payload = { nickname: nicknameCandidate };
+        const submitBtn = event.submitter || profileSaveBtn;
+        const avatarToUpload = pendingAvatarFile;
         try {
             await withButtonLoading(submitBtn, "Salvando...", async () => {
                 await sendJson("/api/user/profile", "PUT", payload);
+                if (avatarToUpload) {
+                    const avatarData = new FormData();
+                    avatarData.append("avatar", avatarToUpload);
+                    await sendForm("/api/user/avatar", avatarData);
+                }
             });
-            setFeedback("feedback", "Perfil atualizado com sucesso.", "ok");
+            clearPendingAvatarSelection();
+            setFeedback(
+                "feedback",
+                avatarToUpload ? "Perfil e imagem atualizados com sucesso." : "Perfil atualizado com sucesso.",
+                "ok"
+            );
             await refreshProfile();
         } catch (error) {
             setFeedback("feedback", error.message, "error");
         }
     });
 
-    const avatarForm = byId("avatarForm");
-    avatarForm?.addEventListener("submit", async (event) => {
-        event.preventDefault();
+    form?.elements?.nickname?.addEventListener("input", () => {
+        const candidate = readNicknameInputValue();
+        nicknameAvailabilityState = {
+            value: candidate,
+            checked: isSameNicknameAsCurrent(candidate),
+            available: isSameNicknameAsCurrent(candidate)
+        };
+        setFeedback(nicknameCheckFeedback, "", "");
+        syncNicknameCheckButtonState();
+    });
+
+    checkNicknameBtn?.addEventListener("click", async () => {
         if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
-        setFeedback("feedback", "", "");
-        const data = new FormData(avatarForm);
+        const nicknameCandidate = readNicknameInputValue();
+        if (!nicknameCandidate) {
+            setFeedback(nicknameCheckFeedback, "Digite um nickname para verificar.", "error");
+            syncNicknameCheckButtonState();
+            return;
+        }
+        if (isSameNicknameAsCurrent(nicknameCandidate)) {
+            setFeedback(nicknameCheckFeedback, "Esse ja e o seu nickname atual.", "warn");
+            syncNicknameCheckButtonState();
+            return;
+        }
+
+        nicknameCheckInFlight = true;
+        syncNicknameCheckButtonState();
         try {
-            const result = await sendForm("/api/user/avatar", data);
-            if (avatarPreview) avatarPreview.src = result.avatarUrl || baseAvatar;
-            setFeedback("feedback", "Imagem de perfil atualizada.", "ok");
-            avatarForm.reset();
+            const result = await withButtonLoading(checkNicknameBtn, "Verificando...", async () =>
+                requestNicknameAvailability(nicknameCandidate)
+            );
+            if (form?.elements?.nickname && result?.nickname) {
+                form.elements.nickname.value = String(result.nickname);
+            }
+            nicknameAvailabilityState = {
+                value: String(result?.nickname || nicknameCandidate),
+                checked: true,
+                available: Boolean(result?.available)
+            };
+            setFeedback(
+                nicknameCheckFeedback,
+                result?.message || (result?.available ? "Nickname disponivel." : "Nickname indisponivel."),
+                result?.available ? "ok" : "error"
+            );
         } catch (error) {
-            setFeedback("feedback", error.message, "error");
+            setFeedback(nicknameCheckFeedback, error.message, "error");
+        } finally {
+            nicknameCheckInFlight = false;
+            syncNicknameCheckButtonState();
+        }
+    });
+
+    avatarSelectBtn?.addEventListener("click", () => {
+        if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
+        if (avatarInput) avatarInput.value = "";
+        avatarInput?.click();
+    });
+
+    avatarInput?.addEventListener("change", async () => {
+        if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
+        const file = avatarInput.files?.[0];
+        if (!file) return;
+        if (!String(file.type || "").startsWith("image/")) {
+            setFeedback("feedback", "Selecione apenas arquivos de imagem.", "error");
+            avatarInput.value = "";
+            return;
+        }
+        if (pendingAvatarPreviewUrl && pendingAvatarPreviewUrl.startsWith("blob:")) {
+            URL.revokeObjectURL(pendingAvatarPreviewUrl);
+        }
+        pendingAvatarFile = file;
+        pendingAvatarPreviewUrl = "";
+        let immediatePreviewUrl = "";
+        if (avatarPreview) {
+            try {
+                const previewDataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result || ""));
+                    reader.onerror = () => reject(new Error("Falha ao carregar preview da imagem."));
+                    reader.readAsDataURL(file);
+                });
+                pendingAvatarPreviewUrl = String(previewDataUrl || "");
+            } catch {
+                pendingAvatarPreviewUrl = "";
+            }
+            if (!pendingAvatarPreviewUrl) {
+                try {
+                    pendingAvatarPreviewUrl = URL.createObjectURL(file);
+                } catch {
+                    pendingAvatarPreviewUrl = "";
+                }
+            }
+            immediatePreviewUrl = pendingAvatarPreviewUrl;
+            avatarPreview.onerror = null;
+            if (immediatePreviewUrl) avatarPreview.src = immediatePreviewUrl;
+        }
+
+        try {
+            if (avatarSelectBtn) {
+                avatarSelectBtn.classList.add("is-loading");
+                avatarSelectBtn.setAttribute("aria-busy", "true");
+                avatarSelectBtn.setAttribute("disabled", "disabled");
+            }
+            const avatarData = new FormData();
+            avatarData.append("avatar", file);
+            const uploadResult = await sendForm("/api/user/avatar", avatarData);
+
+            pendingAvatarFile = null;
+            if (avatarInput) avatarInput.value = "";
+            const avatarUrl = String(uploadResult?.avatarUrl || "").trim();
+            if (avatarPreview && avatarUrl) {
+                const cacheBust = `v=${Date.now()}`;
+                const sep = avatarUrl.includes("?") ? "&" : "?";
+                const finalAvatarUrl = `${avatarUrl}${sep}${cacheBust}`;
+                const switchedToFinal = await new Promise((resolve) => {
+                    const probe = new Image();
+                    probe.onload = () => {
+                        avatarPreview.src = finalAvatarUrl;
+                        resolve(true);
+                    };
+                    probe.onerror = () => {
+                        // Mantem o preview local visivel se a URL final falhar momentaneamente.
+                        resolve(false);
+                    };
+                    probe.src = finalAvatarUrl;
+                });
+                if (switchedToFinal && immediatePreviewUrl) {
+                    if (immediatePreviewUrl.startsWith("blob:")) {
+                        URL.revokeObjectURL(immediatePreviewUrl);
+                    }
+                    if (pendingAvatarPreviewUrl === immediatePreviewUrl) {
+                        pendingAvatarPreviewUrl = "";
+                    }
+                }
+            }
+            setFeedback("feedback", "Imagem de perfil atualizada.", "ok");
+        } catch (error) {
+            setFeedback(
+                "feedback",
+                `${error.message} Tente novamente ou clique em Salvar perfil para reenviar.`,
+                "error"
+            );
+        } finally {
+            if (avatarSelectBtn) {
+                avatarSelectBtn.classList.remove("is-loading");
+                avatarSelectBtn.removeAttribute("aria-busy");
+                if (!(viewedUserId > 0 && viewedUserId !== ownUserId)) {
+                    avatarSelectBtn.removeAttribute("disabled");
+                }
+            }
         }
     });
 
@@ -1001,59 +1674,12 @@ async function loadProfile() {
         );
     });
 
-    adminPanel?.addEventListener("click", async (event) => {
-        const toggleBtn = event.target.closest("button[data-admin-toggle-block]");
-        const deleteUserBtn = event.target.closest("button[data-admin-delete-user]");
-        const closeRoundBtn = event.target.closest("button[data-admin-close-round]");
-        const deleteRoundBtn = event.target.closest("button[data-admin-delete-round]");
-
-        try {
-            if (toggleBtn) {
-                const userId = Number(toggleBtn.dataset.adminToggleBlock);
-                const blocked = Number(toggleBtn.dataset.adminBlocked) === 1 ? 0 : 1;
-                const result = await sendJson(`/api/admin/users/${userId}/block`, "PATCH", { blocked });
-                setFeedback("adminFeedback", result.message, "ok");
-                await refreshAdmin();
-            }
-            if (deleteUserBtn) {
-                const userId = Number(deleteUserBtn.dataset.adminDeleteUser);
-                await fetch(`/api/admin/users/${userId}`, {
-                    method: "DELETE",
-                    credentials: "include"
-                }).then(async (response) => {
-                    const data = await response.json().catch(() => ({}));
-                    if (!response.ok) throw new Error(data.message || "Erro ao excluir conta.");
-                });
-                setFeedback("adminFeedback", "Conta excluida.", "ok");
-                await refreshAdmin();
-            }
-            if (closeRoundBtn) {
-                const roundId = Number(closeRoundBtn.dataset.adminCloseRound);
-                const result = await sendJson(`/api/rounds/${roundId}`, "PUT", { status: "closed" });
-                setFeedback("adminFeedback", result.message, "ok");
-                await refreshAdmin();
-            }
-            if (deleteRoundBtn) {
-                const roundId = Number(deleteRoundBtn.dataset.adminDeleteRound);
-                await fetch(`/api/rounds/${roundId}`, {
-                    method: "DELETE",
-                    credentials: "include"
-                }).then(async (response) => {
-                    const data = await response.json().catch(() => ({}));
-                    if (!response.ok) throw new Error(data.message || "Erro ao excluir rodada.");
-                });
-                setFeedback("adminFeedback", "Rodada excluida.", "ok");
-                await refreshAdmin();
-            }
-        } catch (error) {
-            setFeedback("adminFeedback", error.message, "error");
-        }
-    });
 }
 
 let homeActiveRound = null;
 let homeRoundsMap = new Map();
 let homeActivePollTimer = null;
+let homeFeedPollTimer = null;
 let homeRoundFeedPageMap = new Map();
 const HOME_FEED_RECOMMENDATION_PAGE_SIZE = 6;
 
@@ -1082,8 +1708,8 @@ function renderNavalChartForHome(round) {
             const [xRaw, yRaw] = key.split("|");
             const x = Number(xRaw);
             const y = Number(yRaw);
-            const left = ((x - 1) / 9) * 100;
-            const topPos = ((10 - y) / 9) * 100;
+            const left = ((x - 0.5) / 10) * 100;
+            const topPos = ((10.5 - y) / 10) * 100;
             const pointGrade = navalGradeLabel(top);
             const stack = list
                 .map(
@@ -1107,7 +1733,6 @@ function renderNavalChartForHome(round) {
                     <span class="naval-grade-badge">${escapeHtml(pointGrade)}</span>
                     ${list.length > 1 ? `<span class="naval-count">${list.length}</span>` : ""}
                     <div class="naval-stack">
-                        <div class="naval-stack-grade">${escapeHtml(pointGrade)}</div>
                         <div class="naval-stack-items">${stack}</div>
                     </div>
                 </div>
@@ -1160,12 +1785,27 @@ function renderFeed(rounds) {
                 <section class="round-carousel" data-round-id="${round.id}">
                     <div class="row-between">
                         <h3>Rodada - ${escapeHtml(formatRoundDateTime(round.created_at))} - ${escapeHtml(round.status)}</h3>
-                        ${round.status === "closed" ? `<button class="btn btn-outline" data-open-naval-plan="${round.id}" type="button">Plano Naval</button>` : ""}
+                        ${round.status === "closed"
+        ? `
+                                <div class="inline-actions home-round-actions">
+                                    ${sessionIsOwner ? `<button class="btn btn-warn" data-home-reopen-round="${round.id}" type="button">Reabrir Rodada</button>` : ""}
+                                    <button class="btn btn-outline" data-open-naval-plan="${round.id}" type="button">Plano Naval</button>
+                                </div>
+                            `
+        : ""}
                     </div>
                     <p>Criador: ${userLinkHtml({ nickname: round.creator_nickname, username: round.creator_username }, round.creator_user_id)}</p>
                     <p class="round-participants-mini">Participantes: ${(round.participants || []).map((item) => userLinkHtml(item, item.id)).join(" | ") || "sem participantes"}</p>
                     <div class="carousel-track">
-                        ${pageRecommendations.map((rec) => recommendationCardTemplate(rec, { showGradeOverlay: true, showInlineGrade: true })).join("")}
+                        ${pageRecommendations
+        .map((rec) =>
+            recommendationCardTemplate(rec, {
+                showGradeOverlay: true,
+                showInlineGrade: true,
+                layout: "round-indication"
+            })
+        )
+        .join("")}
                     </div>
                     ${pagination}
                 </section>
@@ -1241,6 +1881,23 @@ async function refreshHomeFeed() {
     const feed = await sendJson("/api/feed/rounds?limit=8");
     renderFeed(feed.rounds || []);
 }
+
+async function refreshHomeFeedCommentsOnly() {
+    const feed = await sendJson("/api/feed/rounds?limit=8");
+    homeRoundsMap = new Map((feed.rounds || []).map((round) => [Number(round.id), round]));
+    const container = byId("roundCarousels");
+    if (!container) return;
+
+    const visibleRecommendationIds = [];
+    container.querySelectorAll("article[data-recommendation-id]").forEach((card) => {
+        const recommendationId = Number(card.dataset.recommendationId || 0);
+        if (!recommendationId) return;
+        visibleRecommendationIds.push(recommendationId);
+        const recommendation = findHomeRecommendationById(recommendationId);
+        syncRecommendationCommentList(recommendation, "home");
+    });
+    clearStaleCommentSignatures("home", visibleRecommendationIds);
+}
 async function handleHome() {
     await ensureSessionUserId();
     try {
@@ -1304,6 +1961,22 @@ async function handleHome() {
             return;
         }
 
+        const reopenBtn = event.target.closest("button[data-home-reopen-round]");
+        if (reopenBtn) {
+            const roundId = Number(reopenBtn.dataset.homeReopenRound);
+            if (!roundId) return;
+            try {
+                await withButtonLoading(reopenBtn, "Reabrindo...", async () => {
+                    const result = await sendJson(`/api/rounds/${roundId}/close`, "POST", {});
+                    setFeedback("homeFeedback", result.message || "Rodada reaberta.", "ok");
+                    await Promise.all([refreshHomeActive(), refreshHomeFeed()]);
+                });
+            } catch (error) {
+                setFeedback("homeFeedback", error.message, "error");
+            }
+            return;
+        }
+
         const btn = event.target.closest("button[data-open-naval-plan]");
         if (!btn) return;
         const roundId = Number(btn.dataset.openNavalPlan);
@@ -1338,6 +2011,15 @@ async function handleHome() {
             // polling silencioso
         }
     }, 1700);
+
+    if (homeFeedPollTimer) clearInterval(homeFeedPollTimer);
+    homeFeedPollTimer = setInterval(async () => {
+        try {
+            await refreshHomeFeedCommentsOnly();
+        } catch {
+            // polling silencioso
+        }
+    }, 2200);
 
 }
 
@@ -1501,7 +2183,9 @@ function renderPairExclusionsEditor(round) {
                 <div class="pair-exclusion-row" data-pair-giver-row="${giver.id}">
                     <div class="pair-exclusion-row-feedback" data-pair-error-for="${giver.id}"></div>
                     <div class="pair-exclusion-giver">${escapeHtml(displayName(giver))}</div>
-                    <div class="pair-exclusion-options">${options}</div>
+                    <div class="pair-exclusion-options" role="group" aria-label="Restricoes de ${escapeHtml(displayName(giver))}">
+                        ${options}
+                    </div>
                 </div>
             `;
         })
@@ -1574,8 +2258,9 @@ function renderRoundRecommendations(round) {
     const container = byId("roundRecommendations");
     if (!container) return;
     const recommendations = round.recommendations || [];
+    const renderMode = round.phase === "indication" ? "round-indication" : "default";
     const structureSignature = recommendations
-        .map((rec) => `${rec.id}:${rec.updated_at || 0}:${rec.rating_updated_at || 0}`)
+        .map((rec) => `${renderMode}:${rec.id}:${rec.updated_at || 0}:${rec.rating_updated_at || 0}`)
         .join("|");
 
     if (!recommendations.length) {
@@ -1587,7 +2272,14 @@ function renderRoundRecommendations(round) {
     }
 
     if (structureSignature !== roundRecommendationsStructureSignature) {
-        container.innerHTML = recommendations.map((rec) => recommendationCardTemplate(rec, { showGradeOverlay: false })).join("");
+        container.innerHTML = recommendations
+            .map((rec) =>
+                recommendationCardTemplate(rec, {
+                    showGradeOverlay: false,
+                    layout: renderMode
+                })
+            )
+            .join("");
         recommendationCommentSignatureCaches.round.clear();
         recommendations.forEach((rec) => resetCommentFormState(rec.id));
         roundRecommendationsStructureSignature = structureSignature;
@@ -1709,8 +2401,8 @@ function renderNavalChart(round) {
             const [xRaw, yRaw] = key.split("|");
             const x = Number(xRaw);
             const y = Number(yRaw);
-            const left = ((x - 1) / 9) * 100;
-            const topPos = ((10 - y) / 9) * 100;
+            const left = ((x - 0.5) / 10) * 100;
+            const topPos = ((10.5 - y) / 10) * 100;
             const pointGrade = navalGradeLabel(top);
             const stack = list
                 .map(
@@ -1735,7 +2427,6 @@ function renderNavalChart(round) {
                     <span class="naval-grade-badge">${escapeHtml(pointGrade)}</span>
                     ${list.length > 1 ? `<span class="naval-count">${list.length}</span>` : ""}
                     <div class="naval-stack">
-                        <div class="naval-stack-grade">${escapeHtml(pointGrade)}</div>
                         <div class="naval-stack-items">${stack}</div>
                     </div>
                 </div>
@@ -1846,16 +2537,32 @@ function renderRoundState(round) {
 
         const closeBtn = byId("closeRoundBtn");
         const finalizeBtn = byId("finalizeRoundBtn");
-        if (round.isCreator) {
+        const canManageRound = Boolean(round.isCreator || sessionIsOwner);
+        if (canManageRound) {
             if (round.phase === "closed") {
                 closeBtn?.classList.add("hidden");
-                finalizeBtn?.classList.add("hidden");
+                finalizeBtn?.classList.remove("hidden");
+                if (finalizeBtn) {
+                    finalizeBtn.textContent = "Reabrir Rodada";
+                    finalizeBtn.classList.remove("btn-success");
+                    finalizeBtn.classList.add("btn-warn");
+                }
             } else if (round.phase === "rating") {
                 closeBtn?.classList.add("hidden");
                 finalizeBtn?.classList.remove("hidden");
+                if (finalizeBtn) {
+                    finalizeBtn.textContent = "Finalizar Rodada";
+                    finalizeBtn.classList.remove("btn-warn");
+                    finalizeBtn.classList.add("btn-success");
+                }
             } else {
                 closeBtn?.classList.remove("hidden");
                 finalizeBtn?.classList.add("hidden");
+                if (finalizeBtn) {
+                    finalizeBtn.textContent = "Finalizar Rodada";
+                    finalizeBtn.classList.remove("btn-warn");
+                    finalizeBtn.classList.add("btn-success");
+                }
             }
         } else {
             closeBtn?.classList.add("hidden");
@@ -2002,10 +2709,7 @@ async function refreshRoundData(forceRoundId) {
     }
     renderRoundState(currentRound);
     if (previousPhase && previousPhase !== "closed" && currentRound.phase === "closed") {
-        setTimeout(() => {
-            window.location.href = "/";
-        }, 450);
-        return;
+        await claimAchievementUnlocksAndNotify();
     }
     roundLastPhase = currentRound.phase;
     if (currentRound.isCreator && currentRound.phase === "draft") {
@@ -2218,7 +2922,8 @@ async function handleRoundPage() {
     const closeCurrentRound = async (button) => {
         if (!currentRound) return;
         try {
-            await withButtonLoading(button, "Finalizando...", async () => {
+            const loadingText = currentRound.phase === "closed" ? "Reabrindo..." : "Finalizando...";
+            await withButtonLoading(button, loadingText, async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}/close`, "POST", {});
                 setFeedback("roundFeedback", result.message, "ok");
                 await refreshRoundData(currentRound.id);
@@ -2391,6 +3096,8 @@ async function handleRoundPage() {
             currentRound = result.round;
             renderRoundState(currentRound);
             setFeedback("roundFeedback", result.message, "ok");
+            showAchievementUnlockNotifications(result.newlyUnlocked || []);
+            claimAchievementUnlocksAndNotify();
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
         }
@@ -2419,6 +3126,12 @@ async function handleRoundPage() {
 }
 async function init() {
     await handleLogoutButton();
+    const authenticatedPage = page === "profile" || page === "home" || page === "round" || page === "admin";
+    if (authenticatedPage) {
+        await setupOwnerNavLink();
+        claimAchievementUnlocksAndNotify();
+        startAchievementPolling();
+    }
 
     if (page === "login" || page === "register") {
         showOAuthFeedbackFromQuery();
@@ -2433,6 +3146,7 @@ async function init() {
     if (page === "profile") await loadProfile();
     if (page === "home") await handleHome();
     if (page === "round") await handleRoundPage();
+    if (page === "admin") await handleAdminPage();
 }
 
 init();

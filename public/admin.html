@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clube do Jogo | Administrador</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="admin">
+    <nav class="navbar">
+        <a href="/" class="brand">
+            <img class="brand-logo" src="/uploads/site-logo-min.png" alt="Logo Clube do Jogo">
+        </a>
+        <div class="nav-links">
+            <a href="/">Inicio</a>
+            <a href="/profile.html">Perfil</a>
+            <a id="adminNavLink" href="/admin.html">Administrador</a>
+            <button id="logoutBtn" class="btn btn-outline" type="button">Sair</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <section id="adminPanel" class="card">
+            <h1>Painel do Dono</h1>
+            <p>Gerencie contas, rodadas e conquistas.</p>
+            <div class="panel-grid">
+                <article class="card">
+                    <h2>Usuarios</h2>
+                    <div id="adminUsersList" class="recommendation-grid"></div>
+                </article>
+                <article class="card">
+                    <h2>Rodadas</h2>
+                    <div id="adminRoundsList" class="recommendation-grid"></div>
+                </article>
+            </div>
+            <p id="adminFeedback" class="feedback"></p>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="site-footer-inner">
+            <a href="https://github.com/Gabriel-Micael" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href="https://www.instagram.com/gabriel.micael/" target="_blank" rel="noopener noreferrer">Instagram</a>
+            <a href="https://wa.me/5535997569858" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>

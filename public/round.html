@@ -15,6 +15,7 @@
             <a href="/">Inicio</a>
             
             <a href="/profile.html">Perfil</a>
+            <a id="adminNavLink" class="hidden" href="/admin.html">Administrador</a>
             <button id="logoutBtn" class="btn btn-outline" type="button">Sair</button>
         </div>
     </nav>
@@ -124,21 +125,27 @@
                 <form id="ratingForm" class="hidden">
                     <label>Jogo recebido para avaliar</label>
                     <select id="ratingRecommendationSelect" name="recommendationId"></select>
-                    <label>Nota naval no eixo Y (A bom, J ruim)</label>
-                    <select name="ratingLetter" required>
-                        <option value="A">A</option>
-                        <option value="B">B</option>
-                        <option value="C">C</option>
-                        <option value="D">D</option>
-                        <option value="E">E</option>
-                        <option value="F">F</option>
-                        <option value="G">G</option>
-                        <option value="H">H</option>
-                        <option value="I">I</option>
-                        <option value="J">J</option>
-                    </select>
-                    <label>Interesse no eixo X (1-10)</label>
-                    <input name="interestScore" type="number" min="1" max="10" required>
+                    <div class="rating-dual-fields">
+                        <div class="rating-field">
+                            <label>Nota no eixo Y (A bom, J ruim)</label>
+                            <select name="ratingLetter" required>
+                                <option value="A">A</option>
+                                <option value="B">B</option>
+                                <option value="C">C</option>
+                                <option value="D">D</option>
+                                <option value="E">E</option>
+                                <option value="F">F</option>
+                                <option value="G">G</option>
+                                <option value="H">H</option>
+                                <option value="I">I</option>
+                                <option value="J">J</option>
+                            </select>
+                        </div>
+                        <div class="rating-field">
+                            <label>Interesse no eixo X (1-10)</label>
+                            <input name="interestScore" type="number" min="1" max="10" required>
+                        </div>
+                    </div>
                     <button class="btn" type="submit">Salvar Nota Naval</button>
                 </form>
 

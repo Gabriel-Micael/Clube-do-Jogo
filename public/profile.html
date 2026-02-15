@@ -15,6 +15,7 @@
             <a href="/">Inicio</a>
             
             <a href="/profile.html">Perfil</a>
+            <a id="adminNavLink" class="hidden" href="/admin.html">Administrador</a>
             <button id="logoutBtn" class="btn btn-outline" type="button">Sair</button>
         </div>
     </nav>
@@ -23,23 +24,41 @@
         <section class="card">
             <h1 id="profileTitle">Perfil do Jogador</h1>
             <div class="profile-head">
-                <img id="avatarPreview" class="avatar-large" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' rx='16' fill='%23101933'/%3E%3Ccircle cx='60' cy='46' r='22' fill='%2339d2ff'/%3E%3Crect x='25' y='77' width='70' height='28' rx='14' fill='%234f79ff'/%3E%3C/svg%3E" alt="Avatar do perfil">
-                <form id="avatarForm" class="avatar-form">
-                    <label>Imagem de perfil</label>
-                    <input name="avatar" type="file" accept="image/*" required>
-                    <button class="btn" type="submit">Enviar imagem</button>
+                <div class="profile-avatar-side">
+                    <button id="avatarSelectBtn" class="avatar-upload-trigger" type="button" aria-label="Enviar imagem de perfil">
+                        <img id="avatarPreview" class="avatar-large" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' rx='16' fill='%23101933'/%3E%3Ccircle cx='60' cy='46' r='22' fill='%2339d2ff'/%3E%3Crect x='25' y='77' width='70' height='28' rx='14' fill='%234f79ff'/%3E%3C/svg%3E" alt="Avatar do perfil">
+                        <span class="avatar-upload-overlay" aria-hidden="true">
+                            <span class="avatar-upload-icon">&#8679;</span>
+                        </span>
+                    </button>
+                    <input id="avatarInput" name="avatar" type="file" accept="image/*" hidden>
+                    <p id="profileNicknameDisplay" class="profile-nickname">Jogador</p>
+                </div>
+
+                <form id="profileForm" class="profile-info-form">
+                    <div class="profile-info-row">
+                        <div class="profile-field">
+                            <label>Nome de usuario (nao editavel)</label>
+                            <input name="username" type="text" readonly>
+                        </div>
+                        <div class="profile-field">
+                            <label id="emailFieldLabel">Email (nao editavel)</label>
+                            <input name="email" type="text" readonly>
+                        </div>
+                        <div id="nicknameFieldWrap" class="profile-field profile-field-nickname hidden">
+                            <label for="nicknameInput">Nickname</label>
+                            <div class="nickname-check-row">
+                                <input id="nicknameInput" name="nickname" type="text" maxlength="30" placeholder="Seu nickname">
+                                <button id="checkNicknameBtn" class="btn btn-outline" type="button" aria-label="Verificar disponibilidade" title="Verificar disponibilidade" disabled>Verificar disponibilidade</button>
+                            </div>
+                            <p id="nicknameCheckFeedback" class="feedback"></p>
+                        </div>
+                    </div>
                 </form>
             </div>
-
-            <form id="profileForm">
-                <label>Nome de usuario (nao editavel)</label>
-                <input name="username" type="text" readonly>
-                <label id="emailFieldLabel">Email (nao editavel)</label>
-                <input name="email" type="email" readonly>
-                <label>Nickname</label>
-                <input name="nickname" type="text" maxlength="30" required>
-                <button class="btn" type="submit">Salvar perfil</button>
-            </form>
+            <div class="profile-save-wrap">
+                <button id="profileSaveBtn" class="btn profile-save-btn" type="submit" form="profileForm">Salvar perfil</button>
+            </div>
             <p id="feedback" class="feedback"></p>
         </section>
 
@@ -49,8 +68,80 @@
             <button id="sendResetFromProfile" class="btn" type="button">Enviar link de troca de senha</button>
         </section>
 
+        <section id="profileAchievementsSection" class="card">
+            <h2>Conquistas</h2>
+            <p id="achievementsProgress" class="achievement-progress"></p>
+            <div id="achievementsGrid" class="achievements-grid">
+                <article class="achievement-item locked" data-achievement-key="CGFerro" data-achievement-name="CGFerro">
+                    <img src="/uploads/trofeus/ferro.png" alt="Trofeu CGFerro">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGBronze" data-achievement-name="CGBronze">
+                    <img src="/uploads/trofeus/bronze.png" alt="Trofeu CGBronze">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGPrata" data-achievement-name="CGPrata">
+                    <img src="/uploads/trofeus/prata.png" alt="Trofeu CGPrata">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGOuro" data-achievement-name="CGOuro">
+                    <img src="/uploads/trofeus/ouro.png" alt="Trofeu CGOuro">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGDiamante" data-achievement-name="CGDiamante">
+                    <img src="/uploads/trofeus/diamante.png" alt="Trofeu CGDiamante">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGMaster" data-achievement-name="CGMaster">
+                    <img src="/uploads/trofeus/master.png" alt="Trofeu CGMaster">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGAcao" data-achievement-name="CGAcao">
+                    <img src="/uploads/trofeus/acao.png" alt="Trofeu CGAcao">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGTiro" data-achievement-name="CGTiro">
+                    <img src="/uploads/trofeus/tiro.png" alt="Trofeu CGTiro">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGTerror" data-achievement-name="CGTerror">
+                    <img src="/uploads/trofeus/terror.png" alt="Trofeu CGTerror">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGSouls" data-achievement-name="CGSouls">
+                    <img src="/uploads/trofeus/souls.png" alt="Trofeu CGSouls">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGAwards" data-achievement-name="CGAwards">
+                    <img src="/uploads/trofeus/CGAwards.png" alt="Trofeu CGAwards">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGOld" data-achievement-name="CGOld">
+                    <img src="/uploads/trofeus/CGOld.png" alt="Trofeu CGOld">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+                <article class="achievement-item locked" data-achievement-key="CGNewba" data-achievement-name="CGNewba">
+                    <img src="/uploads/trofeus/CGNewba.png" alt="Trofeu CGNewba">
+                    <strong>??????</strong>
+                    <span class="achievement-description">???????</span>
+                </article>
+            </div>
+        </section>
+
         <section id="profileActivitySection" class="card">
-            <h2>Atividade no Clube do Jogo</h2>
+            <h2>Atividades no Clube do Jogo</h2>
             <div class="panel-grid">
                 <article class="card">
                     <h3>Indicacoes Feitas</h3>
@@ -73,22 +164,6 @@
             <p id="profileCommentFeedback" class="feedback"></p>
         </section>
 
-        <section id="adminPanel" class="card hidden">
-            <h2>Painel do Dono</h2>
-            <p>Gerencie contas e rodadas do Clube do Jogo.</p>
-
-            <div class="panel-grid">
-                <article class="card">
-                    <h3>Usuarios</h3>
-                    <div id="adminUsersList" class="recommendation-grid"></div>
-                </article>
-                <article class="card">
-                    <h3>Rodadas</h3>
-                    <div id="adminRoundsList" class="recommendation-grid"></div>
-                </article>
-            </div>
-            <p id="adminFeedback" class="feedback"></p>
-        </section>
     </main>
     <footer class="site-footer">
         <div class="site-footer-inner">

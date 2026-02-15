@@ -18,14 +18,14 @@
                 <input name="email" type="email" required>
                 <label>Senha</label>
                 <input name="password" type="password" required>
-                <button class="btn" type="submit">Entrar</button>
+                <a class="auth-inline-link" href="/forgot-password.html">Esqueci minha senha</a>
+                <div class="auth-form-actions">
+                    <button class="btn" type="submit">Entrar</button>
+                    <a class="btn btn-outline" href="/register.html">Criar conta</a>
+                </div>
             </form>
             <div class="oauth-divider">ou</div>
             <a id="googleLoginBtn" class="btn btn-google" href="/auth/google">Continuar com Google</a>
-            <div class="auth-links">
-                <a href="/register.html">Criar conta</a>
-                <a href="/forgot-password.html">Esqueci minha senha</a>
-            </div>
             <p id="feedback" class="feedback"></p>
         </section>
     </main>

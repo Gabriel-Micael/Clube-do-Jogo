@@ -26,8 +26,15 @@ jobs:
 
       - name: Build demo artifact
         run: |
+          rm -rf dist
           mkdir -p dist
-          cp -r public/demo/* dist/
+          test -f public/demo/index.html
+          cp -a public/demo/. dist/
+          ls -la dist
+
+      - name: Add CNAME
+        run: |
+          echo "clubedojogo.app.br" > dist/CNAME
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

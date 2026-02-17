@@ -1,13 +1,21 @@
 const page = document.body.dataset.page;
 const baseAvatar =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' rx='16' fill='%23101933'/%3E%3Ccircle cx='60' cy='46' r='22' fill='%2339d2ff'/%3E%3Crect x='25' y='77' width='70' height='28' rx='14' fill='%234f79ff'/%3E%3C/svg%3E";
+const lockedAchievementImageDataUri =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23101318'/%3E%3Cstop offset='100%25' stop-color='%2305070c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='300' height='400' fill='url(%23g)'/%3E%3Ccircle cx='150' cy='170' r='58' fill='none' stroke='%233b4452' stroke-width='14'/%3E%3Crect x='142' y='140' width='16' height='74' rx='8' fill='%233b4452'/%3E%3Crect x='110' y='226' width='80' height='16' rx='8' fill='%233b4452'/%3E%3Ctext x='150' y='304' text-anchor='middle' fill='%237b879d' font-size='38' font-family='Arial'%3E%3F%3C/text%3E%3C/svg%3E";
 let sessionUserId = 0;
 let sessionUserLoaded = false;
 let sessionProfileLoaded = false;
 let sessionProfile = null;
 let sessionIsOwner = false;
+let sessionIsModerator = false;
+const userRoleMapById = new Map();
 const recommendationCommentFormState = new Map();
 const recommendationCommentSignatureCaches = {
+    home: new Map(),
+    round: new Map()
+};
+const recommendationCommentIdsCaches = {
     home: new Map(),
     round: new Map()
 };
@@ -19,6 +27,13 @@ const achievementKeysOrdered = [
     "CGDiamante",
     "CGMaster",
     "CGAcao",
+    "CGAventura",
+    "CGDrama",
+    "CGNarrativo",
+    "CGRPG",
+    "CGPlataforma",
+    "CGCorrida",
+    "CGMundoAberto",
     "CGTiro",
     "CGTerror",
     "CGSouls",
@@ -29,13 +44,276 @@ const achievementKeysOrdered = [
 let achievementClaimInFlight = false;
 let achievementPollTimer = null;
 let achievementSound = null;
+const achievementAccentColorCache = new Map();
+let adminNotificationPollTimer = null;
+let adminLatestResolvedDecisionId = 0;
+const appBootOverlayStartedAt = Date.now();
+let appBootOverlayDone = false;
+
+function finishAppBootOverlay() {
+    if (appBootOverlayDone) return;
+    appBootOverlayDone = true;
+    if (document.body) {
+        document.body.classList.add("app-ready");
+    }
+}
+
+function scheduleAppBootOverlayFinish() {
+    const minVisibleMs = 1000;
+    const elapsed = Date.now() - appBootOverlayStartedAt;
+    const waitMs = Math.max(0, minVisibleMs - elapsed);
+    window.setTimeout(() => {
+        window.requestAnimationFrame(() => {
+            finishAppBootOverlay();
+        });
+    }, waitMs);
+}
+
+if (document.readyState === "complete") {
+    scheduleAppBootOverlayFinish();
+} else {
+    window.addEventListener("load", scheduleAppBootOverlayFinish, { once: true });
+}
+window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+        scheduleAppBootOverlayFinish();
+    }
+});
 
 function byId(id) {
     return document.getElementById(id);
 }
 
+function normalizeTextArtifacts(value) {
+    let text = String(value ?? "");
+    if (!text || !/[ÃâÂ]/.test(text)) return text;
+    const replacements = [
+        ["Ã¡", "á"], ["Ã ", "à"], ["Ã¢", "â"], ["Ã£", "ã"], ["Ã¤", "ä"],
+        ["Ã", "Á"], ["Ã€", "À"], ["Ã‚", "Â"], ["Ãƒ", "Ã"], ["Ã„", "Ä"],
+        ["Ã©", "é"], ["Ã¨", "è"], ["Ãª", "ê"], ["Ã«", "ë"],
+        ["Ã‰", "É"], ["Ãˆ", "È"], ["ÃŠ", "Ê"], ["Ã‹", "Ë"],
+        ["Ã­", "í"], ["Ã¬", "ì"], ["Ã®", "î"], ["Ã¯", "ï"],
+        ["Ã", "Í"], ["ÃŒ", "Ì"], ["ÃŽ", "Î"], ["Ã", "Ï"],
+        ["Ã³", "ó"], ["Ã²", "ò"], ["Ã´", "ô"], ["Ãµ", "õ"], ["Ã¶", "ö"],
+        ["Ã“", "Ó"], ["Ã’", "Ò"], ["Ã”", "Ô"], ["Ã•", "Õ"], ["Ã–", "Ö"],
+        ["Ãº", "ú"], ["Ã¹", "ù"], ["Ã»", "û"], ["Ã¼", "ü"],
+        ["Ãš", "Ú"], ["Ã™", "Ù"], ["Ã›", "Û"], ["Ãœ", "Ü"],
+        ["Ã§", "ç"], ["Ã‡", "Ç"],
+        ["â€™", "’"], ["â€˜", "‘"], ["â€œ", "“"], ["â€", "”"], ["â€¦", "…"],
+        ["â€“", "–"], ["â€”", "—"], ["â„¢", "™"],
+        ["â™¥", "♥"], ["â™¡", "♡"]
+    ];
+    replacements.forEach(([from, to]) => {
+        text = text.replaceAll(from, to);
+    });
+    text = text.replaceAll("£o", "");
+    text = text.replaceAll("£", "");
+    text = text.replaceAll("�", "");
+    text = text.replaceAll("Â ", " ");
+    text = text.replaceAll("Â", "");
+    return text;
+}
+
+function normalizePayloadTextArtifacts(value, visited = new WeakSet()) {
+    if (typeof value === "string") {
+        return normalizeTextArtifacts(value);
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => normalizePayloadTextArtifacts(item, visited));
+    }
+    if (!value || typeof value !== "object") {
+        return value;
+    }
+    if (visited.has(value)) {
+        return value;
+    }
+    visited.add(value);
+
+    const normalized = {};
+    Object.entries(value).forEach(([key, entry]) => {
+        normalized[key] = normalizePayloadTextArtifacts(entry, visited);
+    });
+    return normalized;
+}
+
+function clampColorChannel(value) {
+    return Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
+}
+
+function normalizeAccentChannel(value) {
+    // Keep accents vivid enough to be visible over the dark frame.
+    return clampColorChannel((Number(value) || 0) * 0.82 + 46);
+}
+
+function computeAchievementAccentColor(img) {
+    if (!(img instanceof HTMLImageElement)) return "";
+    const src = String(img.currentSrc || img.src || "").trim();
+    if (!src) return "";
+    const cached = achievementAccentColorCache.get(src);
+    if (cached) return cached;
+
+    const canvas = document.createElement("canvas");
+    const size = 28;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return "";
+
+    try {
+        ctx.clearRect(0, 0, size, size);
+        ctx.drawImage(img, 0, 0, size, size);
+        const pixels = ctx.getImageData(0, 0, size, size).data;
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let totalWeight = 0;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+            const r = pixels[i];
+            const g = pixels[i + 1];
+            const b = pixels[i + 2];
+            const a = pixels[i + 3];
+            if (a < 70) continue;
+
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const saturation = max === 0 ? 0 : (max - min) / max;
+            const brightness = (r + g + b) / 3;
+            const weight = brightness < 36 && saturation < 0.12 ? 0.2 : 1;
+
+            sumR += r * weight;
+            sumG += g * weight;
+            sumB += b * weight;
+            totalWeight += weight;
+        }
+
+        if (totalWeight <= 0) return "";
+
+        const red = normalizeAccentChannel(sumR / totalWeight);
+        const green = normalizeAccentChannel(sumG / totalWeight);
+        const blue = normalizeAccentChannel(sumB / totalWeight);
+        const color = `rgb(${red}, ${green}, ${blue})`;
+        achievementAccentColorCache.set(src, color);
+        return color;
+    } catch {
+        return "";
+    }
+}
+
+function applyAchievementAccentColor(item) {
+    if (!(item instanceof HTMLElement)) return;
+    const img = item.querySelector("img");
+    if (!(img instanceof HTMLImageElement)) return;
+
+    const setColor = () => {
+        const color = computeAchievementAccentColor(img);
+        if (color) item.style.setProperty("--achievement-accent-color", color);
+    };
+
+    if (img.complete && img.naturalWidth > 0) {
+        setColor();
+        return;
+    }
+
+    if (img.dataset.achievementAccentBound !== "1") {
+        img.dataset.achievementAccentBound = "1";
+        img.addEventListener("load", setColor, { once: true });
+    }
+}
+
+function normalizeRole(value) {
+    return String(value || "").trim().toLowerCase() === "moderator" ? "moderator" : "user";
+}
+
+function resolveUserId(userLike) {
+    const id = Number(userLike?.id || userLike?.user_id || 0);
+    return Number.isInteger(id) && id > 0 ? id : 0;
+}
+
+function resolveRoleInfo(userLike) {
+    const explicitOwner = Boolean(
+        userLike?.isOwner
+        || userLike?.is_owner
+        || userLike?.role === "owner"
+        || userLike?.user_role === "owner"
+    );
+    const explicitModerator = Boolean(
+        userLike?.isModerator
+        || userLike?.is_moderator
+        || normalizeRole(userLike?.role) === "moderator"
+        || normalizeRole(userLike?.user_role) === "moderator"
+    );
+
+    let isOwner = explicitOwner;
+    let isModerator = !isOwner && explicitModerator;
+    if (!isOwner && !isModerator) {
+        const userId = resolveUserId(userLike);
+        if (userId && userRoleMapById.has(userId)) {
+            const fromMap = userRoleMapById.get(userId);
+            isOwner = Boolean(fromMap?.is_owner);
+            isModerator = !isOwner && Boolean(fromMap?.is_moderator);
+        }
+    }
+    return { isOwner, isModerator };
+}
+
+async function ensureUserRolesMap(force = false) {
+    if (!force && userRoleMapById.size > 0) return;
+    const data = await sendJsonWithFallback([
+        { url: "/api/users/roles-map" },
+        { url: "/api/users/roles" }
+    ]);
+    userRoleMapById.clear();
+    (data.users || []).forEach((item) => {
+        const id = Number(item?.id || 0);
+        if (!id) return;
+        userRoleMapById.set(id, {
+            role: normalizeRole(item?.role),
+            is_owner: Boolean(item?.is_owner),
+            is_moderator: Boolean(item?.is_moderator)
+        });
+    });
+}
+
+function setupPasswordVisibilityToggles() {
+    const syncPasswordToggleState = (button, input) => {
+        const isVisible = input.type !== "password";
+        button.classList.toggle("is-visible", isVisible);
+        button.classList.toggle("is-hidden", !isVisible);
+        button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+        const nextLabel = isVisible ? "Ocultar senha" : "Mostrar senha";
+        button.setAttribute("aria-label", nextLabel);
+        button.setAttribute("title", nextLabel);
+    };
+
+    document.querySelectorAll("button[data-password-toggle]").forEach((button) => {
+        if (button.dataset.passwordToggleBound === "1") return;
+        button.dataset.passwordToggleBound = "1";
+        const targetId = String(button.dataset.passwordToggle || "");
+        const input = byId(targetId);
+        if (!(input instanceof HTMLInputElement)) return;
+        syncPasswordToggleState(button, input);
+        button.addEventListener("click", () => {
+            const shouldReveal = input.type === "password";
+            input.type = shouldReveal ? "text" : "password";
+            syncPasswordToggleState(button, input);
+        });
+    });
+}
+
+function setupPasswordPasteBlock() {
+    document.querySelectorAll("input[type='password'], input[name='confirmPassword']").forEach((input) => {
+        if (!(input instanceof HTMLInputElement)) return;
+        if (input.dataset.passwordPasteBlocked === "1") return;
+        input.dataset.passwordPasteBlocked = "1";
+        input.addEventListener("paste", (event) => {
+            event.preventDefault();
+        });
+    });
+}
+
 function escapeHtml(value) {
-    return String(value || "")
+    return normalizeTextArtifacts(value)
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
@@ -45,7 +323,31 @@ function escapeHtml(value) {
 
 function displayName(userLike) {
     if (!userLike) return "Jogador";
-    return userLike.nickname || userLike.username || "Jogador";
+    const baseRaw = normalizeTextArtifacts(userLike.nickname || userLike.username || "Jogador");
+    const base = String(baseRaw).trim() || "Jogador";
+    const roleInfo = resolveRoleInfo(userLike);
+    if (roleInfo.isOwner) {
+        const ownerBase = base.replace(/\s*\((?:Dono|Moderador|adm)\)\s*$/i, "").trim() || "Jogador";
+        return `${ownerBase} (Dono)`;
+    }
+    if (roleInfo.isModerator) {
+        const moderatorBase = base.replace(/\s*\((?:Dono|Moderador|adm)\)\s*$/i, "").trim() || "Jogador";
+        return `${moderatorBase} (adm)`;
+    }
+    return base;
+}
+
+function displayNameRoleClass(userLike) {
+    const roleInfo = resolveRoleInfo(userLike);
+    if (roleInfo.isOwner) return "user-name-owner";
+    if (roleInfo.isModerator) return "user-name-moderator";
+    return "";
+}
+
+function displayNameStyledHtml(userLike) {
+    const roleClass = displayNameRoleClass(userLike);
+    const classes = roleClass ? `user-name ${roleClass}` : "user-name";
+    return `<span class="${classes}">${escapeHtml(displayName(userLike))}</span>`;
 }
 
 function formatRoundDate(timestampSeconds) {
@@ -64,6 +366,33 @@ function formatRoundDateTime(timestampSeconds) {
     return `${day} - ${time}`;
 }
 
+function homeRoundPhaseLabel(round) {
+    const phase = String(round?.phase || round?.status || "").toLowerCase();
+    if (phase === "rating") return "Fase de avaliação";
+    if (phase === "indication") return "Fase de indicação";
+    return String(round?.status || phase || "-");
+}
+
+function suggestionTargetLabel(target) {
+    const normalized = String(target || "").trim().toLowerCase();
+    if (normalized === "profile") return "Perfil";
+    if (normalized === "round") return "Rodada";
+    if (normalized === "admin") return "Administrador";
+    return "Início";
+}
+
+function suggestionTargetsForCurrentUser() {
+    const targets = [
+        { value: "home", label: suggestionTargetLabel("home") },
+        { value: "profile", label: suggestionTargetLabel("profile") },
+        { value: "round", label: suggestionTargetLabel("round") }
+    ];
+    if (sessionIsOwner || sessionIsModerator) {
+        targets.push({ value: "admin", label: suggestionTargetLabel("admin") });
+    }
+    return targets;
+}
+
 function profileUrlByUserId(userId) {
     const numericUserId = Number(userId);
     if (!Number.isInteger(numericUserId) || numericUserId <= 0) return "/profile.html";
@@ -72,11 +401,15 @@ function profileUrlByUserId(userId) {
 
 function userLinkHtml(userLike, userId) {
     const numericUserId = Number(userId);
-    const label = escapeHtml(displayName(userLike));
+    const enrichedUser = {
+        ...(userLike || {}),
+        id: resolveUserId(userLike) || (Number.isInteger(numericUserId) ? numericUserId : 0)
+    };
+    const labelHtml = displayNameStyledHtml(enrichedUser);
     if (!Number.isInteger(numericUserId) || numericUserId <= 0) {
-        return `<span>${label}</span>`;
+        return labelHtml;
     }
-    return `<a class="user-link" href="${escapeHtml(profileUrlByUserId(numericUserId))}">${label}</a>`;
+    return `<a class="user-link" href="${escapeHtml(profileUrlByUserId(numericUserId))}">${labelHtml}</a>`;
 }
 
 function commentAuthorHtml(userLike) {
@@ -90,6 +423,36 @@ function commentAuthorHtml(userLike) {
     `;
 }
 
+function commentLikesMeta(comment) {
+    const likesCount = Math.max(0, Number(comment?.likes_count ?? comment?.likesCount ?? 0));
+    const likedByMe = Boolean(Number(comment?.liked_by_me ?? comment?.likedByMe ?? 0));
+    return { likesCount, likedByMe };
+}
+
+function commentLikeActionsHtml(comment, options = {}) {
+    const commentId = Number(comment?.id || 0);
+    if (!commentId) return "";
+    const likeScope = String(options.likeScope || "").trim().toLowerCase();
+    const recommendationId = Number(options.recommendationId || comment?.recommendation_id || 0);
+    const { likesCount, likedByMe } = commentLikesMeta(comment);
+    const recommendationAttrs = recommendationId > 0
+        ? ` data-recommendation-id="${recommendationId}"`
+        : "";
+    return `
+        <button
+            class="comment-action comment-like-btn${likedByMe ? " is-liked" : ""}"
+            type="button"
+            data-comment-like-toggle="${likeScope}"
+            data-comment-id="${commentId}"${recommendationAttrs}
+            aria-pressed="${likedByMe ? "true" : "false"}"
+            title="${likedByMe ? "Descurtir" : "Curtir"}"
+        ><span class="comment-like-icon" aria-hidden="true">${likedByMe ? "♥" : "♡"}</span></button>
+        ${likesCount > 0
+            ? `<button class="comment-action comment-like-count" type="button" data-comment-like-list="${likeScope}" data-comment-id="${commentId}"${recommendationAttrs}>${likesCount}</button>`
+            : ""}
+    `;
+}
+
 function commentItemHtml(comment, options = {}) {
     const recommendationId = Number(options.recommendationId || comment.recommendation_id || 0);
     const interactive = options.interactive === true && recommendationId > 0;
@@ -100,6 +463,7 @@ function commentItemHtml(comment, options = {}) {
     const actions = interactive
         ? `
             <div class="comment-actions">
+                ${commentLikeActionsHtml(comment, { likeScope: "recommendation", recommendationId })}
                 <button class="comment-action" type="button" data-comment-action="reply" data-comment-id="${Number(comment.id) || 0}" data-recommendation-id="${recommendationId}">Responder</button>
                 ${ownComment ? `<button class="comment-action" type="button" data-comment-action="edit" data-comment-id="${Number(comment.id) || 0}" data-recommendation-id="${recommendationId}">Editar</button>` : ""}
                 ${canDeleteComment ? `<button class="comment-action danger" type="button" data-comment-action="delete" data-comment-id="${Number(comment.id) || 0}" data-recommendation-id="${recommendationId}">Excluir</button>` : ""}
@@ -161,14 +525,20 @@ function buildCommentDisplayRows(comments) {
 
 function recommendationCommentsSignature(comments) {
     return (comments || [])
-        .map((comment) => `${Number(comment.id) || 0}:${Number(comment.updated_at || 0)}:${Number(comment.parent_comment_id || 0)}`)
+        .map((comment) => `${Number(comment.id) || 0}:${Number(comment.updated_at || 0)}:${Number(comment.parent_comment_id || 0)}:${Number(comment.likes_count || 0)}:${Number(comment.liked_by_me || 0)}`)
         .join("|");
+}
+
+function recommendationCommentIds(comments) {
+    return (comments || [])
+        .map((comment) => Number(comment.id) || 0)
+        .filter((id) => id > 0);
 }
 
 function recommendationCommentsHtml(recommendationId, comments, options = {}) {
     const rows = buildCommentDisplayRows(comments);
     if (!rows.length) {
-        return '<div class="comment-item">Sem comentarios ainda.</div>';
+        return '<div class="comment-item">Sem comentários ainda.</div>';
     }
     return rows
         .map((row) =>
@@ -207,25 +577,58 @@ function getRecommendationByScope(scope, recommendationId) {
 function syncRecommendationCommentList(recommendation, scope, force = false) {
     if (!recommendation) return;
     const cache = scope === "home" ? recommendationCommentSignatureCaches.home : recommendationCommentSignatureCaches.round;
+    const idsCache = scope === "home" ? recommendationCommentIdsCaches.home : recommendationCommentIdsCaches.round;
     const recommendationId = Number(recommendation.id);
     if (!recommendationId) return;
 
     const list = byId(`comment-list-${recommendationId}`);
     if (!list) return;
-
     const comments = recommendation.comments || [];
+    const currentIds = recommendationCommentIds(comments);
+    const previousIds = idsCache.get(recommendationId);
     const signature = recommendationCommentsSignature(comments);
     if (!force && cache.get(recommendationId) === signature) return;
 
     cache.set(recommendationId, signature);
+    idsCache.set(recommendationId, currentIds);
     list.innerHTML = recommendationCommentsHtml(recommendationId, comments, { interactive: true });
+
+    if (Array.isArray(previousIds)) {
+        const previousSet = new Set(previousIds);
+        const newCommentIds = currentIds.filter((id) => !previousSet.has(id));
+        if (newCommentIds.length) {
+            const newIdsSet = new Set(newCommentIds);
+            const renderedRows = [...list.querySelectorAll(".comment-item[data-comment-id]")];
+            let targetRow = null;
+            renderedRows.forEach((row) => {
+                const rowId = Number(row.getAttribute("data-comment-id") || 0);
+                if (newIdsSet.has(rowId)) targetRow = row;
+            });
+
+            requestAnimationFrame(() => {
+                if (targetRow instanceof HTMLElement) {
+                    targetRow.scrollIntoView({
+                        behavior: "auto",
+                        block: "nearest",
+                        inline: "nearest"
+                    });
+                } else {
+                    list.scrollTop = list.scrollHeight;
+                }
+            });
+        }
+    }
 }
 
 function clearStaleCommentSignatures(scope, recommendationIds) {
     const cache = scope === "home" ? recommendationCommentSignatureCaches.home : recommendationCommentSignatureCaches.round;
+    const idsCache = scope === "home" ? recommendationCommentIdsCaches.home : recommendationCommentIdsCaches.round;
     const keep = new Set((recommendationIds || []).map((id) => Number(id)));
     [...cache.keys()].forEach((key) => {
         if (!keep.has(Number(key))) cache.delete(key);
+    });
+    [...idsCache.keys()].forEach((key) => {
+        if (!keep.has(Number(key))) idsCache.delete(key);
     });
 }
 
@@ -274,27 +677,28 @@ function updateCommentFormUi(recommendationId) {
     if (state.mode === "edit") {
         form.dataset.editCommentId = String(state.commentId || 0);
         if (submit) submit.textContent = "Salvar";
-        if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentario";
+        if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentário";
         if (context) {
             context.classList.remove("hidden");
             context.innerHTML = `
-                <span>Editando comentario</span>
+                <span>Editando comentário</span>
                 <button class="comment-action" type="button" data-comment-context-cancel="${id}">Cancelar</button>
             `;
         }
+        if (page === "home") scheduleHomeCommentFormAlignment();
         return;
     }
 
     delete form.dataset.editCommentId;
     if (submit) submit.textContent = state.mode === "reply" ? "Responder" : "Comentar";
     if (input instanceof HTMLInputElement) {
-        input.placeholder = state.mode === "reply" ? "Escreva sua resposta" : "Comentar esta avaliacao";
+        input.placeholder = state.mode === "reply" ? "Escreva sua resposta" : "Comentar esta avaliação";
     }
     if (context) {
         if (state.mode === "reply" && state.parentCommentId > 0) {
             context.classList.remove("hidden");
             context.innerHTML = `
-                <span>Respondendo ${escapeHtml(state.label || "comentario")}</span>
+                <span>Respondendo ${escapeHtml(state.label || "comentário")}</span>
                 <button class="comment-action" type="button" data-comment-context-cancel="${id}">Cancelar</button>
             `;
         } else {
@@ -302,6 +706,7 @@ function updateCommentFormUi(recommendationId) {
             context.innerHTML = "";
         }
     }
+    if (page === "home") scheduleHomeCommentFormAlignment();
 }
 
 function findCommentById(recommendation, commentId) {
@@ -335,11 +740,13 @@ async function ensureSessionProfile() {
         const parsed = Number(data?.profile?.id || 0);
         sessionUserId = Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
         sessionIsOwner = Boolean(data?.isOwner);
+        sessionIsModerator = Boolean(data?.isModerator);
         sessionProfile = data;
     } catch {
         sessionProfile = null;
         sessionUserId = 0;
         sessionIsOwner = false;
+        sessionIsModerator = false;
     }
     sessionProfileLoaded = true;
     sessionUserLoaded = true;
@@ -356,13 +763,84 @@ async function ensureSessionUserId() {
 function syncOwnerNavLinkVisibility() {
     const adminNavLink = byId("adminNavLink");
     if (!adminNavLink) return;
-    if (sessionIsOwner) adminNavLink.classList.remove("hidden");
+    if (sessionIsOwner || sessionIsModerator) adminNavLink.classList.remove("hidden");
     else adminNavLink.classList.add("hidden");
+}
+
+function adminDecisionSeenStorageKey() {
+    return `admin-last-decision-${Number(sessionUserId || 0)}`;
+}
+
+function readAdminDecisionSeenId() {
+    const key = adminDecisionSeenStorageKey();
+    const parsed = Number(window.localStorage.getItem(key) || 0);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function writeAdminDecisionSeenId(decisionId) {
+    const parsed = Number(decisionId || 0);
+    if (!Number.isInteger(parsed) || parsed <= 0) return;
+    window.localStorage.setItem(adminDecisionSeenStorageKey(), String(parsed));
+}
+
+function setAdminNotificationDotVisible(visible) {
+    const adminNavLink = byId("adminNavLink");
+    if (!adminNavLink) return;
+    adminNavLink.classList.toggle("has-notification-dot", Boolean(visible));
+}
+
+function syncAdminNotificationDotByResolvedId(resolvedDecisionId) {
+    const resolvedId = Number(resolvedDecisionId || 0);
+    adminLatestResolvedDecisionId = resolvedId > 0 ? resolvedId : 0;
+    const seenId = readAdminDecisionSeenId();
+    setAdminNotificationDotVisible(adminLatestResolvedDecisionId > seenId);
+}
+
+async function syncAdminNotificationState() {
+    if (!sessionIsModerator && !sessionIsOwner) {
+        setAdminNotificationDotVisible(false);
+        return;
+    }
+    try {
+        const data = await sendJsonWithFallback([
+            { url: "/api/admin/notification-state" },
+            { url: "/api/admin/dashboard" }
+        ]);
+        if (sessionIsOwner) {
+            const pendingCount = Number(
+                data?.pendingOwnerActionCount
+                || (Array.isArray(data?.pendingOwnerActionRequests) ? data.pendingOwnerActionRequests.length : 0)
+                || 0
+            );
+            setAdminNotificationDotVisible(pendingCount > 0);
+            return;
+        }
+        const latestResolvedId = Number(data?.latestResolvedAdminAction?.id || 0);
+        syncAdminNotificationDotByResolvedId(latestResolvedId);
+    } catch {
+        // polling silencioso
+    }
+}
+
+function startAdminNotificationPolling() {
+    if (adminNotificationPollTimer) {
+        clearInterval(adminNotificationPollTimer);
+        adminNotificationPollTimer = null;
+    }
+    if (!sessionIsModerator && !sessionIsOwner) {
+        setAdminNotificationDotVisible(false);
+        return;
+    }
+    syncAdminNotificationState();
+    adminNotificationPollTimer = setInterval(() => {
+        syncAdminNotificationState();
+    }, 5000);
 }
 
 async function setupOwnerNavLink() {
     await ensureSessionProfile();
     syncOwnerNavLinkVisibility();
+    startAdminNotificationPolling();
 }
 
 function achievementSelectOptionsHtml() {
@@ -385,34 +863,77 @@ function formatAchievementKeys(keys) {
     return keys.join(", ");
 }
 
+function maskEmailForAdminDisplay(emailText) {
+    const email = String(emailText || "").trim();
+    if (!email || !email.includes("@")) return email;
+    const [localPart, domainPart] = email.split("@");
+    if (!localPart || !domainPart) return email;
+    if (localPart.length <= 2) {
+        return `${localPart[0] || ""}****@${domainPart}`;
+    }
+    const prefix = localPart.slice(0, 2);
+    const suffix = localPart.length > 4 ? localPart.slice(-2) : localPart.slice(-1);
+    return `${prefix}****${suffix}@${domainPart}`;
+}
+
 function renderAdminDashboardUsers(users, userAchievementsMap) {
     return (users || [])
         .map((user) => {
+            const userId = Number(user?.id || 0);
+            const userLabel = displayName(user);
             const achievementState = userAchievementsMap.get(Number(user.id)) || {
                 unlocked_count: 0,
                 keys: []
             };
-            return `
-                <div class="search-item admin-user-item">
-                    <div>
-                        <strong>${escapeHtml(displayName(user))}</strong>
-                        <div>${escapeHtml(user.email)}</div>
-                        <div>Status: ${user.blocked ? "Bloqueado" : "Ativo"}</div>
-                        <div>Conquistas: ${escapeHtml(formatAchievementKeys(achievementState.keys))}</div>
-                    </div>
-                    <div class="inline-actions">
-                        <button class="btn btn-outline" data-admin-toggle-block="${user.id}" data-admin-blocked="${user.blocked ? 1 : 0}" type="button">
+            const actorIsModeratorOnly = sessionIsModerator && !sessionIsOwner;
+            const ownAccount = Boolean(user?.is_self) || (userId > 0 && userId === Number(sessionUserId || 0));
+            const isOwnerAccount = Boolean(user?.is_owner);
+            const isModeratorAccount = !isOwnerAccount && normalizeRole(user?.role) === "moderator";
+            const moderatorTargetLocked = actorIsModeratorOnly && isModeratorAccount && !ownAccount;
+            const ownerSelfAccount = isOwnerAccount && sessionIsOwner && ownAccount;
+            const ownerLockedVisual = isOwnerAccount && !sessionIsOwner;
+            const isReadOnlyAccount = isOwnerAccount || moderatorTargetLocked;
+            const allowAchievementTools = !moderatorTargetLocked && (!isOwnerAccount || ownerSelfAccount);
+            const shownEmail = actorIsModeratorOnly ? maskEmailForAdminDisplay(user.email) : String(user.email || "");
+            const roleLabel = isOwnerAccount ? "Dono" : (isModeratorAccount ? "Moderador" : "Usuário");
+            const roleToggleButton = sessionIsOwner && !isOwnerAccount
+                ? `<button class="btn ${isModeratorAccount ? "btn-success" : "btn-outline"}" data-admin-set-role="${user.id}" data-admin-target-role="${isModeratorAccount ? "user" : "moderator"}" type="button">${isModeratorAccount ? "Remover Moderador" : "Tornar Moderador"}</button>`
+                : "";
+            const adminActions = isReadOnlyAccount
+                ? ""
+                : `
+                        <button class="btn ${user.blocked ? "btn-outline" : "btn-warn"}" data-admin-toggle-block="${user.id}" data-admin-blocked="${user.blocked ? 1 : 0}" type="button">
                             ${user.blocked ? "Desbloquear" : "Bloquear"}
                         </button>
-                        <button class="btn btn-outline" data-admin-delete-user="${user.id}" type="button">Excluir</button>
+                        <button class="btn btn-danger" data-admin-delete-user="${user.id}" data-admin-delete-user-name="${escapeHtml(userLabel)}" type="button">Excluir conta</button>
+                        ${roleToggleButton}
+                  `;
+            return `
+                <div class="search-item admin-user-item${ownerLockedVisual ? " is-owner-locked" : ""}">
+                    <div>
+                        <strong>${displayNameStyledHtml(user)}</strong>
+                        <div>${escapeHtml(shownEmail)}</div>
+                        <div>Cargo: ${roleLabel}</div>
+                        <div>Status: ${user.blocked ? "Bloqueado" : "Ativo"}</div>
+                        ${isOwnerAccount ? "<div>Conta protegida para bloqueio, exclusão e alteração de cargo.</div>" : ""}
+                        ${moderatorTargetLocked ? "<div>Moderador não pode modificar outro moderador.</div>" : ""}
+                        <div>Conquistas: ${escapeHtml(formatAchievementKeys(achievementState.keys))}</div>
                     </div>
-                    <div class="admin-achievement-tools">
-                        <select data-admin-achievement-key="${user.id}">
-                            ${achievementSelectOptionsHtml()}
-                        </select>
-                        <button class="btn btn-outline" data-admin-grant-achievement="${user.id}" type="button">Dar conquista</button>
-                        <button class="btn btn-outline" data-admin-reset-achievements="${user.id}" type="button">Zerar conquistas</button>
-                    </div>
+                    ${adminActions ? `<div class="inline-actions">${adminActions}</div>` : ""}
+                    ${allowAchievementTools ? `
+                        <div class="admin-achievement-tools">
+                            <select data-admin-achievement-key="${user.id}">
+                                ${achievementSelectOptionsHtml()}
+                            </select>
+                            <button class="btn btn-outline" data-admin-grant-achievement="${user.id}" type="button">Dar conquista</button>
+                            <button class="btn btn-outline" data-admin-revoke-achievement="${user.id}" type="button">Tirar conquista</button>
+                            <span class="admin-achievement-options-link" data-admin-toggle-achievement-options="${user.id}" data-admin-achievement-options-expanded="0" role="button" tabindex="0">Mais opções</span>
+                            <div class="admin-achievement-more-options hidden" data-admin-achievement-more-options="${user.id}">
+                                <button class="btn btn-danger" data-admin-reset-achievements="${user.id}" type="button">Zerar conquistas</button>
+                            </div>
+                        </div>
+                    ` : ""}
+                    <p id="adminUserFeedback-${user.id}" class="feedback hidden admin-user-feedback"></p>
                 </div>
             `;
         })
@@ -427,7 +948,7 @@ function renderAdminDashboardRounds(rounds) {
                     <div>
                         <strong>Rodada - ${formatRoundDateTime(round.created_at)}</strong>
                         <div>Status: ${escapeHtml(round.status)}</div>
-                        <div>Criador: ${escapeHtml(displayName({ nickname: round.creator_nickname, username: round.creator_username }))}</div>
+                        <div>Criador: ${displayNameStyledHtml({ id: round.creator_user_id, nickname: round.creator_nickname, username: round.creator_username })}</div>
                     </div>
                     <div class="inline-actions">
                         <button class="btn btn-outline" data-admin-close-round="${round.id}" type="button">Fechar</button>
@@ -439,15 +960,353 @@ function renderAdminDashboardRounds(rounds) {
         .join("");
 }
 
+function renderAdminOwnerActionRequests(requests) {
+    const normalized = Array.isArray(requests) ? requests : [];
+    if (!normalized.length) {
+        return `<p class="feedback ok">Sem solicitações pendentes no momento.</p>`;
+    }
+    return normalized
+        .map((request) => {
+            const details = Array.isArray(request?.detail_lines) ? request.detail_lines : [];
+            return `
+                <div class="search-item admin-owner-request-item" data-admin-owner-request-id="${Number(request?.id) || 0}">
+                    <div>
+                        <strong>Solicitação #${Number(request?.id) || 0}</strong>
+                        <div>Solicitante: ${escapeHtml(String(request?.requester_name || "-"))}</div>
+                        <div>Ação: ${escapeHtml(String(request?.action_label || "-"))}</div>
+                        ${Number(request?.created_at) > 0 ? `<div>Criada em: ${escapeHtml(formatRoundDateTime(request.created_at))}</div>` : ""}
+                        ${Number(request?.expires_at) > 0 ? `<div>Expira em: ${escapeHtml(formatRoundDateTime(request.expires_at))}</div>` : ""}
+                        ${details.length ? `<div class="admin-owner-request-details">${details.map((line) => `<div>${escapeHtml(String(line || ""))}</div>`).join("")}</div>` : ""}
+                    </div>
+                    <div class="inline-actions">
+                        <button class="btn btn-success" type="button" data-admin-owner-request-decision="allow" data-admin-owner-request-id="${Number(request?.id) || 0}">Permitir</button>
+                        <button class="btn btn-danger" type="button" data-admin-owner-request-decision="deny" data-admin-owner-request-id="${Number(request?.id) || 0}">Negar</button>
+                    </div>
+                </div>
+            `;
+        })
+        .join("");
+}
+
+let commentLikesPopupEl = null;
+let commentLikesPopupBound = false;
+
+function ensureCommentLikesPopup() {
+    if (commentLikesPopupEl instanceof HTMLElement) return commentLikesPopupEl;
+    const popup = document.createElement("section");
+    popup.id = "commentLikesPopup";
+    popup.className = "comment-likes-popup hidden";
+    popup.innerHTML = `
+        <header class="comment-likes-popup-head">
+            <strong>Curtidas</strong>
+            <button class="comment-action" type="button" data-comment-likes-close="1">Fechar</button>
+        </header>
+        <div class="comment-likes-popup-body" data-comment-likes-body="1">
+            <div class="comment-likes-empty">Carregando...</div>
+        </div>
+    `;
+    document.body.appendChild(popup);
+    commentLikesPopupEl = popup;
+
+    if (!commentLikesPopupBound) {
+        commentLikesPopupBound = true;
+        document.addEventListener("click", (event) => {
+            if (!(commentLikesPopupEl instanceof HTMLElement)) return;
+            if (commentLikesPopupEl.classList.contains("hidden")) return;
+            const closeBtn = event.target.closest("[data-comment-likes-close]");
+            if (closeBtn) {
+                closeCommentLikesPopup();
+                return;
+            }
+            if (!event.target.closest("#commentLikesPopup") && !event.target.closest("[data-comment-like-list]")) {
+                closeCommentLikesPopup();
+            }
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") closeCommentLikesPopup();
+        });
+        window.addEventListener("resize", closeCommentLikesPopup);
+        window.addEventListener("scroll", closeCommentLikesPopup, { capture: true });
+    }
+
+    return popup;
+}
+
+function closeCommentLikesPopup() {
+    if (!(commentLikesPopupEl instanceof HTMLElement)) return;
+    commentLikesPopupEl.classList.add("hidden");
+}
+
+function positionCommentLikesPopup(anchorElement) {
+    if (!(commentLikesPopupEl instanceof HTMLElement) || !(anchorElement instanceof HTMLElement)) return;
+    const rect = anchorElement.getBoundingClientRect();
+    const popupRect = commentLikesPopupEl.getBoundingClientRect();
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    const margin = 8;
+    let left = rect.left + rect.width / 2 - popupRect.width / 2;
+    left = Math.max(margin, Math.min(left, Math.max(margin, vw - popupRect.width - margin)));
+    let top = rect.bottom + margin;
+    if (top + popupRect.height > vh - margin) {
+        top = Math.max(margin, rect.top - popupRect.height - margin);
+    }
+    commentLikesPopupEl.style.left = `${Math.round(left)}px`;
+    commentLikesPopupEl.style.top = `${Math.round(top)}px`;
+}
+
+function renderCommentLikesPopupList(likes) {
+    const popup = ensureCommentLikesPopup();
+    const body = popup.querySelector("[data-comment-likes-body='1']");
+    if (!(body instanceof HTMLElement)) return;
+    const rows = Array.isArray(likes) ? likes : [];
+    if (!rows.length) {
+        body.innerHTML = '<div class="comment-likes-empty">Sem curtidas ainda.</div>';
+        return;
+    }
+    body.innerHTML = rows
+        .map((item) => `
+            <div class="comment-likes-item">
+                ${commentAuthorHtml({
+                    user_id: Number(item.user_id || 0),
+                    id: Number(item.user_id || 0),
+                    username: item.username,
+                    nickname: item.nickname,
+                    avatar_url: item.avatar_url
+                })}
+            </div>
+        `)
+        .join("");
+}
+
+async function showCommentLikesPopup(likeScope, commentId, anchorElement) {
+    const numericCommentId = Number(commentId || 0);
+    if (!numericCommentId) return;
+    const scope = String(likeScope || "").trim().toLowerCase();
+    const endpoint = scope === "profile"
+        ? `/api/profile-comments/${numericCommentId}/likes`
+        : `/api/recommendation-comments/${numericCommentId}/likes`;
+    const popup = ensureCommentLikesPopup();
+    const body = popup.querySelector("[data-comment-likes-body='1']");
+    if (body instanceof HTMLElement) {
+        body.innerHTML = '<div class="comment-likes-empty">Carregando...</div>';
+    }
+    popup.classList.remove("hidden");
+    popup.style.left = "8px";
+    popup.style.top = "8px";
+    positionCommentLikesPopup(anchorElement);
+    try {
+        const result = await sendJson(endpoint);
+        renderCommentLikesPopupList(result?.likes || []);
+    } catch (error) {
+        if (body instanceof HTMLElement) {
+            body.innerHTML = `<div class="comment-likes-empty">${escapeHtml(error.message || "Erro ao carregar curtidas.")}</div>`;
+        }
+    } finally {
+        positionCommentLikesPopup(anchorElement);
+    }
+}
+
+function renderAdminSuggestions(suggestions) {
+    const normalized = Array.isArray(suggestions) ? suggestions : [];
+    if (!normalized.length) {
+        return `<p class="feedback ok">Sem sugestões no momento.</p>`;
+    }
+    return normalized
+        .map((suggestion) => {
+            const id = Number(suggestion?.id || 0);
+            const author = displayNameStyledHtml({
+                id: Number(suggestion?.user_id || 0),
+                nickname: suggestion?.author_nickname,
+                username: suggestion?.author_username
+            });
+            const targetLabel = suggestionTargetLabel(suggestion?.target_page);
+            const createdAt = Number(suggestion?.created_at || 0);
+            const text = String(suggestion?.suggestion_text || "").trim();
+            return `
+                <div class="search-item admin-suggestion-item" data-admin-suggestion-id="${id}">
+                    <div>
+                        <strong>Sugestão #${id}</strong>
+                        <div>Usuário: ${author}</div>
+                        <div>Tela: ${escapeHtml(targetLabel)}</div>
+                        ${createdAt > 0 ? `<div>Criada em: ${escapeHtml(formatRoundDateTime(createdAt))}</div>` : ""}
+                        <div class="admin-suggestion-text">${escapeHtml(text)}</div>
+                    </div>
+                    <div class="inline-actions admin-suggestion-actions">
+                        <button class="btn btn-danger" type="button" data-admin-delete-suggestion="${id}">Excluir sugestão</button>
+                    </div>
+                </div>
+            `;
+        })
+        .join("");
+}
+
 async function handleAdminPage() {
     const adminPanel = byId("adminPanel");
     const adminUsersList = byId("adminUsersList");
     const adminRoundsList = byId("adminRoundsList");
+    const adminOwnerRequestsCard = byId("adminOwnerRequestsCard");
+    const adminOwnerRequestsList = byId("adminOwnerRequestsList");
+    const adminSuggestionsCard = byId("adminSuggestionsCard");
+    const adminSuggestionsList = byId("adminSuggestionsList");
     if (!adminPanel || !adminUsersList || !adminRoundsList) return;
 
-    if (!sessionIsOwner) {
+    if (!sessionIsOwner && !sessionIsModerator) {
         window.location.href = "/";
         return;
+    }
+
+    let adminActionPendingLocked = false;
+    const adminAchievementKeysByUserId = new Map();
+    let latestDecisionShownId = readAdminDecisionSeenId();
+
+    const userFeedbackElementId = (userId) => `adminUserFeedback-${Number(userId) || 0}`;
+    const setAdminUserFeedback = (userId, message, type = "error") => {
+        setFeedback(userFeedbackElementId(userId), message, type);
+    };
+    const clearAdminUserFeedback = (userId) => {
+        setFeedback(userFeedbackElementId(userId), "", "");
+    };
+    const clearAllAdminUserFeedback = () => {
+        adminPanel.querySelectorAll(".admin-user-feedback").forEach((element) => {
+            setFeedback(element, "", "");
+        });
+    };
+
+    const applyAdminListVisibleLimit = (container, maxVisibleItems) => {
+        if (!(container instanceof HTMLElement)) return;
+        const children = Array.from(container.children).filter((child) => child instanceof HTMLElement);
+        const limit = Number(maxVisibleItems) || 0;
+
+        if (!children.length || limit <= 0 || children.length <= limit) {
+            container.style.maxHeight = "";
+            container.style.overflowY = "";
+            container.style.paddingRight = "";
+            return;
+        }
+
+        const styles = window.getComputedStyle(container);
+        const rowGap = Number.parseFloat(styles.rowGap || styles.gap || "0") || 0;
+        const visibleItems = children.slice(0, limit);
+        const visibleHeight = visibleItems.reduce(
+            (total, item) => total + item.getBoundingClientRect().height,
+            0
+        );
+        const maxHeight = visibleHeight + (rowGap * Math.max(0, visibleItems.length - 1));
+
+        container.style.maxHeight = `${Math.ceil(maxHeight + 1)}px`;
+        container.style.overflowY = "auto";
+        container.style.paddingRight = "0.2rem";
+    };
+
+    const updateAdminListVisibleLimits = () => {
+        applyAdminListVisibleLimit(adminOwnerRequestsList, 2);
+        applyAdminListVisibleLimit(adminSuggestionsList, 2);
+        applyAdminListVisibleLimit(adminRoundsList, 2);
+        applyAdminListVisibleLimit(adminUsersList, 2);
+    };
+
+    let adminListResizeFrame = 0;
+    const handleAdminResize = () => {
+        if (adminListResizeFrame) cancelAnimationFrame(adminListResizeFrame);
+        adminListResizeFrame = requestAnimationFrame(() => {
+            adminListResizeFrame = 0;
+            updateAdminListVisibleLimits();
+        });
+    };
+
+    window.addEventListener("resize", handleAdminResize);
+    window.addEventListener("beforeunload", () => {
+        window.removeEventListener("resize", handleAdminResize);
+        if (adminListResizeFrame) cancelAnimationFrame(adminListResizeFrame);
+    }, { once: true });
+
+    function rememberLatestModeratorDecision(decisionId) {
+        const parsed = Number(decisionId || 0);
+        if (!parsed) return;
+        latestDecisionShownId = Math.max(latestDecisionShownId, parsed);
+        writeAdminDecisionSeenId(latestDecisionShownId);
+        syncAdminNotificationDotByResolvedId(adminLatestResolvedDecisionId);
+    }
+
+    function ensureModeratorDecisionModal() {
+        let modal = byId("adminDecisionModal");
+        if (modal) return modal;
+        modal = document.createElement("div");
+        modal.id = "adminDecisionModal";
+        modal.className = "modal hidden";
+        modal.innerHTML = `
+            <div class="modal-card admin-decision-modal-card">
+                <h2 id="adminDecisionTitle">Solicitação processada</h2>
+                <p id="adminDecisionSummary" class="feedback warn"></p>
+                <div id="adminDecisionDetails" class="admin-decision-details"></div>
+                <div class="inline-actions">
+                    <button id="adminDecisionOkBtn" class="btn" type="button">Ok</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        const okBtn = byId("adminDecisionOkBtn");
+        okBtn?.addEventListener("click", () => {
+            const decisionId = Number(modal.dataset.decisionId || 0);
+            if (decisionId) rememberLatestModeratorDecision(decisionId);
+            modal.classList.add("hidden");
+        });
+        modal.addEventListener("click", (event) => {
+            if (event.target === modal) {
+                const decisionId = Number(modal.dataset.decisionId || 0);
+                if (decisionId) rememberLatestModeratorDecision(decisionId);
+                modal.classList.add("hidden");
+            }
+        });
+        return modal;
+    }
+
+    function syncModeratorDecisionNotice(latestResolvedAdminAction) {
+        if (!sessionIsModerator || sessionIsOwner) return;
+        const decision = latestResolvedAdminAction && typeof latestResolvedAdminAction === "object"
+            ? latestResolvedAdminAction
+            : null;
+        if (!decision) return;
+        const decisionId = Number(decision.id || 0);
+        syncAdminNotificationDotByResolvedId(decisionId);
+        if (!decisionId || decisionId <= latestDecisionShownId) return;
+
+        const modal = ensureModeratorDecisionModal();
+        modal.dataset.decisionId = String(decisionId);
+
+        const title = byId("adminDecisionTitle");
+        const summary = byId("adminDecisionSummary");
+        const details = byId("adminDecisionDetails");
+        if (title) title.textContent = `Solicitação ${String(decision.status_label || "processada")}`;
+        if (summary) {
+            const summaryText = decision.result_message
+                || `${String(decision.action_label || "Ação administrativa")} foi ${String(decision.status_label || "processada").toLowerCase()}.`;
+            summary.textContent = summaryText;
+            summary.className = `feedback ${String(decision.status || "").toLowerCase() === "approved" ? "ok" : "warn"}`;
+        }
+        if (details) {
+            const items = [];
+            items.push(`<li><strong>Ação:</strong> ${escapeHtml(String(decision.action_label || "-"))}</li>`);
+            items.push(`<li><strong>Status:</strong> ${escapeHtml(String(decision.status_label || "-"))}</li>`);
+            if (Number(decision.created_at) > 0) {
+                items.push(`<li><strong>Criada em:</strong> ${escapeHtml(formatRoundDateTime(decision.created_at))}</li>`);
+            }
+            if (Number(decision.decided_at) > 0) {
+                items.push(`<li><strong>Decidida em:</strong> ${escapeHtml(formatRoundDateTime(decision.decided_at))}</li>`);
+            }
+            const detailLines = Array.isArray(decision.detail_lines) ? decision.detail_lines : [];
+            detailLines.forEach((line) => {
+                items.push(`<li>${escapeHtml(String(line || ""))}</li>`);
+            });
+            details.innerHTML = `<ul>${items.join("")}</ul>`;
+        }
+        modal.classList.remove("hidden");
+    }
+
+    function syncAdminHeader() {
+        const title = adminPanel.querySelector("h1");
+        if (!title) return;
+        title.textContent = sessionIsOwner ? "Painel do Dono" : "Painel do Moderador";
     }
 
     async function refreshAdmin() {
@@ -461,9 +1320,96 @@ async function handleAdminPage() {
                 }
             ])
         );
+        adminAchievementKeysByUserId.clear();
+        userAchievementsMap.forEach((value, userId) => {
+            adminAchievementKeysByUserId.set(Number(userId), Array.isArray(value?.keys) ? value.keys : []);
+        });
+        userRoleMapById.clear();
+        (data.users || []).forEach((user) => {
+            const id = Number(user?.id || 0);
+            if (!id) return;
+            userRoleMapById.set(id, {
+                role: normalizeRole(user?.role),
+                is_owner: Boolean(user?.is_owner),
+                is_moderator: Boolean(user?.is_moderator)
+            });
+        });
         adminUsersList.innerHTML = renderAdminDashboardUsers(data.users, userAchievementsMap);
         adminRoundsList.innerHTML = renderAdminDashboardRounds(data.rounds);
+        if (adminOwnerRequestsCard && adminOwnerRequestsList) {
+            if (sessionIsOwner) {
+                const ownerRequests = Array.isArray(data?.pendingOwnerActionRequests) ? data.pendingOwnerActionRequests : [];
+                adminOwnerRequestsList.innerHTML = renderAdminOwnerActionRequests(ownerRequests);
+                adminOwnerRequestsCard.classList.toggle("hidden", ownerRequests.length === 0);
+                setAdminNotificationDotVisible(ownerRequests.length > 0);
+                if (ownerRequests.length > 0) {
+                    setFeedback("adminFeedback", "Você tem solicitações pendentes para permitir ou negar.", "warn");
+                }
+            } else {
+                adminOwnerRequestsList.innerHTML = "";
+                adminOwnerRequestsCard.classList.add("hidden");
+            }
+        }
+        if (adminSuggestionsCard && adminSuggestionsList) {
+            if (sessionIsOwner) {
+                const ownerSuggestions = Array.isArray(data?.ownerSuggestions) ? data.ownerSuggestions : [];
+                adminSuggestionsList.innerHTML = renderAdminSuggestions(ownerSuggestions);
+                adminSuggestionsCard.classList.remove("hidden");
+            } else {
+                adminSuggestionsList.innerHTML = "";
+                adminSuggestionsCard.classList.add("hidden");
+            }
+        }
+        updateAdminListVisibleLimits();
+        clearAllAdminUserFeedback();
+        adminActionPendingLocked = Boolean(data?.pendingAdminAction) && sessionIsModerator && !sessionIsOwner;
+        if (adminActionPendingLocked) {
+            setFeedback("adminFeedback", "Você tem uma solicitação pendente. Aguarde aprovação do dono para continuar.", "warn");
+        }
+        syncModeratorDecisionNotice(data?.latestResolvedAdminAction);
+        syncAdminHeader();
     }
+
+    const ensureNotLocked = () => {
+        if (adminActionPendingLocked && sessionIsModerator && !sessionIsOwner) {
+            throw new Error("Há uma solicitação pendente. Aguarde o dono permitir ou negar.");
+        }
+    };
+
+    const handleAdminResult = async (result, options = {}) => {
+        const pending = Boolean(result?.pendingApproval);
+        const message = result?.message || (pending ? "Solicitação enviada." : "Ação realizada.");
+        const type = pending ? "warn" : "ok";
+        setFeedback(
+            "adminFeedback",
+            options.globalMessage || "",
+            options.globalMessageType || ""
+        );
+        if (pending) adminActionPendingLocked = true;
+        await refreshAdmin();
+        if (options.userId) {
+            setAdminUserFeedback(options.userId, message, type);
+            return;
+        }
+        if (options.roundId) {
+            setFeedback("adminFeedback", message, type);
+            return;
+        }
+        setFeedback("adminFeedback", message, type);
+    };
+
+    const toggleAchievementMoreOptions = (userId) => {
+        const numericUserId = Number(userId || 0);
+        if (!numericUserId) return;
+        const toggleBtn = adminPanel.querySelector(`[data-admin-toggle-achievement-options="${numericUserId}"]`);
+        const optionsWrap = adminPanel.querySelector(`div[data-admin-achievement-more-options="${numericUserId}"]`);
+        if (!toggleBtn || !optionsWrap) return;
+        const expanded = String(toggleBtn.dataset.adminAchievementOptionsExpanded || "0") === "1";
+        const nextExpanded = !expanded;
+        toggleBtn.dataset.adminAchievementOptionsExpanded = nextExpanded ? "1" : "0";
+        toggleBtn.textContent = nextExpanded ? "Menos opções" : "Mais opções";
+        optionsWrap.classList.toggle("hidden", !nextExpanded);
+    };
 
     try {
         await refreshAdmin();
@@ -472,80 +1418,210 @@ async function handleAdminPage() {
     }
 
     adminPanel.addEventListener("click", async (event) => {
+        const ownerDecisionBtn = event.target.closest("button[data-admin-owner-request-decision][data-admin-owner-request-id]");
         const toggleBtn = event.target.closest("button[data-admin-toggle-block]");
         const deleteUserBtn = event.target.closest("button[data-admin-delete-user]");
         const closeRoundBtn = event.target.closest("button[data-admin-close-round]");
         const deleteRoundBtn = event.target.closest("button[data-admin-delete-round]");
         const grantAchievementBtn = event.target.closest("button[data-admin-grant-achievement]");
+        const revokeAchievementBtn = event.target.closest("button[data-admin-revoke-achievement]");
         const resetAchievementsBtn = event.target.closest("button[data-admin-reset-achievements]");
+        const toggleAchievementOptionsBtn = event.target.closest("[data-admin-toggle-achievement-options]");
+        const roleBtn = event.target.closest("button[data-admin-set-role]");
+        const deleteSuggestionBtn = event.target.closest("button[data-admin-delete-suggestion]");
 
+        if (toggleAchievementOptionsBtn) {
+            const userId = Number(toggleAchievementOptionsBtn.dataset.adminToggleAchievementOptions || 0);
+            toggleAchievementMoreOptions(userId);
+            return;
+        }
+
+        let feedbackUserId = 0;
         try {
+            if (ownerDecisionBtn) {
+                if (!sessionIsOwner) return;
+                const requestId = Number(ownerDecisionBtn.dataset.adminOwnerRequestId || 0);
+                const decision = String(ownerDecisionBtn.dataset.adminOwnerRequestDecision || "").trim().toLowerCase();
+                if (!requestId || !["allow", "deny"].includes(decision)) {
+                    throw new Error("Solicitação inválida.");
+                }
+                const result = await withButtonLoading(
+                    ownerDecisionBtn,
+                    decision === "allow" ? "Permitindo..." : "Negando...",
+                    () => sendJson(`/api/admin/action-requests/${requestId}/decision`, "POST", { decision })
+                );
+                await handleAdminResult(result, {
+                    globalMessage: result?.message || "Solicitação processada.",
+                    globalMessageType: decision === "allow" ? "ok" : "warn"
+                });
+                return;
+            }
             if (toggleBtn) {
+                ensureNotLocked();
                 const userId = Number(toggleBtn.dataset.adminToggleBlock);
+                feedbackUserId = userId;
+                clearAdminUserFeedback(userId);
                 const blocked = Number(toggleBtn.dataset.adminBlocked) === 1 ? 0 : 1;
-                const result = await sendJson(`/api/admin/users/${userId}/block`, "PATCH", { blocked });
-                setFeedback("adminFeedback", result.message, "ok");
-                await refreshAdmin();
+                const result = await withButtonLoading(toggleBtn, "Salvando...", () =>
+                    sendJson(`/api/admin/users/${userId}/block`, "PATCH", { blocked })
+                );
+                await handleAdminResult(result, { userId });
                 return;
             }
             if (deleteUserBtn) {
+                ensureNotLocked();
                 const userId = Number(deleteUserBtn.dataset.adminDeleteUser);
-                await fetch(`/api/admin/users/${userId}`, {
-                    method: "DELETE",
-                    credentials: "include"
-                }).then(async (response) => {
-                    const data = await response.json().catch(() => ({}));
-                    if (!response.ok) throw new Error(data.message || "Erro ao excluir conta.");
-                });
-                setFeedback("adminFeedback", "Conta excluida.", "ok");
-                await refreshAdmin();
+                feedbackUserId = userId;
+                clearAdminUserFeedback(userId);
+                const accountName = String(deleteUserBtn.dataset.adminDeleteUserName || "conta sem nome").trim();
+                const confirmed = window.confirm(`Confirmar a exclusao da conta (${accountName})?`);
+                if (!confirmed) return;
+                const result = await withButtonLoading(deleteUserBtn, "Excluindo...", () =>
+                    sendJson(`/api/admin/users/${userId}`, "DELETE")
+                );
+                await handleAdminResult(result, { userId });
                 return;
             }
             if (closeRoundBtn) {
+                ensureNotLocked();
                 const roundId = Number(closeRoundBtn.dataset.adminCloseRound);
-                const result = await sendJson(`/api/rounds/${roundId}`, "PUT", { status: "closed" });
-                setFeedback("adminFeedback", result.message, "ok");
-                await refreshAdmin();
+                const result = await withButtonLoading(closeRoundBtn, "Fechando...", () =>
+                    sendJson(`/api/admin/rounds/${roundId}/close`, "POST", {})
+                );
+                await handleAdminResult(result, { roundId });
                 return;
             }
             if (deleteRoundBtn) {
+                ensureNotLocked();
                 const roundId = Number(deleteRoundBtn.dataset.adminDeleteRound);
-                await fetch(`/api/rounds/${roundId}`, {
-                    method: "DELETE",
-                    credentials: "include"
-                }).then(async (response) => {
-                    const data = await response.json().catch(() => ({}));
-                    if (!response.ok) throw new Error(data.message || "Erro ao excluir rodada.");
-                });
-                setFeedback("adminFeedback", "Rodada excluida.", "ok");
-                await refreshAdmin();
+                const result = await withButtonLoading(deleteRoundBtn, "Excluindo...", () =>
+                    sendJson(`/api/admin/rounds/${roundId}`, "DELETE")
+                );
+                await handleAdminResult(result, { roundId });
                 return;
             }
             if (grantAchievementBtn) {
+                ensureNotLocked();
                 const userId = Number(grantAchievementBtn.dataset.adminGrantAchievement);
+                feedbackUserId = userId;
+                clearAdminUserFeedback(userId);
                 const select = adminPanel.querySelector(`select[data-admin-achievement-key='${userId}']`);
                 const achievementKey = String(select?.value || "").trim();
                 if (!achievementKey) throw new Error("Selecione uma conquista.");
-                const result = await sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
-                    action: "grant",
-                    achievementKey
-                });
-                setFeedback("adminFeedback", result.message, "ok");
-                await refreshAdmin();
+                const result = await withButtonLoading(grantAchievementBtn, "Enviando...", () =>
+                    sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
+                        action: "grant",
+                        achievementKey
+                    })
+                );
+                await handleAdminResult(result, { userId });
+                return;
+            }
+            if (revokeAchievementBtn) {
+                ensureNotLocked();
+                const userId = Number(revokeAchievementBtn.dataset.adminRevokeAchievement);
+                feedbackUserId = userId;
+                clearAdminUserFeedback(userId);
+                const select = adminPanel.querySelector(`select[data-admin-achievement-key='${userId}']`);
+                const achievementKey = String(select?.value || "").trim();
+                if (!achievementKey) throw new Error("Selecione uma conquista.");
+                const ownedAchievements = adminAchievementKeysByUserId.get(userId) || [];
+                if (!ownedAchievements.includes(achievementKey)) {
+                    throw new Error("Conquista inesistente.");
+                }
+                const result = await withButtonLoading(revokeAchievementBtn, "Enviando...", () =>
+                    sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
+                        action: "revoke",
+                        achievementKey
+                    })
+                );
+                await handleAdminResult(result, { userId });
                 return;
             }
             if (resetAchievementsBtn) {
+                ensureNotLocked();
                 const userId = Number(resetAchievementsBtn.dataset.adminResetAchievements);
-                const result = await sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
-                    action: "reset_all"
-                });
-                setFeedback("adminFeedback", result.message, "ok");
+                feedbackUserId = userId;
+                clearAdminUserFeedback(userId);
+                const confirmed = window.confirm("Tem certeza que deseja zerar todas as conquistas desta conta?");
+                if (!confirmed) return;
+                const result = await withButtonLoading(resetAchievementsBtn, "Enviando...", () =>
+                    sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
+                        action: "reset_all"
+                    })
+                );
+                await handleAdminResult(result, { userId });
+                return;
+            }
+            if (roleBtn) {
+                ensureNotLocked();
+                const userId = Number(roleBtn.dataset.adminSetRole);
+                feedbackUserId = userId;
+                clearAdminUserFeedback(userId);
+                const role = normalizeRole(roleBtn.dataset.adminTargetRole);
+                const result = await withButtonLoading(roleBtn, "Salvando...", () =>
+                    sendJsonWithFallback([
+                        {
+                            url: `/api/admin/users/${userId}/role`,
+                            method: "PATCH",
+                            payload: { role }
+                        },
+                        {
+                            url: `/api/admin/users/${userId}/moderator`,
+                            method: "PATCH",
+                            payload: { moderator: role === "moderator" }
+                        },
+                        {
+                            url: `/api/admin/users/${userId}/moderator`,
+                            method: "POST",
+                            payload: { moderator: role === "moderator" }
+                        }
+                    ])
+                );
+                await handleAdminResult(result, { userId });
+                return;
+            }
+            if (deleteSuggestionBtn) {
+                if (!sessionIsOwner) return;
+                const suggestionId = Number(deleteSuggestionBtn.dataset.adminDeleteSuggestion || 0);
+                if (!suggestionId) throw new Error("Sugestão inválida.");
+                const result = await withButtonLoading(deleteSuggestionBtn, "Excluindo...", () =>
+                    sendJson(`/api/admin/suggestions/${suggestionId}`, "DELETE")
+                );
                 await refreshAdmin();
+                setFeedback("adminFeedback", result?.message || "Sugestão excluída.", "ok");
             }
         } catch (error) {
-            setFeedback("adminFeedback", error.message, "error");
+            if (feedbackUserId > 0) {
+                setAdminUserFeedback(feedbackUserId, error.message, "error");
+            } else {
+                setFeedback("adminFeedback", error.message, "error");
+            }
         }
     });
+
+    adminPanel.addEventListener("keydown", (event) => {
+        const trigger = event.target.closest("[data-admin-toggle-achievement-options]");
+        if (!trigger) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        const userId = Number(trigger.dataset.adminToggleAchievementOptions || 0);
+        toggleAchievementMoreOptions(userId);
+    });
+
+    if (sessionIsModerator && !sessionIsOwner) {
+        const refreshIntervalMs = 7000;
+        const timerId = window.setInterval(async () => {
+            try {
+                await refreshAdmin();
+            } catch {
+                // polling silencioso
+            }
+        }, refreshIntervalMs);
+        window.addEventListener("beforeunload", () => {
+            window.clearInterval(timerId);
+        }, { once: true });
+    }
 }
 
 async function submitRecommendationCommentForm(form, scope, feedbackTarget) {
@@ -589,6 +1665,34 @@ async function handleRecommendationCommentAction(event, scope, feedbackTarget) {
             const input = form?.querySelector("input[name='commentText']");
             if (input instanceof HTMLInputElement) input.value = "";
         }
+        return true;
+    }
+
+    const likeToggleBtn = event.target.closest("button[data-comment-like-toggle][data-comment-id][data-recommendation-id]");
+    if (likeToggleBtn) {
+        const recommendationId = Number(likeToggleBtn.dataset.recommendationId || 0);
+        const commentId = Number(likeToggleBtn.dataset.commentId || 0);
+        const recommendation = getRecommendationByScope(scope, recommendationId);
+        const comment = findCommentById(recommendation, commentId);
+        if (!recommendation || !comment) return true;
+        try {
+            const result = await sendJson(`/api/recommendation-comments/${commentId}/like`, "POST", {});
+            const updatedRecommendation = upsertRecommendationComment(scope, recommendationId, result.comment || {
+                ...comment,
+                likes_count: Number(result?.likesCount || 0),
+                liked_by_me: result?.liked ? 1 : 0
+            });
+            syncRecommendationCommentList(updatedRecommendation, scope, true);
+            if (scope === "home") scheduleHomeCommentFormAlignment();
+        } catch (error) {
+            setFeedback(feedbackTarget, error.message, "error");
+        }
+        return true;
+    }
+
+    const likeListBtn = event.target.closest("button[data-comment-like-list][data-comment-id][data-recommendation-id]");
+    if (likeListBtn) {
+        await showCommentLikesPopup("recommendation", Number(likeListBtn.dataset.commentId || 0), likeListBtn);
         return true;
     }
 
@@ -636,7 +1740,7 @@ async function handleRecommendationCommentAction(event, scope, feedbackTarget) {
                 credentials: "include"
             }).then(async (response) => {
                 const data = await response.json().catch(() => ({}));
-                if (!response.ok) throw new Error(data.message || "Erro ao excluir comentario.");
+                if (!response.ok) throw new Error(data.message || "Erro ao excluir comentário.");
             });
             const updatedRecommendation = removeRecommendationComment(scope, recommendationId, commentId);
             syncRecommendationCommentList(updatedRecommendation, scope, true);
@@ -644,6 +1748,7 @@ async function handleRecommendationCommentAction(event, scope, feedbackTarget) {
                 resetCommentFormState(recommendationId);
                 if (input instanceof HTMLInputElement) input.value = "";
             }
+            if (scope === "home") scheduleHomeCommentFormAlignment();
         } catch (error) {
             setFeedback(feedbackTarget, error.message, "error");
         }
@@ -656,14 +1761,97 @@ async function handleRecommendationCommentAction(event, scope, feedbackTarget) {
 function setFeedback(target, message, type = "error") {
     const el = typeof target === "string" ? byId(target) : target;
     if (!el) return;
-    const text = String(message || "").trim();
+    const text = normalizeTextArtifacts(message).trim();
     el.textContent = text;
-    el.className = `feedback${text && type ? ` ${type}` : ""}`;
+    el.classList.add("feedback");
+    el.classList.remove("ok", "error", "warn");
+    if (text && type) {
+        el.classList.add(type);
+    }
     if (!text) {
         el.classList.add("hidden");
     } else {
         el.classList.remove("hidden");
     }
+}
+
+function setFieldFeedback(form, fieldName, message, type = "error") {
+    if (!(form instanceof HTMLFormElement) || !fieldName) return;
+    const slot = form.querySelector(`[data-field-feedback-for="${fieldName}"]`);
+    if (!(slot instanceof HTMLElement)) return;
+    const text = normalizeTextArtifacts(message).trim();
+    slot.textContent = text;
+    slot.classList.add("field-feedback");
+    slot.classList.remove("ok", "error", "warn");
+    if (text && type) {
+        slot.classList.add(type);
+    }
+    if (!text) {
+        slot.classList.add("hidden");
+    } else {
+        slot.classList.remove("hidden");
+    }
+}
+
+function clearFieldFeedback(form, fieldName) {
+    setFieldFeedback(form, fieldName, "", "");
+}
+
+function clearAllFieldFeedback(form) {
+    if (!(form instanceof HTMLFormElement)) return;
+    form.querySelectorAll("[data-field-feedback-for]").forEach((slot) => {
+        if (!(slot instanceof HTMLElement)) return;
+        const fieldName = String(slot.dataset.fieldFeedbackFor || "");
+        if (!fieldName) return;
+        clearFieldFeedback(form, fieldName);
+    });
+}
+
+function bindFieldFeedbackAutoClear(form) {
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.dataset.fieldFeedbackBound === "1") return;
+    form.dataset.fieldFeedbackBound = "1";
+
+    form.querySelectorAll("[data-field-feedback-for]").forEach((slot) => {
+        const fieldName = String(slot.getAttribute("data-field-feedback-for") || "");
+        if (!fieldName) return;
+        const control = form.elements?.[fieldName];
+        if (!control) return;
+
+        const controls = (() => {
+            if (typeof RadioNodeList !== "undefined" && control instanceof RadioNodeList) {
+                return [...control].filter((item) => item instanceof HTMLElement);
+            }
+            return control instanceof HTMLElement ? [control] : [];
+        })();
+
+        controls.forEach((item) => {
+            if (item.dataset.fieldFeedbackClearBound === "1") return;
+            item.dataset.fieldFeedbackClearBound = "1";
+            item.addEventListener("input", () => clearFieldFeedback(form, fieldName));
+            item.addEventListener("change", () => clearFieldFeedback(form, fieldName));
+        });
+    });
+}
+
+function mapRegisterErrorToField(message) {
+    const lower = String(message || "").toLowerCase();
+    if (!lower) return "";
+    if (lower.includes("nickname")) return "nickname";
+    if (lower.includes("confirmação de senha") || lower.includes("confirme a senha")) return "confirmPassword";
+    if (lower.includes("senha precisa")) return "password";
+    if (lower.includes("email inválido")) return "email";
+    if (lower.includes("nome de usuário inválido")) return "username";
+    if (lower.includes("email ou nome de usuário")) return "email_or_username";
+    return "";
+}
+
+function mapResetPasswordErrorToField(message) {
+    const lower = String(message || "").toLowerCase();
+    if (!lower) return "";
+    if (lower.includes("confirmação de senha") || lower.includes("confirme a senha")) return "confirmPassword";
+    if (lower.includes("senha precisa")) return "password";
+    return "";
 }
 
 function ensureAchievementToastStack() {
@@ -815,11 +2003,30 @@ async function sendJson(url, method = "GET", payload) {
         credentials: "include",
         body: payload ? JSON.stringify(payload) : undefined
     });
-    const data = await response.json().catch(() => ({}));
+    const rawData = await response.json().catch(() => ({}));
+    const data = normalizePayloadTextArtifacts(rawData);
     if (!response.ok) {
-        throw new Error(data.message || "Erro na requisicao.");
+        const error = new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
+        error.statusCode = response.status;
+        error.responseData = data;
+        throw error;
     }
     return data;
+}
+
+async function sendJsonWithFallback(requests) {
+    let lastError = null;
+    for (const request of requests || []) {
+        try {
+            return await sendJson(request.url, request.method || "GET", request.payload);
+        } catch (error) {
+            lastError = error;
+            if (Number(error?.statusCode) === 404) continue;
+            throw error;
+        }
+    }
+    if (lastError) throw lastError;
+    throw new Error("Nenhuma requisição foi informada.");
 }
 
 async function sendForm(url, formData) {
@@ -828,9 +2035,10 @@ async function sendForm(url, formData) {
         credentials: "include",
         body: formData
     });
-    const data = await response.json().catch(() => ({}));
+    const rawData = await response.json().catch(() => ({}));
+    const data = normalizePayloadTextArtifacts(rawData);
     if (!response.ok) {
-        throw new Error(data.message || "Erro na requisicao.");
+        throw new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
     }
     return data;
 }
@@ -847,23 +2055,30 @@ function showOAuthFeedbackFromQuery() {
     const error = getQueryParam("error");
     if (!error) return;
     const messages = {
-        google_not_configured: "Login Google ainda nao foi configurado no servidor.",
+        google_not_configured: "Login Google ainda não foi configurado no servidor.",
         google_auth_failed: "Falha ao autenticar com Google.",
-        google_email_unavailable: "Sua conta Google nao retornou um email valido."
+        google_email_unavailable: "Sua conta Google não retornou um email válido.",
+        account_blocked: "Conta Bloqueada"
     };
-    setFeedback("feedback", messages[error] || "Erro de autenticacao.");
+    setFeedback("feedback", messages[error] || "Erro de autenticação.");
 }
 
 function recommendationCardTemplate(rec, options = {}) {
     const showGradeOverlay = options.showGradeOverlay !== false;
     const showInlineGrade = options.showInlineGrade === true;
     const isRoundIndicationLayout = options.layout === "round-indication";
+    const hasReason = String(rec.reason || "").trim().length > 0;
     const grade = rec.rating_letter && rec.interest_score ? `${rec.rating_letter}${rec.interest_score}` : "";
     const cover = rec.game_cover_url || baseAvatar;
     const commentsHtml = recommendationCommentsHtml(rec.id, rec.comments || [], { interactive: true });
-    const cardClass = `recommendation-card${isRoundIndicationLayout ? " recommendation-card-indication" : ""}`;
-    const reasonHtml = rec.reason
-        ? `<p class="recommendation-reason"><strong>Motivo da indicacao:</strong> ${escapeHtml(rec.reason)}</p>`
+    const cardClass = `recommendation-card${isRoundIndicationLayout ? " recommendation-card-indication" : ""}${hasReason ? "" : " recommendation-card-no-reason"}`;
+    const reasonHtml = hasReason
+        ? `
+            <div class="recommendation-reason-wrap">
+                <p class="recommendation-section-label">Motivação</p>
+                <p class="recommendation-reason">${escapeHtml(rec.reason)}</p>
+            </div>
+        `
         : "";
 
     if (isRoundIndicationLayout) {
@@ -883,16 +2098,17 @@ function recommendationCardTemplate(rec, options = {}) {
                         </div>
                         <div class="desc-grade-row">
                             ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
+                            <span class="recommendation-section-label">Descrição</span>
                             <p>${escapeHtml(rec.game_description)}</p>
                         </div>
                         ${reasonHtml}
                     </div>
                     <div class="recommendation-comments-shell">
-                        <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentarios ainda.</div>'}</div>
+                        <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentários ainda.</div>'}</div>
                         <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
                         <form class="comment-form" data-comment-form="${rec.id}">
                             <input type="hidden" name="parentCommentId" value="">
-                            <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliacao">
+                            <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliação">
                             <button class="btn btn-outline" type="submit">Comentar</button>
                         </form>
                     </div>
@@ -915,14 +2131,15 @@ function recommendationCardTemplate(rec, options = {}) {
             </div>
             <div class="desc-grade-row">
                 ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
+                <span class="recommendation-section-label">Descrição</span>
                 <p>${escapeHtml(rec.game_description)}</p>
             </div>
             ${reasonHtml}
-            <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentarios ainda.</div>'}</div>
+            <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentários ainda.</div>'}</div>
             <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
             <form class="comment-form" data-comment-form="${rec.id}">
                 <input type="hidden" name="parentCommentId" value="">
-                <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliacao">
+                <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliação">
                 <button class="btn btn-outline" type="submit">Comentar</button>
             </form>
         </article>
@@ -960,21 +2177,38 @@ async function handleLogin() {
 
 async function handleRegister() {
     const form = byId("registerForm");
+    bindFieldFeedbackAutoClear(form);
     form?.addEventListener("submit", async (event) => {
         event.preventDefault();
         setFeedback("feedback", "", "");
+        clearAllFieldFeedback(form);
         const payload = Object.fromEntries(new FormData(form).entries());
+        if (String(payload.password || "") !== String(payload.confirmPassword || "")) {
+            setFieldFeedback(form, "confirmPassword", "A confirmação de senha não confere.", "error");
+            return;
+        }
         const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await withButtonLoading(submitBtn, "Enviando codigo...", async () => {
+            await withButtonLoading(submitBtn, "Enviando código...", async () => {
                 await sendJson("/api/auth/register", "POST", payload);
             });
-            setFeedback("feedback", "Codigo enviado. Confira seu email e confirme seu cadastro.", "ok");
+            setFeedback("feedback", "Código enviado. Confira seu email e confirme seu cadastro.", "ok");
             setTimeout(() => {
                 window.location.href = `/verify-email.html?email=${encodeURIComponent(payload.email)}`;
             }, 900);
         } catch (error) {
-            setFeedback("feedback", error.message, "error");
+            const message = String(error?.message || "Erro interno no cadastro.");
+            const mappedField = mapRegisterErrorToField(message);
+            if (mappedField === "email_or_username") {
+                setFieldFeedback(form, "username", message, "error");
+                setFieldFeedback(form, "email", message, "error");
+                return;
+            }
+            if (mappedField) {
+                setFieldFeedback(form, mappedField, message, "error");
+                return;
+            }
+            setFeedback("feedback", message, "error");
         }
     });
 }
@@ -1024,15 +2258,21 @@ async function handleForgotPassword() {
 async function handleResetPassword() {
     const token = getResetTokenFromQuery();
     if (!token) {
-        setFeedback("feedback", "Token de troca de senha nao encontrado.", "error");
+        setFeedback("feedback", "Token de troca de senha não encontrado.", "error");
         return;
     }
 
     const form = byId("resetPasswordForm");
+    bindFieldFeedbackAutoClear(form);
     form?.addEventListener("submit", async (event) => {
         event.preventDefault();
         setFeedback("feedback", "", "");
+        clearAllFieldFeedback(form);
         const payload = Object.fromEntries(new FormData(form).entries());
+        if (String(payload.password || "") !== String(payload.confirmPassword || "")) {
+            setFieldFeedback(form, "confirmPassword", "A confirmação de senha não confere.", "error");
+            return;
+        }
         payload.token = token;
         const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
@@ -1044,7 +2284,13 @@ async function handleResetPassword() {
                 window.location.href = "/login.html";
             }, 900);
         } catch (error) {
-            setFeedback("feedback", error.message, "error");
+            const message = String(error?.message || "Erro ao alterar senha.");
+            const mappedField = mapResetPasswordErrorToField(message);
+            if (mappedField) {
+                setFieldFeedback(form, mappedField, message, "error");
+                return;
+            }
+            setFeedback("feedback", message, "error");
         }
     });
 }
@@ -1064,6 +2310,7 @@ async function loadProfile() {
     const profileGivenList = byId("profileGivenList");
     const profileReceivedList = byId("profileReceivedList");
     const profileCommentsList = byId("profileCommentsList");
+    const profileCommentContext = byId("profileCommentContext");
     const profileCommentForm = byId("profileCommentForm");
     const profileActivitySection = byId("profileActivitySection");
     const achievementsGrid = byId("achievementsGrid");
@@ -1089,7 +2336,67 @@ async function loadProfile() {
     };
     let pendingAvatarFile = null;
     let pendingAvatarPreviewUrl = "";
-    const defaultEmailLabel = "Email (nao editavel)";
+    let profileCommentsCache = [];
+    let isProfileOwnerSession = false;
+    const achievementImageSourceByKey = new Map();
+    let profileCommentFormState = {
+        mode: "new",
+        commentId: 0,
+        parentCommentId: 0,
+        label: ""
+    };
+    const defaultEmailLabel = "Email (não editável)";
+
+    function setupAchievementImageProtection() {
+        if (!achievementsGrid || achievementsGrid.dataset.achievementImageProtectionBound === "1") return;
+        achievementsGrid.dataset.achievementImageProtectionBound = "1";
+
+        achievementsGrid.addEventListener("contextmenu", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.closest(".achievement-item img")) {
+                event.preventDefault();
+            }
+        });
+
+        achievementsGrid.addEventListener("dragstart", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLImageElement)) return;
+            if (target.closest(".achievement-item")) {
+                event.preventDefault();
+            }
+        });
+    }
+
+    function rememberAchievementImageSource(item, key, imageEl) {
+        if (!key || !(imageEl instanceof HTMLImageElement)) return;
+        const currentSrc = String(imageEl.getAttribute("src") || imageEl.currentSrc || "").trim();
+        if (!currentSrc || currentSrc === lockedAchievementImageDataUri) return;
+        if (!achievementImageSourceByKey.has(key)) {
+            achievementImageSourceByKey.set(key, currentSrc);
+        }
+    }
+
+    function setAchievementImageByUnlockState(item, key, unlocked) {
+        const imageEl = item.querySelector("img");
+        if (!(imageEl instanceof HTMLImageElement)) return;
+        imageEl.setAttribute("draggable", "false");
+        rememberAchievementImageSource(item, key, imageEl);
+
+        const originalSrc = String(achievementImageSourceByKey.get(key) || "").trim();
+        const currentSrc = String(imageEl.getAttribute("src") || imageEl.currentSrc || "").trim();
+
+        if (unlocked) {
+            if (originalSrc && currentSrc !== originalSrc) {
+                imageEl.src = originalSrc;
+            }
+            return;
+        }
+
+        if (currentSrc !== lockedAchievementImageDataUri) {
+            imageEl.src = lockedAchievementImageDataUri;
+        }
+    }
 
     function clearPendingAvatarSelection() {
         pendingAvatarFile = null;
@@ -1170,11 +2477,11 @@ async function loadProfile() {
                 nickname: candidate,
                 available: true,
                 sameAsCurrent: true,
-                message: "Esse ja e o seu nickname atual."
+                message: "Esse já é o seu nickname atual."
             };
         }
 
-        // Verificacao por busca de usuarios (evita 404 quando o endpoint dedicado nao existe no servidor em execucao).
+        // Verificação por busca de usuários (evita 404 quando o endpoint dedicado não existe no servidor em execução).
         const usersPayload = await sendJson(`/api/users?term=${encodeURIComponent(candidate)}`);
         const users = Array.isArray(usersPayload?.users) ? usersPayload.users : [];
         const normalizedCandidate = candidate.toLowerCase();
@@ -1189,7 +2496,7 @@ async function loadProfile() {
             nickname: candidate,
             available: !inUse,
             sameAsCurrent: false,
-            message: inUse ? "Nickname ja esta em uso." : "Nickname disponivel."
+            message: inUse ? "Nickname já está em uso." : "Nickname disponível."
         };
     }
 
@@ -1203,7 +2510,12 @@ async function loadProfile() {
             ? "grade-inline"
             : "grade-inline grade-inline-muted";
         const reasonHtml = item.reason
-            ? `<p class="recommendation-reason"><strong>Motivo:</strong> ${escapeHtml(item.reason)}</p>`
+            ? `
+                <div class="recommendation-reason-wrap">
+                    <p class="recommendation-section-label">Motivação</p>
+                    <p class="recommendation-reason">${escapeHtml(item.reason)}</p>
+                </div>
+            `
             : "";
         return `
             <article class="recommendation-card recommendation-card-indication recommendation-card-profile-activity">
@@ -1221,6 +2533,7 @@ async function loadProfile() {
                         </div>
                         <div class="desc-grade-row">
                             <span class="${gradeClass}">${escapeHtml(grade)}</span>
+                            <span class="recommendation-section-label">Descrição</span>
                             <p>${escapeHtml(item.game_description || "")}</p>
                         </div>
                         ${reasonHtml}
@@ -1240,14 +2553,14 @@ async function loadProfile() {
         const cards = pageItems.length
             ? pageItems.map((item) => activityCardHtml(item, mode)).join("")
             : mode === "given"
-                ? "<p>Nenhuma indicacao feita ainda.</p>"
-                : "<p>Nenhuma indicacao recebida ainda.</p>";
+                ? "<p>Nenhuma indicação feita ainda.</p>"
+                : "<p>Nenhuma indicação recebida ainda.</p>";
         const pagination = items.length > profilePageSize
             ? `
                 <div class="pagination-controls">
                     <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="prev" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
-                    <span>Pagina ${currentPage} de ${totalPages}</span>
-                    <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="next" ${currentPage >= totalPages ? "disabled" : ""}>Proxima</button>
+                    <span>Página ${currentPage} de ${totalPages}</span>
+                    <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="next" ${currentPage >= totalPages ? "disabled" : ""}>Próxima</button>
                 </div>
               `
             : "";
@@ -1262,14 +2575,150 @@ async function loadProfile() {
         renderProfileListWithPagination(profileReceivedList, profileActivityCache.received, "received");
     }
 
-    function renderProfileComments(comments) {
-        if (!profileCommentsList) return;
-        if (!comments?.length) {
-            profileCommentsList.innerHTML = '<div class="comment-item">Sem comentarios ainda.</div>';
+    function getProfileCommentById(commentId) {
+        const numericId = Number(commentId || 0);
+        if (!numericId) return null;
+        return profileCommentsCache.find((item) => Number(item.id) === numericId) || null;
+    }
+
+    function canEditProfileComment(comment) {
+        return sessionUserId > 0 && Number(comment?.user_id) === Number(sessionUserId);
+    }
+
+    function canDeleteProfileComment(comment) {
+        if (!comment) return false;
+        return canEditProfileComment(comment) || isProfileOwnerSession;
+    }
+
+    function profileCommentItemHtml(comment, options = {}) {
+        const depth = Math.max(0, Math.min(4, Number(options.depth || 0)));
+        const parentAuthor = String(options.parentAuthor || "").trim();
+        const commentId = Number(comment.id) || 0;
+        const canReply = sessionUserId > 0;
+        const canEdit = canEditProfileComment(comment);
+        const canDelete = canDeleteProfileComment(comment);
+        const replyTarget = parentAuthor ? `<span class="comment-reply-to">@${escapeHtml(parentAuthor)}</span>` : "";
+        const actions = (canReply || canEdit || canDelete)
+            ? `
+                <div class="comment-actions">
+                    ${commentLikeActionsHtml(comment, { likeScope: "profile" })}
+                    ${canReply ? `<button class="comment-action" type="button" data-profile-comment-action="reply" data-profile-comment-id="${commentId}">Responder</button>` : ""}
+                    ${canEdit ? `<button class="comment-action" type="button" data-profile-comment-action="edit" data-profile-comment-id="${commentId}">Editar</button>` : ""}
+                    ${canDelete ? `<button class="comment-action danger" type="button" data-profile-comment-action="delete" data-profile-comment-id="${commentId}">Excluir</button>` : ""}
+                </div>
+              `
+            : "";
+
+        return `
+            <div class="comment-item${depth ? " comment-reply" : ""}" style="--comment-depth:${depth}" data-comment-id="${commentId}">
+                <span class="comment-head">${commentAuthorHtml(comment)}</span>
+                <span class="comment-body-line">
+                    ${replyTarget}
+                    <span class="comment-text">${escapeHtml(comment.comment_text)}</span>
+                </span>
+                ${actions}
+            </div>
+        `;
+    }
+
+    function updateProfileCommentFormUi() {
+        if (!profileCommentForm) return;
+        const state = profileCommentFormState || {
+            mode: "new",
+            commentId: 0,
+            parentCommentId: 0,
+            label: ""
+        };
+        const input = profileCommentForm.querySelector("input[name='commentText']");
+        const parentInput = profileCommentForm.querySelector("input[name='parentCommentId']");
+        const submit = profileCommentForm.querySelector("button[type='submit']");
+
+        if (parentInput instanceof HTMLInputElement) {
+            parentInput.value = state.mode === "reply" ? String(state.parentCommentId || 0) : "";
+        }
+
+        if (state.mode === "edit" && state.commentId > 0) {
+            profileCommentForm.dataset.editCommentId = String(state.commentId);
+            if (submit) submit.textContent = "Salvar";
+            if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentário";
+            if (profileCommentContext) {
+                profileCommentContext.classList.remove("hidden");
+                profileCommentContext.innerHTML = `
+                    <span>Editando comentário</span>
+                    <button class="comment-action" type="button" data-profile-comment-context-cancel="1">Cancelar</button>
+                `;
+            }
             return;
         }
-        profileCommentsList.innerHTML = comments
-            .map((comment) => commentItemHtml(comment))
+
+        delete profileCommentForm.dataset.editCommentId;
+        if (submit) submit.textContent = state.mode === "reply" ? "Responder" : "Comentar";
+        if (input instanceof HTMLInputElement) {
+            input.placeholder = state.mode === "reply"
+                ? "Escreva sua resposta"
+                : "Escreva um comentário neste perfil";
+        }
+        if (profileCommentContext) {
+            if (state.mode === "reply" && state.parentCommentId > 0) {
+                profileCommentContext.classList.remove("hidden");
+                profileCommentContext.innerHTML = `
+                    <span>Respondendo ${escapeHtml(state.label || "comentário")}</span>
+                    <button class="comment-action" type="button" data-profile-comment-context-cancel="1">Cancelar</button>
+                `;
+            } else {
+                profileCommentContext.classList.add("hidden");
+                profileCommentContext.innerHTML = "";
+            }
+        }
+    }
+
+    function setProfileCommentFormState(nextState = {}) {
+        profileCommentFormState = {
+            mode: nextState.mode || "new",
+            commentId: Number(nextState.commentId || 0),
+            parentCommentId: Number(nextState.parentCommentId || 0),
+            label: String(nextState.label || "")
+        };
+        updateProfileCommentFormUi();
+    }
+
+    function resetProfileCommentFormState() {
+        setProfileCommentFormState({
+            mode: "new",
+            commentId: 0,
+            parentCommentId: 0,
+            label: ""
+        });
+    }
+
+    function upsertProfileComment(comment) {
+        if (!comment || !Number(comment.id)) return;
+        const existingIndex = profileCommentsCache.findIndex((item) => Number(item.id) === Number(comment.id));
+        if (existingIndex >= 0) profileCommentsCache[existingIndex] = comment;
+        else profileCommentsCache.push(comment);
+        profileCommentsCache.sort((a, b) => commentSortValue(a) - commentSortValue(b));
+    }
+
+    function removeProfileComment(commentId) {
+        const numericId = Number(commentId || 0);
+        if (!numericId) return;
+        profileCommentsCache = profileCommentsCache.filter((item) => Number(item.id) !== numericId);
+    }
+
+    function renderProfileComments(comments) {
+        if (!profileCommentsList) return;
+        profileCommentsCache = Array.isArray(comments) ? comments.slice() : [];
+        profileCommentsCache.sort((a, b) => commentSortValue(a) - commentSortValue(b));
+        const rows = buildCommentDisplayRows(profileCommentsCache);
+        if (!rows.length) {
+            profileCommentsList.innerHTML = '<div class="comment-item">Sem comentários ainda.</div>';
+            return;
+        }
+        profileCommentsList.innerHTML = rows
+            .map((row) => profileCommentItemHtml(row.comment, {
+                depth: row.depth,
+                parentAuthor: row.parentAuthor
+            }))
             .join("");
     }
 
@@ -1286,8 +2735,14 @@ async function loadProfile() {
             const key = item.getAttribute("data-achievement-key");
             const achievement = achievementMap.get(key);
             const unlocked = Boolean(achievement?.unlocked);
+            setAchievementImageByUnlockState(item, String(key || ""), unlocked);
             item.classList.toggle("unlocked", unlocked);
             item.classList.toggle("locked", !unlocked);
+            if (unlocked) {
+                applyAchievementAccentColor(item);
+            } else {
+                item.style.removeProperty("--achievement-accent-color");
+            }
             const nameEl = item.querySelector("strong");
             const savedName =
                 String(item.getAttribute("data-achievement-name") || "").trim() ||
@@ -1370,7 +2825,7 @@ async function loadProfile() {
             }
         });
         if (profileNicknameDisplay) {
-            profileNicknameDisplay.textContent = displayName(profile);
+            profileNicknameDisplay.innerHTML = displayNameStyledHtml(profile);
         }
         if (form?.elements?.email) {
             form.elements.email.value = maskEmailForDisplay(profile.email);
@@ -1389,9 +2844,11 @@ async function loadProfile() {
             avatarPreview.src = profile.avatar_url || baseAvatar;
         }
         if (profileTitle) {
-            profileTitle.textContent = canEdit
-                ? "Seu Perfil no Clube do Jogo"
-                : `Perfil de ${displayName(profileView.profile)}`;
+            if (canEdit) {
+                profileTitle.textContent = "Seu Perfil no Clube do Jogo";
+            } else {
+                profileTitle.innerHTML = `Perfil de ${displayNameStyledHtml(profileView.profile)}`;
+            }
         }
 
         form?.querySelectorAll("input,button,textarea,select").forEach((el) => {
@@ -1418,13 +2875,18 @@ async function loadProfile() {
             syncNicknameCheckButtonState();
         }
 
+        isProfileOwnerSession = Number(currentProfileUserId) > 0
+            && Number(currentProfileUserId) === Number(ownUserId);
+
         renderProfileActivity(profileView.activity);
         renderProfileAchievements(profileAchievements);
         renderProfileComments(profileComments.comments || []);
+        resetProfileCommentFormState();
         return { ...data, canEdit };
     }
 
     try {
+        setupAchievementImageProtection();
         await refreshProfile();
     } catch (error) {
         setFeedback("feedback", error.message, "error");
@@ -1488,7 +2950,7 @@ async function loadProfile() {
             return;
         }
         if (isSameNicknameAsCurrent(nicknameCandidate)) {
-            setFeedback(nicknameCheckFeedback, "Esse ja e o seu nickname atual.", "warn");
+            setFeedback(nicknameCheckFeedback, "Esse já é o seu nickname atual.", "warn");
             syncNicknameCheckButtonState();
             return;
         }
@@ -1509,7 +2971,7 @@ async function loadProfile() {
             };
             setFeedback(
                 nicknameCheckFeedback,
-                result?.message || (result?.available ? "Nickname disponivel." : "Nickname indisponivel."),
+                result?.message || (result?.available ? "Nickname disponível." : "Nickname indisponível."),
                 result?.available ? "ok" : "error"
             );
         } catch (error) {
@@ -1589,7 +3051,7 @@ async function loadProfile() {
                         resolve(true);
                     };
                     probe.onerror = () => {
-                        // Mantem o preview local visivel se a URL final falhar momentaneamente.
+                        // Mantém o preview local visível se a URL final falhar momentaneamente.
                         resolve(false);
                     };
                     probe.src = finalAvatarUrl;
@@ -1637,22 +3099,155 @@ async function loadProfile() {
 
     profileCommentForm?.addEventListener("submit", async (event) => {
         event.preventDefault();
+        setFeedback("profileCommentFeedback", "", "");
+        if (!currentProfileUserId) return;
+
         const input = profileCommentForm.querySelector("input[name='commentText']");
         const commentText = String(input?.value || "").trim();
-        if (!commentText || !currentProfileUserId) return;
+        if (!commentText) return;
+
+        const parentInput = profileCommentForm.querySelector("input[name='parentCommentId']");
+        const parentCommentId = Number(parentInput?.value || 0);
+        const editCommentId = Number(profileCommentForm.dataset.editCommentId || 0);
+        const submitBtn = event.submitter || profileCommentForm.querySelector("button[type='submit']");
+        let affectedCommentId = 0;
+
         try {
-            const result = await sendJson(`/api/user/profile-comments?userId=${encodeURIComponent(currentProfileUserId)}`, "POST", { commentText });
-            if (profileCommentsList && profileCommentsList.textContent.includes("Sem comentarios")) {
-                profileCommentsList.innerHTML = "";
-            }
-            profileCommentsList?.insertAdjacentHTML(
-                "afterbegin",
-                commentItemHtml(result.comment)
-            );
+            await withButtonLoading(submitBtn, editCommentId > 0 ? "Salvando..." : "Comentando...", async () => {
+                if (editCommentId > 0) {
+                    const result = await sendJson(`/api/profile-comments/${editCommentId}`, "PUT", { commentText });
+                    upsertProfileComment(result.comment);
+                    affectedCommentId = Number(result?.comment?.id || editCommentId);
+                } else {
+                    const payload = parentCommentId > 0 ? { commentText, parentCommentId } : { commentText };
+                    const result = await sendJson(
+                        `/api/user/profile-comments?userId=${encodeURIComponent(currentProfileUserId)}`,
+                        "POST",
+                        payload
+                    );
+                    upsertProfileComment(result.comment);
+                    affectedCommentId = Number(result?.comment?.id || 0);
+                }
+            });
+
+            renderProfileComments(profileCommentsCache);
             profileCommentForm.reset();
-            setFeedback("profileCommentFeedback", "Comentario publicado.", "ok");
+            resetProfileCommentFormState();
+            setFeedback(
+                "profileCommentFeedback",
+                editCommentId > 0 ? "Comentário atualizado." : "Comentário publicado.",
+                "ok"
+            );
+
+            if (affectedCommentId > 0 && profileCommentsList) {
+                const row = profileCommentsList.querySelector(`.comment-item[data-comment-id='${affectedCommentId}']`);
+                if (row instanceof HTMLElement) {
+                    row.scrollIntoView({
+                        behavior: "auto",
+                        block: "nearest",
+                        inline: "nearest"
+                    });
+                }
+            }
         } catch (error) {
             setFeedback("profileCommentFeedback", error.message, "error");
+        }
+    });
+
+    profileCommentContext?.addEventListener("click", (event) => {
+        const cancelBtn = event.target.closest("button[data-profile-comment-context-cancel]");
+        if (!cancelBtn) return;
+        profileCommentForm?.reset();
+        resetProfileCommentFormState();
+    });
+
+    profileCommentsList?.addEventListener("click", async (event) => {
+        const likeToggleBtn = event.target.closest("button[data-comment-like-toggle='profile'][data-comment-id]");
+        if (likeToggleBtn) {
+            const commentId = Number(likeToggleBtn.dataset.commentId || 0);
+            const comment = getProfileCommentById(commentId);
+            if (!comment) return;
+            try {
+                const result = await sendJson(`/api/profile-comments/${commentId}/like`, "POST", {});
+                upsertProfileComment(result.comment || {
+                    ...comment,
+                    likes_count: Number(result?.likesCount || 0),
+                    liked_by_me: result?.liked ? 1 : 0
+                });
+                renderProfileComments(profileCommentsCache);
+            } catch (error) {
+                setFeedback("profileCommentFeedback", error.message, "error");
+            }
+            return;
+        }
+
+        const likeListBtn = event.target.closest("button[data-comment-like-list='profile'][data-comment-id]");
+        if (likeListBtn) {
+            await showCommentLikesPopup("profile", Number(likeListBtn.dataset.commentId || 0), likeListBtn);
+            return;
+        }
+
+        const actionBtn = event.target.closest("button[data-profile-comment-action][data-profile-comment-id]");
+        if (!actionBtn) return;
+
+        const action = String(actionBtn.dataset.profileCommentAction || "").trim().toLowerCase();
+        const commentId = Number(actionBtn.dataset.profileCommentId || 0);
+        const comment = getProfileCommentById(commentId);
+        if (!comment) return;
+
+        const input = profileCommentForm?.querySelector("input[name='commentText']");
+
+        if (action === "reply") {
+            setProfileCommentFormState({
+                mode: "reply",
+                commentId: 0,
+                parentCommentId: commentId,
+                label: `a ${displayName(comment)}`
+            });
+            if (input instanceof HTMLInputElement) {
+                input.focus();
+                input.setSelectionRange(input.value.length, input.value.length);
+            }
+            return;
+        }
+
+        if (action === "edit") {
+            if (!canEditProfileComment(comment)) return;
+            setProfileCommentFormState({
+                mode: "edit",
+                commentId,
+                parentCommentId: 0,
+                label: ""
+            });
+            if (input instanceof HTMLInputElement) {
+                input.value = String(comment.comment_text || "");
+                input.focus();
+                input.setSelectionRange(input.value.length, input.value.length);
+            }
+            return;
+        }
+
+        if (action === "delete") {
+            if (!canDeleteProfileComment(comment)) return;
+            const confirmed = window.confirm("Excluir este comentário?");
+            if (!confirmed) return;
+            try {
+                await withButtonLoading(actionBtn, "Excluindo...", () =>
+                    sendJson(`/api/profile-comments/${commentId}`, "DELETE")
+                );
+                removeProfileComment(commentId);
+                renderProfileComments(profileCommentsCache);
+                if (
+                    Number(profileCommentFormState?.commentId || 0) === commentId
+                    || Number(profileCommentFormState?.parentCommentId || 0) === commentId
+                ) {
+                    profileCommentForm?.reset();
+                    resetProfileCommentFormState();
+                }
+                setFeedback("profileCommentFeedback", "Comentário excluído.", "ok");
+            } catch (error) {
+                setFeedback("profileCommentFeedback", error.message, "error");
+            }
         }
     });
 
@@ -1681,7 +3276,62 @@ let homeRoundsMap = new Map();
 let homeActivePollTimer = null;
 let homeFeedPollTimer = null;
 let homeRoundFeedPageMap = new Map();
+let homeCommentFormAlignRaf = 0;
 const HOME_FEED_RECOMMENDATION_PAGE_SIZE = 6;
+
+function alignRoundCommentForms(roundSection) {
+    if (!(roundSection instanceof HTMLElement)) return;
+    const cards = [...roundSection.querySelectorAll(".carousel-track > article.recommendation-card[data-recommendation-id]")];
+    const forms = [...roundSection.querySelectorAll("form.comment-form[data-comment-form]")];
+
+    forms.forEach((form) => form.style.removeProperty("margin-top"));
+    cards.forEach((card) => {
+        card.style.removeProperty("min-height");
+        card.style.removeProperty("height");
+        card.style.removeProperty("max-height");
+    });
+
+    if (window.matchMedia("(max-width: 600px)").matches) {
+        if (!cards.length) return;
+        const tallest = Math.max(...cards.map((card) => card.getBoundingClientRect().height));
+        const normalizedTallest = Math.max(0, Math.ceil(tallest));
+        if (!normalizedTallest) return;
+        cards.forEach((card) => {
+            card.style.height = `${normalizedTallest}px`;
+            card.style.maxHeight = `${normalizedTallest}px`;
+        });
+        return;
+    }
+
+    if (!forms.length || !window.matchMedia("(min-width: 1051px)").matches) return;
+    forms.forEach((form) => {
+        form.style.marginTop = "0px";
+    });
+
+    const tops = forms.map((form) => form.getBoundingClientRect().top);
+    const lowestTop = Math.max(...tops);
+    forms.forEach((form, index) => {
+        const offset = Math.max(0, Math.round(lowestTop - tops[index]));
+        form.style.marginTop = `${offset}px`;
+    });
+}
+
+function alignHomeCommentFormsByRound() {
+    const root = byId("roundCarousels");
+    if (!(root instanceof HTMLElement)) return;
+    root.querySelectorAll(".round-carousel").forEach((section) => {
+        alignRoundCommentForms(section);
+    });
+}
+
+function scheduleHomeCommentFormAlignment() {
+    if (page !== "home") return;
+    if (homeCommentFormAlignRaf) cancelAnimationFrame(homeCommentFormAlignRaf);
+    homeCommentFormAlignRaf = requestAnimationFrame(() => {
+        homeCommentFormAlignRaf = 0;
+        alignHomeCommentFormsByRound();
+    });
+}
 
 function renderNavalChartForHome(round) {
     const chart = byId("homeNavalChart");
@@ -1728,7 +3378,7 @@ function renderNavalChartForHome(round) {
                 )
                 .join("");
             return `
-                <div class="naval-point" style="left:${left}%;top:${topPos}%;">
+                <div class="naval-point" data-naval-key="${escapeHtml(key)}" style="left:${left}%;top:${topPos}%;">
                     <img src="${escapeHtml(top.game_cover_url || baseAvatar)}" alt="${escapeHtml(top.game_name)}">
                     <span class="naval-grade-badge">${escapeHtml(pointGrade)}</span>
                     ${list.length > 1 ? `<span class="naval-count">${list.length}</span>` : ""}
@@ -1740,6 +3390,8 @@ function renderNavalChartForHome(round) {
         })
         .join("");
     adjustNavalStacks(chart);
+    setupMobileNavalPointBehavior(chart);
+    restoreOpenNavalStack(chart);
 }
 
 function renderFeed(rounds) {
@@ -1747,9 +3399,10 @@ function renderFeed(rounds) {
     if (!container) return;
     homeRoundsMap = new Map((rounds || []).map((round) => [Number(round.id), round]));
     recommendationCommentSignatureCaches.home.clear();
+    recommendationCommentIdsCaches.home.clear();
 
     if (!rounds.length) {
-        container.innerHTML = '<p>Nenhuma indicacao publicada ainda.</p>';
+        container.innerHTML = '<p>Nenhuma indicação publicada ainda.</p>';
         clearStaleCommentSignatures("home", []);
         return;
     }
@@ -1776,19 +3429,19 @@ function renderFeed(rounds) {
                     ? `
                         <div class="pagination-controls">
                             <button class="btn btn-outline" type="button" data-feed-page-action="prev" data-feed-round-id="${round.id}" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
-                            <span>Pagina ${currentPage} de ${totalPages}</span>
-                            <button class="btn btn-outline" type="button" data-feed-page-action="next" data-feed-round-id="${round.id}" ${currentPage >= totalPages ? "disabled" : ""}>Proxima</button>
+                            <span>Página ${currentPage} de ${totalPages}</span>
+                            <button class="btn btn-outline" type="button" data-feed-page-action="next" data-feed-round-id="${round.id}" ${currentPage >= totalPages ? "disabled" : ""}>Próxima</button>
                         </div>
                       `
                     : "";
                 return `
                 <section class="round-carousel" data-round-id="${round.id}">
                     <div class="row-between">
-                        <h3>Rodada - ${escapeHtml(formatRoundDateTime(round.created_at))} - ${escapeHtml(round.status)}</h3>
+                        <h3>Rodada - ${escapeHtml(formatRoundDateTime(round.created_at))} - ${escapeHtml(homeRoundPhaseLabel(round))}</h3>
                         ${round.status === "closed"
         ? `
                                 <div class="inline-actions home-round-actions">
-                                    ${sessionIsOwner ? `<button class="btn btn-warn" data-home-reopen-round="${round.id}" type="button">Reabrir Rodada</button>` : ""}
+                                    ${sessionIsOwner || sessionIsModerator ? `<button class="btn btn-warn" data-home-reopen-round="${round.id}" type="button">Reabrir Rodada</button>` : ""}
                                     <button class="btn btn-outline" data-open-naval-plan="${round.id}" type="button">Plano Naval</button>
                                 </div>
                             `
@@ -1824,51 +3477,70 @@ function renderFeed(rounds) {
         resetCommentFormState(recommendationId);
     });
     clearStaleCommentSignatures("home", visibleRecommendationIds);
+    scheduleHomeCommentFormAlignment();
 }
 
 function updateHomeRoundStatus(activeRound) {
     const textEl = byId("activeRoundText");
     const newBtn = byId("newRoundBtn");
+    const canStartRound = Boolean(sessionIsOwner || sessionIsModerator);
 
     if (!activeRound) {
-        if (textEl) textEl.textContent = "Nenhuma rodada ativa. Crie uma nova rodada para comecar.";
+        if (textEl) {
+            textEl.textContent = canStartRound
+                ? "Nenhuma rodada ativa. Crie uma nova rodada para comecar."
+                : "Nenhuma rodada ativa no momento.";
+        }
         if (newBtn) {
-            newBtn.disabled = false;
-            newBtn.textContent = "Nova Rodada";
+            newBtn.disabled = !canStartRound;
+            newBtn.textContent = canStartRound ? "Nova Rodada" : "Aguarde por nova rodada";
             newBtn.classList.remove("btn-success");
+            newBtn.classList.toggle("btn-disabled", !canStartRound);
         }
         return;
     }
 
-    const creatorName = displayName({
+    const creatorUser = {
+        id: activeRound.creator_user_id,
         nickname: activeRound.creator_nickname,
         username: activeRound.creator_username
-    });
+    };
+    const creatorNameStyled = displayNameStyledHtml(creatorUser);
+    const activePhase = String(activeRound.phase || activeRound.status || "");
 
-    if (activeRound.status === "draft") {
+    if (activePhase === "draft") {
         if (activeRound.isCreator) {
-            textEl.textContent = `Sua rodada de ${formatRoundDateTime(activeRound.created_at)} esta em preparacao.`;
+            textEl.textContent = `Sua rodada de ${formatRoundDateTime(activeRound.created_at)} está em preparação.`;
             newBtn.disabled = false;
             newBtn.textContent = "Gerenciar Rodada";
             newBtn.classList.add("btn-success");
+            newBtn.classList.remove("btn-disabled");
         } else {
-            textEl.textContent = `Espectar Nova Rodada (${creatorName})`;
+            textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled})`;
             newBtn.disabled = false;
             newBtn.textContent = "Ver Rodada em Andamento";
             newBtn.classList.add("btn-success");
+            newBtn.classList.remove("btn-disabled");
         }
-    } else if (activeRound.status === "reveal") {
-        textEl.textContent = `Espectar Nova Rodada (${creatorName}) - fase de revelacao.`;
+    } else if (activePhase === "reveal") {
+        textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled}) - fase de revelação.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
+        newBtn.classList.remove("btn-disabled");
+    } else if (activePhase === "rating") {
+        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em fase de avaliação.`;
+        newBtn.disabled = false;
+        newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
+        newBtn.classList.add("btn-success");
+        newBtn.classList.remove("btn-disabled");
     } else {
-        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em sessao de indicacoes.`;
+        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em Fase de indicação.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
+        newBtn.classList.remove("btn-disabled");
     }
-
 }
 
 async function refreshHomeActive() {
@@ -1897,6 +3569,7 @@ async function refreshHomeFeedCommentsOnly() {
         syncRecommendationCommentList(recommendation, "home");
     });
     clearStaleCommentSignatures("home", visibleRecommendationIds);
+    scheduleHomeCommentFormAlignment();
 }
 async function handleHome() {
     await ensureSessionUserId();
@@ -1905,6 +3578,73 @@ async function handleHome() {
     } catch (error) {
         setFeedback("homeFeedback", error.message, "error");
     }
+
+    const suggestionModal = byId("suggestionModal");
+    const openSuggestionModalBtn = byId("openSuggestionModalBtn");
+    const cancelSuggestionBtn = byId("cancelSuggestionBtn");
+    const suggestionForm = byId("suggestionForm");
+    const suggestionTargetPage = byId("suggestionTargetPage");
+    const suggestionText = byId("suggestionText");
+    const sendSuggestionBtn = byId("sendSuggestionBtn");
+
+    const closeSuggestionModal = () => {
+        if (!suggestionModal) return;
+        suggestionModal.classList.add("hidden");
+        suggestionModal.setAttribute("aria-hidden", "true");
+        setFeedback("suggestionFormFeedback", "", "");
+        if (suggestionForm instanceof HTMLFormElement) {
+            suggestionForm.reset();
+        }
+    };
+
+    const openSuggestionModal = () => {
+        if (!suggestionModal || !(suggestionTargetPage instanceof HTMLSelectElement)) return;
+        const options = suggestionTargetsForCurrentUser();
+        suggestionTargetPage.innerHTML = options
+            .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+            .join("");
+        suggestionModal.classList.remove("hidden");
+        suggestionModal.setAttribute("aria-hidden", "false");
+        setFeedback("suggestionFormFeedback", "", "");
+        if (suggestionText instanceof HTMLTextAreaElement) {
+            suggestionText.focus();
+            suggestionText.setSelectionRange(suggestionText.value.length, suggestionText.value.length);
+        }
+    };
+
+    openSuggestionModalBtn?.addEventListener("click", openSuggestionModal);
+    cancelSuggestionBtn?.addEventListener("click", closeSuggestionModal);
+    window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && suggestionModal && !suggestionModal.classList.contains("hidden")) {
+            closeSuggestionModal();
+        }
+    });
+    suggestionForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!(suggestionTargetPage instanceof HTMLSelectElement) || !(suggestionText instanceof HTMLTextAreaElement)) return;
+        const targetPage = String(suggestionTargetPage.value || "").trim().toLowerCase();
+        const suggestionContent = String(suggestionText.value || "").trim();
+        if (!targetPage) {
+            setFeedback("suggestionFormFeedback", "Selecione a tela da sugestão.", "error");
+            return;
+        }
+        if (suggestionContent.length < 5) {
+            setFeedback("suggestionFormFeedback", "Digite ao menos 5 caracteres.", "error");
+            return;
+        }
+        try {
+            const result = await withButtonLoading(sendSuggestionBtn, "Enviando...", () =>
+                sendJson("/api/suggestions", "POST", {
+                    targetPage,
+                    suggestionText: suggestionContent
+                })
+            );
+            closeSuggestionModal();
+            setFeedback("homeFeedback", result?.message || "Sugestão enviada com sucesso.", "ok");
+        } catch (error) {
+            setFeedback("suggestionFormFeedback", error.message, "error");
+        }
+    });
 
     byId("refreshFeedBtn")?.addEventListener("click", async () => {
         try {
@@ -1916,6 +3656,7 @@ async function handleHome() {
     });
 
     byId("newRoundBtn")?.addEventListener("click", async () => {
+        if (!sessionIsOwner && !sessionIsModerator && !homeActiveRound) return;
         try {
             if (homeActiveRound) {
                 window.location.href = `/round.html?roundId=${homeActiveRound.id}`;
@@ -1924,7 +3665,7 @@ async function handleHome() {
             const created = await sendJson("/api/rounds/new", "POST", {});
             homeActiveRound = created.round;
             updateHomeRoundStatus(homeActiveRound);
-            setFeedback("homeFeedback", "Nova rodada criada. Voce ja pode abrir e gerenciar.", "ok");
+            setFeedback("homeFeedback", "Nova rodada criada. Você já pode abrir e gerenciar.", "ok");
         } catch (error) {
             setFeedback("homeFeedback", error.message, "error");
             if (String(error.message || "").includes("rodada ativa")) {
@@ -1982,9 +3723,14 @@ async function handleHome() {
         const roundId = Number(btn.dataset.openNavalPlan);
         const round = homeRoundsMap.get(roundId);
         if (!round) return;
+        const modal = byId("navalModal");
         byId("navalModalTitle").textContent = `Plano Naval - Rodada ${formatRoundDateTime(round.created_at)}`;
+        modal?.classList.remove("hidden");
         renderNavalChartForHome(round);
-        byId("navalModal")?.classList.remove("hidden");
+        requestAnimationFrame(() => {
+            const chart = byId("homeNavalChart");
+            adjustNavalStacks(chart);
+        });
     });
 
     byId("closeNavalModalBtn")?.addEventListener("click", () => {
@@ -2002,6 +3748,8 @@ async function handleHome() {
         event.preventDefault();
         await submitRecommendationCommentForm(form, "home", "homeFeedback");
     });
+
+    window.addEventListener("resize", scheduleHomeCommentFormAlignment);
 
     if (homeActivePollTimer) clearInterval(homeActivePollTimer);
     homeActivePollTimer = setInterval(async () => {
@@ -2032,11 +3780,12 @@ let roundLastPhase = "";
 function renderParticipantList(round) {
     const list = byId("participantList");
     if (!list) return;
+    const canManage = canManageDraftRound(round);
 
     list.innerHTML = (round.participants || [])
         .map((user) => {
             const removeButton =
-                round.isCreator && round.phase === "draft" && user.id !== round.creator_user_id
+                canManage && user.id !== round.creator_user_id
                     ? `<button class="btn btn-outline" data-remove-user="${user.id}" type="button">Remover</button>`
                     : "";
             return `
@@ -2044,7 +3793,7 @@ function renderParticipantList(round) {
                     <div class="search-item-main">
                         <img class="avatar-mini" src="${escapeHtml(user.avatar_url || baseAvatar)}" alt="avatar">
                         <div>
-                            <strong>${escapeHtml(displayName(user))}</strong>
+                            <strong>${displayNameStyledHtml(user)}</strong>
                             <div>@${escapeHtml(user.username)}</div>
                         </div>
                     </div>
@@ -2073,7 +3822,7 @@ function showPairExclusionInlineError(giverUserId, message) {
     if (!list) return;
     const target = list.querySelector(`[data-pair-error-for="${Number(giverUserId)}"]`);
     if (!target) return;
-    target.textContent = String(message || "");
+    target.textContent = normalizeTextArtifacts(message);
     target.classList.add("active");
 }
 
@@ -2105,7 +3854,7 @@ function validatePairExclusionsConfig(participants, pairs, options = {}) {
             const giverName = namesById.get(giverId) || "Participante";
             return {
                 ok: false,
-                message: `${giverName} precisa ter pelo menos 1 pessoa disponivel para sortear.`,
+                message: `${giverName} precisa ter pelo menos 1 pessoa disponível para sortear.`,
                 invalidGiverId: giverId
             };
         }
@@ -2132,7 +3881,7 @@ function validatePairExclusionsConfig(participants, pairs, options = {}) {
         const fallbackGiverId = Number(options.changedGiverUserId || 0);
         return {
             ok: false,
-            message: "Restricoes inconsistentes: ajuste os bloqueios para permitir um sorteio valido para todos.",
+            message: "Restrições inconsistentes: ajuste os bloqueios para permitir um sorteio válido para todos.",
             invalidGiverId: Number.isInteger(fallbackGiverId) && fallbackGiverId > 0 ? fallbackGiverId : 0
         };
     }
@@ -2144,6 +3893,7 @@ function renderPairExclusionsEditor(round) {
     const section = byId("pairExclusionsSection");
     const list = byId("pairExclusionsList");
     if (!section || !list) return;
+    const canManage = canManageDraftRound(round);
 
     if (!round?.isCreator || round.phase !== "draft") {
         section.classList.add("hidden");
@@ -2155,7 +3905,7 @@ function renderPairExclusionsEditor(round) {
 
     const participants = round.participants || [];
     if (participants.length < 2) {
-        list.innerHTML = "<p>Adicione ao menos 2 participantes para configurar restricoes.</p>";
+        list.innerHTML = "<p>Adicione ao menos 2 participantes para configurar restrições.</p>";
         return;
     }
 
@@ -2172,8 +3922,8 @@ function renderPairExclusionsEditor(round) {
                     const checked = exclusions.has(key) ? "checked" : "";
                     return `
                         <label class="pair-exclusion-item">
-                            <input type="checkbox" data-pair-giver="${giver.id}" data-pair-receiver="${receiver.id}" ${checked}>
-                            <span>${escapeHtml(displayName(receiver))}</span>
+                            <input type="checkbox" data-pair-giver="${giver.id}" data-pair-receiver="${receiver.id}" ${checked} ${canManage ? "" : "disabled"}>
+                            <span>${displayNameStyledHtml(receiver)}</span>
                         </label>
                     `;
                 })
@@ -2182,8 +3932,8 @@ function renderPairExclusionsEditor(round) {
             return `
                 <div class="pair-exclusion-row" data-pair-giver-row="${giver.id}">
                     <div class="pair-exclusion-row-feedback" data-pair-error-for="${giver.id}"></div>
-                    <div class="pair-exclusion-giver">${escapeHtml(displayName(giver))}</div>
-                    <div class="pair-exclusion-options" role="group" aria-label="Restricoes de ${escapeHtml(displayName(giver))}">
+                    <div class="pair-exclusion-giver">${displayNameStyledHtml(giver)}</div>
+                    <div class="pair-exclusion-options" role="group" aria-label="Restrições de ${escapeHtml(displayName(giver))}">
                         ${options}
                     </div>
                 </div>
@@ -2229,7 +3979,7 @@ function validatePairExclusionsFromScreen(options = {}) {
 }
 
 async function persistPairExclusionsForCurrentRound() {
-    if (!currentRound || !currentRound.isCreator || currentRound.phase !== "draft") return;
+    if (!canManageDraftRound(currentRound)) return;
     const pairs = collectPairExclusionsFromScreen();
     const validation = validatePairExclusionsConfig(currentRound.participants || [], pairs);
     if (!validation.ok) {
@@ -2241,13 +3991,13 @@ async function persistPairExclusionsForCurrentRound() {
 }
 
 async function autosavePairExclusionsForCurrentRound() {
-    if (!currentRound || !currentRound.isCreator || currentRound.phase !== "draft") return;
+    if (!canManageDraftRound(currentRound)) return;
     const token = ++pairExclusionAutosaveToken;
-    setFeedback("roundFeedback", "Salvando restricoes...", "");
+    setFeedback("roundFeedback", "Salvando restrições...", "");
     try {
         await persistPairExclusionsForCurrentRound();
         if (token !== pairExclusionAutosaveToken) return;
-        setFeedback("roundFeedback", "Restricoes atualizadas.", "ok");
+        setFeedback("roundFeedback", "Restrições atualizadas.", "ok");
     } catch (error) {
         if (token !== pairExclusionAutosaveToken) return;
         setFeedback("roundFeedback", error.message, "error");
@@ -2264,8 +4014,9 @@ function renderRoundRecommendations(round) {
         .join("|");
 
     if (!recommendations.length) {
-        container.innerHTML = "<p>Ainda nao ha indicacoes enviadas nesta rodada.</p>";
+        container.innerHTML = "<p>Ainda não há indicações enviadas nesta rodada.</p>";
         recommendationCommentSignatureCaches.round.clear();
+        recommendationCommentIdsCaches.round.clear();
         clearStaleCommentSignatures("round", []);
         roundRecommendationsStructureSignature = structureSignature;
         return;
@@ -2281,6 +4032,7 @@ function renderRoundRecommendations(round) {
             )
             .join("");
         recommendationCommentSignatureCaches.round.clear();
+        recommendationCommentIdsCaches.round.clear();
         recommendations.forEach((rec) => resetCommentFormState(rec.id));
         roundRecommendationsStructureSignature = structureSignature;
     }
@@ -2294,6 +4046,53 @@ function resetRoundSections() {
     byId("draftSpectatorSection")?.classList.add("hidden");
     byId("revealSection")?.classList.add("hidden");
     byId("indicationSection")?.classList.add("hidden");
+}
+
+function canManageDraftRound(roundLike = currentRound) {
+    const round = roundLike || null;
+    if (!round || String(round.phase || "") !== "draft") return false;
+    return Boolean(round.isCreator || sessionIsOwner);
+}
+
+function applyDraftReadOnlyUi(round) {
+    const draftSection = byId("draftCreatorSection");
+    const draftReadonlyHint = byId("draftReadonlyHint");
+    const canManage = canManageDraftRound(round);
+    if (!draftSection) return;
+
+    draftSection.classList.toggle("draft-readonly-locked", !canManage);
+    if (draftReadonlyHint) {
+        draftReadonlyHint.classList.toggle("hidden", canManage);
+    }
+
+    const searchInput = byId("participantSearch");
+    if (searchInput instanceof HTMLInputElement) {
+        searchInput.disabled = !canManage;
+    }
+
+    const searchBtn = byId("searchParticipantsBtn");
+    if (searchBtn instanceof HTMLButtonElement) {
+        searchBtn.disabled = !canManage;
+    }
+
+    const drawBtn = byId("drawBtn");
+    if (drawBtn instanceof HTMLButtonElement) {
+        const creatorIsOwner =
+            Boolean(round?.creator_is_owner)
+            || String(round?.creator_role || "").toLowerCase() === "owner";
+        const canUseDraw = Boolean(sessionIsOwner || (sessionIsModerator && !creatorIsOwner));
+        drawBtn.classList.toggle("hidden", !canUseDraw);
+        drawBtn.disabled = !canUseDraw;
+    }
+
+    const interactiveElements = draftSection.querySelectorAll(
+        "#participantSearchResults button, #participantList button, #pairExclusionsList input[type='checkbox']"
+    );
+    interactiveElements.forEach((element) => {
+        if (element instanceof HTMLButtonElement || element instanceof HTMLInputElement) {
+            element.disabled = !canManage;
+        }
+    });
 }
 
 let currentRoundTab = "indications";
@@ -2330,10 +4129,65 @@ function adjustNavalStacks(chart) {
         const itemCount = stack.querySelectorAll(".naval-stack-item").length || 1;
         const stackWidth = Math.max(itemCount * 102 + 24, 130);
         const pointRect = point.getBoundingClientRect();
-        const projectedRight = pointRect.right + stackWidth + 72;
-        if (projectedRight > chartRect.right) {
+        const stackOffset = 72;
+        const availableRight = chartRect.right - pointRect.right - stackOffset;
+        const availableLeft = pointRect.left - chartRect.left - stackOffset;
+        const fitsRight = availableRight >= stackWidth;
+        const fitsLeft = availableLeft >= stackWidth;
+
+        if (!fitsRight && fitsLeft) {
+            point.classList.add("flip-stack");
+            return;
+        }
+
+        if (!fitsRight && !fitsLeft && availableLeft > availableRight) {
             point.classList.add("flip-stack");
         }
+    });
+}
+
+function restoreOpenNavalStack(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    const openKey = String(chart.dataset.mobileOpenNavalKey || "");
+    if (!openKey) return;
+    const point = [...chart.querySelectorAll(".naval-point")].find(
+        (item) => String(item.dataset.navalKey || "") === openKey
+    );
+    if (!(point instanceof HTMLElement)) {
+        delete chart.dataset.mobileOpenNavalKey;
+        return;
+    }
+    point.classList.add("is-open");
+}
+
+function closeOpenNavalStacks(root = document, exceptPoint = null) {
+    if (!(root instanceof Document || root instanceof HTMLElement)) return;
+    root.querySelectorAll(".naval-point.is-open").forEach((point) => {
+        if (exceptPoint && point === exceptPoint) return;
+        point.classList.remove("is-open");
+    });
+}
+
+function setupMobileNavalPointBehavior(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    if (chart.dataset.mobileNavalClickBound === "1") return;
+    chart.dataset.mobileNavalClickBound = "1";
+
+    chart.addEventListener("click", (event) => {
+        if (!window.matchMedia("(max-width: 600px)").matches) return;
+        const point = event.target.closest(".naval-point");
+        if (!(point instanceof HTMLElement) || !chart.contains(point)) return;
+        closeOpenNavalStacks(chart, point);
+        point.classList.add("is-open");
+        chart.dataset.mobileOpenNavalKey = String(point.dataset.navalKey || "");
+    });
+
+    document.addEventListener("click", (event) => {
+        if (!window.matchMedia("(max-width: 600px)").matches) return;
+        const clickedPoint = event.target.closest(".naval-point");
+        if (clickedPoint instanceof HTMLElement && chart.contains(clickedPoint)) return;
+        closeOpenNavalStacks(chart);
+        delete chart.dataset.mobileOpenNavalKey;
     });
 }
 
@@ -2381,7 +4235,7 @@ function renderNavalChart(round) {
 
     const rated = (round.recommendations || []).filter((rec) => rec.rating_letter && rec.interest_score);
     if (!rated.length) {
-        chart.innerHTML = "<p style='padding:12px;color:#9fb3e0;'>Ainda nao ha notas nesta rodada.</p>";
+        chart.innerHTML = "<p style='padding:12px;color:#9fb3e0;'>Ainda não há notas nesta rodada.</p>";
         return;
     }
 
@@ -2422,7 +4276,7 @@ function renderNavalChart(round) {
                 .join("");
 
             return `
-                <div class="naval-point" style="left:${left}%;top:${topPos}%;">
+                <div class="naval-point" data-naval-key="${escapeHtml(key)}" style="left:${left}%;top:${topPos}%;">
                     <img src="${escapeHtml(top.game_cover_url || baseAvatar)}" alt="${escapeHtml(top.game_name)}">
                     <span class="naval-grade-badge">${escapeHtml(pointGrade)}</span>
                     ${list.length > 1 ? `<span class="naval-count">${list.length}</span>` : ""}
@@ -2436,6 +4290,8 @@ function renderNavalChart(round) {
 
     chart.innerHTML = pointsHtml;
     adjustNavalStacks(chart);
+    setupMobileNavalPointBehavior(chart);
+    restoreOpenNavalStack(chart);
 }
 
 function renderRevealList(round) {
@@ -2443,22 +4299,34 @@ function renderRevealList(round) {
     if (!listEl) return;
     const assignments = round.assignments || [];
     if (!assignments.length) {
-        listEl.innerHTML = "<p>O sorteio ainda nao foi gerado.</p>";
+        listEl.innerHTML = "<p>O sorteio ainda não foi gerado.</p>";
         return;
     }
 
     listEl.innerHTML = assignments
         .map((item) => {
-            const giver = displayName({ nickname: item.giver_nickname, username: item.giver_username });
-            const receiver = item.revealed
-                ? displayName({ nickname: item.receiver_nickname, username: item.receiver_username })
+            const giverUser = {
+                id: item.giver_user_id,
+                nickname: item.giver_nickname,
+                username: item.giver_username
+            };
+            const receiverUser = item.revealed
+                ? {
+                    id: item.receiver_user_id,
+                    nickname: item.receiver_nickname,
+                    username: item.receiver_username
+                }
                 : "Oculto";
             const revealBtn = round.isCreator && !item.revealed
                 ? `<button class="btn btn-outline" data-reveal-giver="${item.giver_user_id}" type="button">Mostrar sorteado</button>`
                 : "";
+            const giverHtml = displayNameStyledHtml(giverUser);
+            const receiverHtml = typeof receiverUser === "string"
+                ? escapeHtml(receiverUser)
+                : displayNameStyledHtml(receiverUser);
             return `
                 <div class="search-item">
-                    <div><strong>${escapeHtml(giver)}</strong> -> <strong>${escapeHtml(receiver)}</strong></div>
+                    <div><strong>${giverHtml}</strong> -> <strong>${receiverHtml}</strong></div>
                     ${revealBtn}
                 </div>
             `;
@@ -2475,27 +4343,21 @@ function renderRoundState(round) {
             : round.phase === "reveal"
               ? "Sorteio concluido. Revele os pareamentos."
               : round.phase === "indication"
-                ? "Sessao de indicacoes aberta."
+                ? "Sessão de indicações aberta."
                 : round.phase === "rating"
-                  ? "Sessao de notas navais aberta."
+                  ? "Sessão de notas navais aberta."
               : "Rodada encerrada.";
 
     renderRoundRecommendations(round);
 
     if (round.phase === "draft") {
-        if (round.isCreator) {
-            byId("draftCreatorSection")?.classList.remove("hidden");
-            renderParticipantList(round);
-            renderPairExclusionsEditor(round);
-        } else {
-            byId("draftSpectatorSection")?.classList.remove("hidden");
-            const creatorName = displayName({
-                nickname: round.creator_nickname,
-                username: round.creator_username
-            });
-            byId("spectatorDraftText").textContent =
-                `Espectar Nova Rodada (${creatorName}). Aguarde o sorteio ser finalizado.`;
-        }
+        byId("draftCreatorSection")?.classList.remove("hidden");
+        renderParticipantList(round);
+        renderPairExclusionsEditor(round);
+        renderUserSearchResults();
+        applyDraftReadOnlyUi(round);
+
+        byId("draftSpectatorSection")?.classList.add("hidden");
         return;
     }
 
@@ -2537,8 +4399,9 @@ function renderRoundState(round) {
 
         const closeBtn = byId("closeRoundBtn");
         const finalizeBtn = byId("finalizeRoundBtn");
-        const canManageRound = Boolean(round.isCreator || sessionIsOwner);
-        if (canManageRound) {
+        const canOwnerOrCreator = Boolean(round.isCreator || sessionIsOwner);
+        const canModeratorReopen = Boolean(sessionIsModerator && !canOwnerOrCreator && round.phase === "closed");
+        if (canOwnerOrCreator || canModeratorReopen) {
             if (round.phase === "closed") {
                 closeBtn?.classList.add("hidden");
                 finalizeBtn?.classList.remove("hidden");
@@ -2571,29 +4434,33 @@ function renderRoundState(round) {
 
         const canIndicate = round.phase === "indication";
         if (round.myAssignment) {
-            const target = displayName({
+            const targetUser = {
+                id: round.myAssignment.receiver_user_id,
                 nickname: round.myAssignment.receiver_nickname,
                 username: round.myAssignment.receiver_username
-            });
-            byId("assignmentText").textContent = canIndicate
-                ? `Sua indicacao desta rodada vai para: ${target}`
-                : `Indicacoes encerradas. Voce indicou para: ${target}`;
+            };
+            const assignmentText = byId("assignmentText");
+            if (assignmentText) {
+                assignmentText.innerHTML = canIndicate
+                    ? `Sua indicação desta rodada vai para: ${displayNameStyledHtml(targetUser)}`
+                    : `Indicações encerradas. Você indicou para: ${displayNameStyledHtml(targetUser)}`;
+            }
             if (canIndicate) byId("recommendationForm")?.classList.remove("hidden");
             else byId("recommendationForm")?.classList.add("hidden");
 
             if (canIndicate) {
                 const form = byId("recommendationForm");
                 const submitBtn = form?.querySelector("button[type='submit']");
-                if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar Indicacao" : "Salvar Indicacao";
+                if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar Indicação" : "Salvar Indicação";
             }
         } else {
-            byId("assignmentText").textContent = "Voce esta espectando esta rodada.";
+            byId("assignmentText").textContent = "Você está espectando esta rodada.";
             byId("recommendationForm")?.classList.add("hidden");
         }
 
         const ratingScheduleEditor = byId("ratingScheduleEditor");
         const ratingStartsAtEditInput = byId("ratingStartsAtEditInput");
-        if (round.isCreator && round.phase !== "closed") {
+        if ((round.isCreator || sessionIsOwner || sessionIsModerator) && round.phase !== "closed") {
             ratingScheduleEditor?.classList.remove("hidden");
             if (ratingStartsAtEditInput && document.activeElement !== ratingStartsAtEditInput) {
                 const localValue = toDateTimeLocalValue(round.rating_starts_at);
@@ -2618,19 +4485,19 @@ function renderRoundState(round) {
         } else if (round.ratingOpen) {
             const items = round.ratingsToDo || [];
             if (items.length) {
-                ratingText.textContent = "A sessao de notas foi liberada. Avalie os jogos que voce recebeu.";
+                ratingText.textContent = "A sessão de notas foi liberada. Avalie os jogos que você recebeu.";
                 ratingForm?.classList.remove("hidden");
                 ratingSelect.innerHTML = items
-                    .map((rec) => `<option value="${rec.id}">${escapeHtml(rec.game_name)} (de ${escapeHtml(displayName({ nickname: rec.giver_nickname, username: rec.giver_username }))})</option>`)
+                    .map((rec) => `<option value="${rec.id}">${escapeHtml(rec.game_name)} (de ${escapeHtml(displayName({ id: rec.giver_user_id, nickname: rec.giver_nickname, username: rec.giver_username }))})</option>`)
                     .join("");
             } else {
-                ratingText.textContent = "Voce nao recebeu jogos para avaliar nesta rodada.";
+                ratingText.textContent = "Você não recebeu jogos para avaliar nesta rodada.";
                 ratingForm?.classList.add("hidden");
             }
         } else {
             const dateText = round.rating_starts_at
                 ? new Date(round.rating_starts_at * 1000).toLocaleString("pt-BR")
-                : "data nao definida";
+                : "data não definida";
             ratingText.textContent = `Notas navais liberam em: ${dateText}.`;
             ratingForm?.classList.add("hidden");
         }
@@ -2649,15 +4516,21 @@ function renderUserSearchResults() {
     const container = byId("participantSearchResults");
     if (!container) return;
 
-    if (!currentRound || !currentRound.isCreator || currentRound.phase !== "draft") {
+    if (!currentRound || currentRound.phase !== "draft") {
         container.innerHTML = "";
+        return;
+    }
+
+    const canManage = canManageDraftRound(currentRound);
+    if (!canManage) {
+        container.innerHTML = "<p>Somente o criador e o dono podem alterar os participantes.</p>";
         return;
     }
 
     const existingIds = new Set((currentRound.participants || []).map((item) => item.id));
     const filtered = roundUsers.filter((user) => !existingIds.has(user.id));
     if (!filtered.length) {
-        container.innerHTML = "<p>Nenhum usuario disponivel para adicionar.</p>";
+        container.innerHTML = "<p>Nenhum usuário disponível para adicionar.</p>";
         return;
     }
 
@@ -2668,7 +4541,7 @@ function renderUserSearchResults() {
                     <div class="search-item-main">
                         <img class="avatar-mini" src="${escapeHtml(user.avatar_url || baseAvatar)}" alt="avatar">
                         <div>
-                            <strong>${escapeHtml(displayName(user))}</strong>
+                            <strong>${displayNameStyledHtml(user)}</strong>
                             <div>@${escapeHtml(user.username)}</div>
                         </div>
                     </div>
@@ -2688,12 +4561,13 @@ async function refreshRoundData(forceRoundId) {
     }
 
     if (!roundId) {
-        currentRound = null;
-        roundRecommendationsStructureSignature = "";
-        recommendationCommentSignatureCaches.round.clear();
-        roundLastPhase = "";
+            currentRound = null;
+            roundRecommendationsStructureSignature = "";
+            recommendationCommentSignatureCaches.round.clear();
+            recommendationCommentIdsCaches.round.clear();
+            roundLastPhase = "";
         byId("roundHeading").textContent = "Sem rodada ativa";
-        byId("roundStatusText").textContent = "Crie uma nova rodada na pagina inicial.";
+        byId("roundStatusText").textContent = "Crie uma nova rodada na página inicial.";
         resetRoundSections();
         byId("roundRecommendations").innerHTML = "";
         return;
@@ -2706,16 +4580,17 @@ async function refreshRoundData(forceRoundId) {
     if (previousRoundId && previousRoundId !== currentRound.id) {
         roundRecommendationsStructureSignature = "";
         recommendationCommentSignatureCaches.round.clear();
+        recommendationCommentIdsCaches.round.clear();
     }
     renderRoundState(currentRound);
     if (previousPhase && previousPhase !== "closed" && currentRound.phase === "closed") {
         await claimAchievementUnlocksAndNotify();
     }
     roundLastPhase = currentRound.phase;
-    if (currentRound.isCreator && currentRound.phase === "draft") {
+    if (canManageDraftRound(currentRound)) {
         await loadUsersForRound(byId("participantSearch")?.value || "");
-        renderUserSearchResults();
     }
+    renderUserSearchResults();
 }
 let steamSuggestTimer = null;
 let steamSelectionToken = 0;
@@ -2780,7 +4655,7 @@ async function handleRoundPage() {
     byId("tabRatingsBtn")?.addEventListener("click", () => setRoundTab("ratings"));
 
     byId("searchParticipantsBtn")?.addEventListener("click", async () => {
-        if (!currentRound || !currentRound.isCreator || currentRound.phase !== "draft") return;
+        if (!canManageDraftRound(currentRound)) return;
         try {
             const term = byId("participantSearch")?.value || "";
             await loadUsersForRound(term);
@@ -2793,6 +4668,7 @@ async function handleRoundPage() {
     byId("participantSearchResults")?.addEventListener("click", async (event) => {
         const btn = event.target.closest("button[data-add-user]");
         if (!btn || !currentRound) return;
+        if (!canManageDraftRound(currentRound)) return;
         const userId = Number(btn.dataset.addUser);
         try {
             await sendJson(`/api/rounds/${currentRound.id}/participants`, "POST", { userId });
@@ -2806,6 +4682,7 @@ async function handleRoundPage() {
     byId("participantList")?.addEventListener("click", async (event) => {
         const btn = event.target.closest("button[data-remove-user]");
         if (!btn || !currentRound) return;
+        if (!canManageDraftRound(currentRound)) return;
         const userId = Number(btn.dataset.removeUser);
         try {
             await fetch(`/api/rounds/${currentRound.id}/participants/${userId}`, {
@@ -2825,6 +4702,7 @@ async function handleRoundPage() {
     byId("pairExclusionsList")?.addEventListener("change", async (event) => {
         const input = event.target?.closest?.("input[type='checkbox'][data-pair-giver][data-pair-receiver]");
         if (!input) return;
+        if (!canManageDraftRound(currentRound)) return;
 
         const changedGiverUserId = Number(input.getAttribute("data-pair-giver") || 0);
         const validation = validatePairExclusionsFromScreen({
@@ -2849,7 +4727,11 @@ async function handleRoundPage() {
     });
 
     byId("drawBtn")?.addEventListener("click", async (event) => {
-        if (!currentRound) return;
+        const creatorIsOwner =
+            Boolean(currentRound?.creator_is_owner)
+            || String(currentRound?.creator_role || "").toLowerCase() === "owner";
+        if (!sessionIsOwner && (!sessionIsModerator || creatorIsOwner)) return;
+        if (!canManageDraftRound(currentRound)) return;
         const btn = event.currentTarget;
         setFeedback("roundFeedback", "", "");
         try {
@@ -2885,7 +4767,7 @@ async function handleRoundPage() {
         try {
             const raw = byId("ratingStartsAtInput")?.value || "";
             const ts = Math.floor(new Date(raw).getTime() / 1000);
-            await withButtonLoading(btn, "Abrindo sessao...", async () => {
+            await withButtonLoading(btn, "Abrindo sessão...", async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}/start-indication`, "POST", {
                     ratingStartsAt: ts
                 });
@@ -2899,13 +4781,19 @@ async function handleRoundPage() {
     });
 
     byId("updateRatingStartsAtBtn")?.addEventListener("click", async (event) => {
-        if (!currentRound || !currentRound.isCreator || currentRound.phase === "closed") return;
+        if (
+            !currentRound
+            || currentRound.phase === "closed"
+            || (!currentRound.isCreator && !sessionIsOwner && !sessionIsModerator)
+        ) {
+            return;
+        }
         const btn = event.currentTarget;
         try {
             const raw = byId("ratingStartsAtEditInput")?.value || "";
             const ts = Math.floor(new Date(raw).getTime() / 1000);
             if (!Number.isInteger(ts) || ts <= 0) {
-                throw new Error("Defina uma data valida para as notas navais.");
+                throw new Error("Defina uma data válida para as notas navais.");
             }
             await withButtonLoading(btn, "Atualizando...", async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}`, "PUT", {
@@ -2913,7 +4801,7 @@ async function handleRoundPage() {
                 });
                 currentRound = result.round;
                 renderRoundState(currentRound);
-                setFeedback("roundFeedback", "Data da sessao de notas atualizada.", "ok");
+                setFeedback("roundFeedback", "Data da sessão de notas atualizada.", "ok");
             });
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
@@ -3076,7 +4964,9 @@ async function handleRoundPage() {
             const result = await sendForm(`/api/rounds/${currentRound.id}/recommendations`, data);
             currentRound = result.round;
             renderRoundState(currentRound);
-            setFeedback("roundFeedback", "Indicacao salva sem precisar atualizar a pagina.", "ok");
+            setFeedback("roundFeedback", "Indicação salva sem precisar atualizar a página.", "ok");
+            showAchievementUnlockNotifications(result.newlyUnlocked || []);
+            claimAchievementUnlocksAndNotify();
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
         }
@@ -3116,7 +5006,7 @@ async function handleRoundPage() {
     if (roundPollTimer) clearInterval(roundPollTimer);
     roundPollTimer = setInterval(async () => {
         if (!currentRound) return;
-        if (currentRound.phase === "draft" && currentRound.isCreator) return;
+        if (canManageDraftRound(currentRound)) return;
         try {
             await refreshRoundData(currentRound.id);
         } catch {
@@ -3126,9 +5016,18 @@ async function handleRoundPage() {
 }
 async function init() {
     await handleLogoutButton();
+    setupPasswordVisibilityToggles();
+    setupPasswordPasteBlock();
+    if (byId("adminNavLink")) {
+        await setupOwnerNavLink();
+    }
     const authenticatedPage = page === "profile" || page === "home" || page === "round" || page === "admin";
     if (authenticatedPage) {
-        await setupOwnerNavLink();
+        try {
+            await ensureUserRolesMap();
+        } catch {
+            // sem mapa de cargos, segue com nomes basicos
+        }
         claimAchievementUnlocksAndNotify();
         startAchievementPolling();
     }
@@ -3150,6 +5049,7 @@ async function init() {
 }
 
 init();
+
 
 
 

@@ -109,3 +109,35 @@ npm start
 ```
 
 5. Open `http://localhost:3000`.
+
+## Self-Host With Your Own Domain (No Tunnel)
+
+This project is ready to run behind a reverse proxy (for example Caddy) on your own machine.
+
+1. Create `.env` for production, for example:
+
+```env
+NODE_ENV=production
+HOST=127.0.0.1
+PORT=3000
+BASE_URL=https://clubedojogo.app.br
+PUBLIC_APP_URL=https://clubedojogo.app.br
+ALLOWED_ORIGINS=https://clubedojogo.app.br,https://www.clubedojogo.app.br
+TRUST_PROXY=1
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAMESITE=lax
+SESSION_COOKIE_DOMAIN=clubedojogo.app.br
+SESSION_SECRET=use-a-long-random-secret
+```
+
+2. Run the app:
+
+```bash
+npm start
+```
+
+3. Configure Caddy using `Caddyfile.example` (copy to your Caddy config path and adjust if needed).
+
+4. Ensure your router forwards ports `80` and `443` to the machine running Caddy.
+
+5. Point DNS `A` records (`@` and optionally `www`) to your public IP.

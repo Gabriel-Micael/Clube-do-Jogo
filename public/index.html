@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clube do Jogo | Inicio</title>
+    <title>Clube do Jogo | Início</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body data-page="home">
@@ -12,7 +12,7 @@
             <img class="brand-logo" src="/uploads/site-logo-min.png" alt="Logo Clube do Jogo">
         </a>
         <div class="nav-links">
-            <a href="/">Inicio</a>
+            <a href="/">Início</a>
             
             <a href="/profile.html">Perfil</a>
             <a id="adminNavLink" class="hidden" href="/admin.html">Administrador</a>
@@ -25,8 +25,8 @@
             <p class="kicker">Comunidade gamer</p>
             <h1>Clube do Jogo</h1>
             <p>
-                Indique um jogo que voce zerou, participe do sorteio de quem indica para quem
-                e compartilhe avaliacoes em rodadas.
+                Indique um jogo que você zerou, participe do sorteio de quem indica para quem
+                e compartilhe avaliações em rodadas.
             </p>
         </section>
 
@@ -34,8 +34,9 @@
             <article class="card">
                 <h2>Rodada Atual</h2>
                 <p id="activeRoundText">Carregando status...</p>
-                <div class="inline-actions">
+                <div class="inline-actions home-active-actions">
                     <button id="newRoundBtn" class="btn" type="button">Nova Rodada</button>
+                    <button id="openSuggestionModalBtn" class="btn btn-outline" type="button">Sugestão</button>
                 </div>
                 <p id="homeFeedback" class="feedback"></p>
             </article>
@@ -44,8 +45,8 @@
                 <h2>Como funciona</h2>
                 <ul>
                     <li>1. O criador inicia uma nova rodada e adiciona participantes.</li>
-                    <li>2. O sistema sorteia quem indica para quem sem repeticoes antes da rotacao acabar.</li>
-                    <li>3. Cada participante envia capa, nota e comentario da sua indicacao.</li>
+                    <li>2. O sistema sorteia quem indica para quem sem repetições antes da rotação acabar.</li>
+                    <li>3. Cada participante envia capa, nota e comentário da sua indicação.</li>
                 </ul>
             </article>
         </section>
@@ -75,6 +76,33 @@
                     <div class="naval-axis-x">Interessância</div>
                     <div class="naval-axis-y">Jogabilidade</div>
                 </div>
+            </article>
+        </section>
+
+        <section id="suggestionModal" class="modal hidden" aria-hidden="true">
+            <article class="modal-card suggestion-modal-card">
+                <h3>Enviar sugestão</h3>
+                <form id="suggestionForm" class="suggestion-form">
+                    <label for="suggestionTargetPage">Tela da sugestão</label>
+                    <select id="suggestionTargetPage" name="targetPage" required></select>
+
+                    <label for="suggestionText">Sugestão</label>
+                    <textarea
+                        id="suggestionText"
+                        name="suggestionText"
+                        maxlength="1000"
+                        rows="5"
+                        placeholder="Digite sua sugestão..."
+                        required
+                    ></textarea>
+
+                    <p id="suggestionFormFeedback" class="feedback hidden"></p>
+
+                    <div class="inline-actions suggestion-modal-actions">
+                        <button id="cancelSuggestionBtn" class="btn btn-quiet" type="button">Cancelar</button>
+                        <button id="sendSuggestionBtn" class="btn" type="submit">Enviar</button>
+                    </div>
+                </form>
             </article>
         </section>
     </main>

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -12,12 +12,22 @@
             <img class="auth-top-logo" src="/uploads/site-logo-min.png" alt="Logo Clube do Jogo">
             <p class="kicker">Clube do Jogo</p>
             <h1>Entrar</h1>
-            <p>Acesse para participar das rodadas e indicacoes.</p>
+            <p>Acesse para participar das rodadas e indicações.</p>
             <form id="loginForm">
                 <label>Email</label>
                 <input name="email" type="email" required>
                 <label>Senha</label>
-                <input name="password" type="password" required>
+                <div class="password-field">
+                    <input id="loginPassword" name="password" type="password" required>
+                    <button
+                        class="password-toggle is-hidden"
+                        type="button"
+                        data-password-toggle="loginPassword"
+                        aria-label="Mostrar senha"
+                        title="Mostrar senha"
+                        aria-pressed="false"
+                    ><span class="password-toggle-icon" aria-hidden="true">&#128065;</span></button>
+                </div>
                 <a class="auth-inline-link" href="/forgot-password.html">Esqueci minha senha</a>
                 <div class="auth-form-actions">
                     <button class="btn" type="submit">Entrar</button>

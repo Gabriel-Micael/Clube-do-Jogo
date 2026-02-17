@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -11,24 +11,39 @@
         <section class="auth-card">
             <p class="kicker">Clube do Jogo</p>
             <h1>Criar conta</h1>
-            <p>Depois do cadastro, voce recebera um codigo por email para confirmar.</p>
+            <p>Depois do cadastro, você receberá um código por email para confirmar.</p>
             <form id="registerForm">
-                <label>Nome de usuario</label>
+                <label>Nome de usuário</label>
                 <input name="username" type="text" minlength="3" maxlength="30" required>
+                <p class="field-feedback hidden" data-field-feedback-for="username"></p>
                 <label>Nickname</label>
-                <input name="nickname" type="text" maxlength="30" placeholder="Como aparecera no Clube do Jogo">
+                <input name="nickname" type="text" maxlength="30" placeholder="Como aparecerá no Clube do Jogo">
+                <p class="field-feedback hidden" data-field-feedback-for="nickname"></p>
                 <label>Email</label>
                 <input name="email" type="email" required>
+                <p class="field-feedback hidden" data-field-feedback-for="email"></p>
                 <label>Senha</label>
-                <input name="password" type="password" minlength="8" required>
-                <label>Telefone</label>
-                <input name="phone" type="text" maxlength="30">
-                <button class="btn" type="submit">Cadastrar e enviar codigo</button>
+                <div class="password-field">
+                    <input id="registerPassword" name="password" type="password" minlength="8" required>
+                    <button
+                        class="password-toggle is-hidden"
+                        type="button"
+                        data-password-toggle="registerPassword"
+                        aria-label="Mostrar senha"
+                        title="Mostrar senha"
+                        aria-pressed="false"
+                    ><span class="password-toggle-icon" aria-hidden="true">&#128065;</span></button>
+                </div>
+                <p class="field-feedback hidden" data-field-feedback-for="password"></p>
+                <label>Confirmar senha</label>
+                <input id="registerConfirmPassword" name="confirmPassword" type="password" minlength="8" required>
+                <p class="field-feedback hidden" data-field-feedback-for="confirmPassword"></p>
+                <button class="btn" type="submit">Cadastrar e enviar código</button>
             </form>
             <div class="oauth-divider">ou</div>
             <a id="googleRegisterBtn" class="btn btn-google" href="/auth/google">Cadastrar com Google</a>
             <div class="auth-links">
-                <a href="/login.html">Ja tenho conta</a>
+                <a href="/login.html">Já tenho conta</a>
             </div>
             <p id="feedback" class="feedback"></p>
         </section>

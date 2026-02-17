@@ -72,6 +72,55 @@ const ACHIEVEMENT_DEFINITIONS = [
         description: "indique um jogo de Acao"
     },
     {
+        key: "CGAventura",
+        name: "CGAventura",
+        criterion: "adventure",
+        imageUrl: "/uploads/trofeus/CGAventura.png",
+        description: "indique um jogo de aventura"
+    },
+    {
+        key: "CGDrama",
+        name: "CGDrama",
+        criterion: "drama",
+        imageUrl: "/uploads/trofeus/CGDrama.png",
+        description: "indique um jogo de drama"
+    },
+    {
+        key: "CGNarrativo",
+        name: "CGNarrativo",
+        criterion: "narrative",
+        imageUrl: "/uploads/trofeus/CGNarrativo.png",
+        description: "indique um jogo narrativo"
+    },
+    {
+        key: "CGRPG",
+        name: "CGRPG",
+        criterion: "rpg",
+        imageUrl: "/uploads/trofeus/CGRPG.png",
+        description: "indique um jogo de RPG"
+    },
+    {
+        key: "CGPlataforma",
+        name: "CGPlataforma",
+        criterion: "platform",
+        imageUrl: "/uploads/trofeus/CGPlataforma.png",
+        description: "indique um jogo de plataforma"
+    },
+    {
+        key: "CGCorrida",
+        name: "CGCorrida",
+        criterion: "racing",
+        imageUrl: "/uploads/trofeus/CGCorrida.png",
+        description: "indique um jogo de corrida"
+    },
+    {
+        key: "CGMundoAberto",
+        name: "CGMundoAberto",
+        criterion: "open_world",
+        imageUrl: "/uploads/trofeus/CGMundoAberto.png",
+        description: "indique um jogo de mundo aberto"
+    },
+    {
         key: "CGTiro",
         name: "CGTiro",
         criterion: "shooter",
@@ -117,6 +166,13 @@ const ACHIEVEMENT_DEFINITIONS = [
 
 const ACHIEVEMENT_KEYWORDS = {
     action: ["acao", "action", "hack and slash", "hack n slash", "beat em up", "brawler"],
+    adventure: ["aventura", "adventure"],
+    drama: ["drama", "dramatico", "dramatic", "emocional", "emotional"],
+    narrative: ["narrativo", "narrativa", "narrative", "story rich", "story-driven", "story driven"],
+    rpg: ["rpg", "role playing", "role-playing", "jrpg", "arpg"],
+    platform: ["plataforma", "platformer", "platform"],
+    racing: ["corrida", "racing", "race", "automobilismo"],
+    open_world: ["mundo aberto", "open world", "sandbox"],
     shooter: ["tiro", "shooter", "fps", "tps", "first person shooter", "third person shooter"],
     horror: ["terror", "horror", "survival horror"],
     soulslike: [
@@ -891,6 +947,28 @@ async function initDb() {
     `);
 
     await dbRun(`
+        CREATE TABLE IF NOT EXISTS recommendation_comment_likes (
+            comment_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (comment_id, user_id),
+            FOREIGN KEY (comment_id) REFERENCES recommendation_comments(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    await dbRun(`
+        CREATE TABLE IF NOT EXISTS profile_comment_likes (
+            comment_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (comment_id, user_id),
+            FOREIGN KEY (comment_id) REFERENCES profile_comments(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    await dbRun(`
         CREATE TABLE IF NOT EXISTS recommendation_ratings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             recommendation_id INTEGER NOT NULL UNIQUE,
@@ -1130,6 +1208,24 @@ function requireOwner(req, res, next) {
     }
     return next();
 }
+
+async function listUserRolesForClient() {
+    const users = await dbAll(
+        `SELECT id, email
+         FROM users
+         ORDER BY id ASC`
+    );
+    return users.map((user) => {
+        const isOwner = isOwnerEmail(user.email);
+        return {
+            id: Number(user.id),
+            role: isOwner ? "owner" : "user",
+            is_owner: isOwner,
+            is_moderator: false
+        };
+    });
+}
+
 async function getUserBasicById(userId) {
     return dbGet(
         `SELECT id, username, email, nickname, avatar_url
@@ -1307,7 +1403,9 @@ async function getRoundAssignments(roundId) {
     );
 }
 
-async function getRoundRecommendations(roundId) {
+async function getRoundRecommendations(roundId, currentUserId = 0) {
+    const viewerIdRaw = Number(currentUserId);
+    const viewerId = Number.isInteger(viewerIdRaw) && viewerIdRaw > 0 ? viewerIdRaw : 0;
     const rows = await dbAll(
         `SELECT rec.id, rec.round_id, rec.giver_user_id, rec.receiver_user_id,
                 rec.game_name, rec.game_cover_url, rec.game_description, rec.reason,
@@ -1330,12 +1428,22 @@ async function getRoundRecommendations(roundId) {
     const placeholders = ids.map(() => "?").join(", ");
     const comments = await dbAll(
         `SELECT c.id, c.recommendation_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
-                u.id AS user_id, u.username, u.nickname, u.avatar_url
+                u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                (SELECT COUNT(*) FROM recommendation_comment_likes l WHERE l.comment_id = c.id) AS likes_count,
+                CASE
+                    WHEN ? > 0 AND EXISTS (
+                        SELECT 1
+                        FROM recommendation_comment_likes l2
+                        WHERE l2.comment_id = c.id
+                          AND l2.user_id = ?
+                    ) THEN 1
+                    ELSE 0
+                END AS liked_by_me
          FROM recommendation_comments c
          JOIN users u ON u.id = c.user_id
          WHERE c.recommendation_id IN (${placeholders})
          ORDER BY c.created_at ASC`,
-        ids
+        [viewerId, viewerId, ...ids]
     );
 
     const commentsByRecommendation = new Map();
@@ -1606,16 +1714,28 @@ async function syncUserAchievements(userId, { markNewAsNotified = false } = {}) 
     return payload;
 }
 
-async function getProfileComments(profileUserId) {
+async function getProfileComments(profileUserId, currentUserId = 0) {
+    const viewerIdRaw = Number(currentUserId);
+    const viewerId = Number.isInteger(viewerIdRaw) && viewerIdRaw > 0 ? viewerIdRaw : 0;
     return dbAll(
         `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
-                u.id AS user_id, u.username, u.nickname, u.avatar_url
+                u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                (SELECT COUNT(*) FROM profile_comment_likes l WHERE l.comment_id = c.id) AS likes_count,
+                CASE
+                    WHEN ? > 0 AND EXISTS (
+                        SELECT 1
+                        FROM profile_comment_likes l2
+                        WHERE l2.comment_id = c.id
+                          AND l2.user_id = ?
+                    ) THEN 1
+                    ELSE 0
+                END AS liked_by_me
          FROM profile_comments c
          JOIN users u ON u.id = c.author_user_id
          WHERE c.profile_user_id = ?
          ORDER BY c.created_at DESC
          LIMIT 150`,
-        [profileUserId]
+        [viewerId, viewerId, profileUserId]
     );
 }
 
@@ -1642,7 +1762,7 @@ async function getRoundPayload(roundId, currentUserId) {
             receiver_avatar: null
         };
     });
-    const recommendations = await getRoundRecommendations(roundId);
+    const recommendations = await getRoundRecommendations(roundId, currentUserId);
 
     const myAssignment = assignments.find((item) => item.giver_user_id === currentUserId) || null;
     const myRecommendation =
@@ -2279,10 +2399,54 @@ app.get("/api/user/profile", requireAuth, async (req, res) => {
             return res.status(404).json({ message: "Usuario nao encontrado." });
         }
         user.nickname = normalizeNickname(user.nickname, user.username);
-        return res.json({ profile: user, isOwner: Boolean(req.currentUser?.isOwner) });
+        return res.json({
+            profile: user,
+            isOwner: Boolean(req.currentUser?.isOwner),
+            isModerator: false
+        });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao carregar perfil." });
+    }
+});
+
+app.get("/api/users/roles-map", requireAuth, async (req, res) => {
+    try {
+        const users = await listUserRolesForClient();
+        return res.json({ users });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao carregar papeis de usuarios." });
+    }
+});
+
+app.get("/api/users/roles", requireAuth, async (req, res) => {
+    try {
+        const users = await listUserRolesForClient();
+        return res.json({ users });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao carregar papeis de usuarios." });
+    }
+});
+
+app.get("/api/admin/notification-state", requireAuth, async (req, res) => {
+    try {
+        if (req.currentUser?.isOwner) {
+            return res.json({
+                pendingOwnerActionCount: 0,
+                pendingOwnerActionRequests: [],
+                latestResolvedAdminAction: null
+            });
+        }
+        return res.json({
+            pendingOwnerActionCount: 0,
+            pendingOwnerActionRequests: [],
+            latestResolvedAdminAction: null
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao carregar estado de notificacoes." });
     }
 });
 
@@ -2510,7 +2674,7 @@ app.get("/api/users/:userId/profile-comments", requireAuth, async (req, res) => 
         }
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
         if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
-        const comments = await getProfileComments(userId);
+        const comments = await getProfileComments(userId, req.currentUser.id);
         return res.json({ comments });
     } catch (error) {
         console.error(error);
@@ -2524,7 +2688,7 @@ app.get("/api/user/profile-comments", requireAuth, async (req, res) => {
         const userId = Number.isInteger(rawUserId) && rawUserId > 0 ? rawUserId : req.currentUser.id;
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
         if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
-        const comments = await getProfileComments(userId);
+        const comments = await getProfileComments(userId, req.currentUser.id);
         return res.json({ comments });
     } catch (error) {
         console.error(error);
@@ -2552,7 +2716,9 @@ app.post("/api/users/:userId/profile-comments", requireAuth, async (req, res) =>
         );
         const created = await dbGet(
             `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
-                    u.id AS user_id, u.username, u.nickname, u.avatar_url
+                    u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                    0 AS likes_count,
+                    0 AS liked_by_me
              FROM profile_comments c
              JOIN users u ON u.id = c.author_user_id
              WHERE c.id = ? LIMIT 1`,
@@ -2583,7 +2749,9 @@ app.post("/api/user/profile-comments", requireAuth, async (req, res) => {
         );
         const created = await dbGet(
             `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
-                    u.id AS user_id, u.username, u.nickname, u.avatar_url
+                    u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                    0 AS likes_count,
+                    0 AS liked_by_me
              FROM profile_comments c
              JOIN users u ON u.id = c.author_user_id
              WHERE c.id = ? LIMIT 1`,
@@ -2593,6 +2761,112 @@ app.post("/api/user/profile-comments", requireAuth, async (req, res) => {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao comentar no perfil." });
+    }
+});
+
+app.post("/api/profile-comments/:commentId/like", requireAuth, async (req, res) => {
+    try {
+        const commentId = Number(req.params.commentId);
+        if (!Number.isInteger(commentId) || commentId <= 0) {
+            return res.status(400).json({ message: "Comentario invalido." });
+        }
+        const exists = await dbGet(
+            `SELECT id
+             FROM profile_comments
+             WHERE id = ? LIMIT 1`,
+            [commentId]
+        );
+        if (!exists) {
+            return res.status(404).json({ message: "Comentario nao encontrado." });
+        }
+
+        const existingLike = await dbGet(
+            `SELECT comment_id
+             FROM profile_comment_likes
+             WHERE comment_id = ? AND user_id = ?
+             LIMIT 1`,
+            [commentId, req.currentUser.id]
+        );
+        let liked = false;
+        if (existingLike) {
+            await dbRun(
+                `DELETE FROM profile_comment_likes
+                 WHERE comment_id = ? AND user_id = ?`,
+                [commentId, req.currentUser.id]
+            );
+        } else {
+            liked = true;
+            await dbRun(
+                `INSERT OR IGNORE INTO profile_comment_likes (comment_id, user_id, created_at)
+                 VALUES (?, ?, ?)`,
+                [commentId, req.currentUser.id, nowInSeconds()]
+            );
+        }
+
+        const countRow = await dbGet(
+            `SELECT COUNT(*) AS total
+             FROM profile_comment_likes
+             WHERE comment_id = ?`,
+            [commentId]
+        );
+        const likesCount = Number(countRow?.total || 0);
+        const comment = await dbGet(
+            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
+                    u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                    ? AS likes_count,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM profile_comment_likes l2
+                            WHERE l2.comment_id = c.id
+                              AND l2.user_id = ?
+                        ) THEN 1
+                        ELSE 0
+                    END AS liked_by_me
+             FROM profile_comments c
+             JOIN users u ON u.id = c.author_user_id
+             WHERE c.id = ? LIMIT 1`,
+            [likesCount, req.currentUser.id, commentId]
+        );
+
+        return res.json({
+            liked,
+            likesCount,
+            comment
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao curtir comentario do perfil." });
+    }
+});
+
+app.get("/api/profile-comments/:commentId/likes", requireAuth, async (req, res) => {
+    try {
+        const commentId = Number(req.params.commentId);
+        if (!Number.isInteger(commentId) || commentId <= 0) {
+            return res.status(400).json({ message: "Comentario invalido." });
+        }
+        const exists = await dbGet(
+            `SELECT id
+             FROM profile_comments
+             WHERE id = ? LIMIT 1`,
+            [commentId]
+        );
+        if (!exists) {
+            return res.status(404).json({ message: "Comentario nao encontrado." });
+        }
+        const likes = await dbAll(
+            `SELECT l.user_id, u.username, u.nickname, u.avatar_url, l.created_at
+             FROM profile_comment_likes l
+             JOIN users u ON u.id = l.user_id
+             WHERE l.comment_id = ?
+             ORDER BY l.created_at DESC, COALESCE(u.nickname, u.username) COLLATE NOCASE ASC`,
+            [commentId]
+        );
+        return res.json({ likes });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao carregar curtidas." });
     }
 });
 
@@ -3375,7 +3649,9 @@ app.post("/api/recommendations/:recommendationId/comments", requireAuth, async (
         );
         const created = await dbGet(
             `SELECT c.id, c.recommendation_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
-                    u.id AS user_id, u.username, u.nickname, u.avatar_url
+                    u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                    0 AS likes_count,
+                    0 AS liked_by_me
              FROM recommendation_comments c
              JOIN users u ON u.id = c.user_id
              WHERE c.id = ? LIMIT 1`,
@@ -3417,11 +3693,21 @@ app.put("/api/recommendation-comments/:commentId", requireAuth, async (req, res)
         );
         const updated = await dbGet(
             `SELECT c.id, c.recommendation_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
-                    u.id AS user_id, u.username, u.nickname, u.avatar_url
+                    u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                    (SELECT COUNT(*) FROM recommendation_comment_likes l WHERE l.comment_id = c.id) AS likes_count,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM recommendation_comment_likes l2
+                            WHERE l2.comment_id = c.id
+                              AND l2.user_id = ?
+                        ) THEN 1
+                        ELSE 0
+                    END AS liked_by_me
              FROM recommendation_comments c
              JOIN users u ON u.id = c.user_id
              WHERE c.id = ? LIMIT 1`,
-            [commentId]
+            [req.currentUser.id, commentId]
         );
         return res.json({ message: "Comentario atualizado.", comment: updated });
     } catch (error) {
@@ -3452,11 +3738,123 @@ app.delete("/api/recommendation-comments/:commentId", requireAuth, async (req, r
              WHERE parent_comment_id = ?`,
             [commentId]
         );
+        await dbRun(
+            `DELETE FROM recommendation_comment_likes
+             WHERE comment_id = ?`,
+            [commentId]
+        );
         await dbRun("DELETE FROM recommendation_comments WHERE id = ?", [commentId]);
         return res.json({ message: "Comentario removido.", commentId });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao excluir comentario." });
+    }
+});
+
+app.post("/api/recommendation-comments/:commentId/like", requireAuth, async (req, res) => {
+    try {
+        const commentId = Number(req.params.commentId);
+        if (!Number.isInteger(commentId) || commentId <= 0) {
+            return res.status(400).json({ message: "Comentario invalido." });
+        }
+        const commentExists = await dbGet(
+            `SELECT id
+             FROM recommendation_comments
+             WHERE id = ? LIMIT 1`,
+            [commentId]
+        );
+        if (!commentExists) {
+            return res.status(404).json({ message: "Comentario nao encontrado." });
+        }
+
+        const existingLike = await dbGet(
+            `SELECT comment_id
+             FROM recommendation_comment_likes
+             WHERE comment_id = ? AND user_id = ?
+             LIMIT 1`,
+            [commentId, req.currentUser.id]
+        );
+
+        let liked = false;
+        if (existingLike) {
+            await dbRun(
+                `DELETE FROM recommendation_comment_likes
+                 WHERE comment_id = ? AND user_id = ?`,
+                [commentId, req.currentUser.id]
+            );
+        } else {
+            liked = true;
+            await dbRun(
+                `INSERT OR IGNORE INTO recommendation_comment_likes (comment_id, user_id, created_at)
+                 VALUES (?, ?, ?)`,
+                [commentId, req.currentUser.id, nowInSeconds()]
+            );
+        }
+
+        const countRow = await dbGet(
+            `SELECT COUNT(*) AS total
+             FROM recommendation_comment_likes
+             WHERE comment_id = ?`,
+            [commentId]
+        );
+        const likesCount = Number(countRow?.total || 0);
+        const comment = await dbGet(
+            `SELECT c.id, c.recommendation_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
+                    u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                    ? AS likes_count,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM recommendation_comment_likes l2
+                            WHERE l2.comment_id = c.id
+                              AND l2.user_id = ?
+                        ) THEN 1
+                        ELSE 0
+                    END AS liked_by_me
+             FROM recommendation_comments c
+             JOIN users u ON u.id = c.user_id
+             WHERE c.id = ? LIMIT 1`,
+            [likesCount, req.currentUser.id, commentId]
+        );
+
+        return res.json({
+            liked,
+            likesCount,
+            comment
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao curtir comentario." });
+    }
+});
+
+app.get("/api/recommendation-comments/:commentId/likes", requireAuth, async (req, res) => {
+    try {
+        const commentId = Number(req.params.commentId);
+        if (!Number.isInteger(commentId) || commentId <= 0) {
+            return res.status(400).json({ message: "Comentario invalido." });
+        }
+        const commentExists = await dbGet(
+            `SELECT id
+             FROM recommendation_comments
+             WHERE id = ? LIMIT 1`,
+            [commentId]
+        );
+        if (!commentExists) {
+            return res.status(404).json({ message: "Comentario nao encontrado." });
+        }
+        const likes = await dbAll(
+            `SELECT l.user_id, u.username, u.nickname, u.avatar_url, l.created_at
+             FROM recommendation_comment_likes l
+             JOIN users u ON u.id = l.user_id
+             WHERE l.comment_id = ?
+             ORDER BY l.created_at DESC, COALESCE(u.nickname, u.username) COLLATE NOCASE ASC`,
+            [commentId]
+        );
+        return res.json({ likes });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao carregar curtidas." });
     }
 });
 
@@ -3476,7 +3874,7 @@ app.get("/api/feed/rounds", requireAuth, async (req, res) => {
 
         const result = [];
         for (const round of rounds) {
-            const recommendations = await getRoundRecommendations(round.id);
+            const recommendations = await getRoundRecommendations(round.id, req.currentUser.id);
             let participants = await getRoundParticipantsCompact(round.id);
             if (!participants.length && recommendations.length) {
                 const byId = new Map();

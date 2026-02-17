@@ -12,7 +12,7 @@
             <img class="brand-logo" src="/uploads/site-logo-min.png" alt="Logo Clube do Jogo">
         </a>
         <div class="nav-links">
-            <a href="/">Inicio</a>
+            <a href="/">Início</a>
             
             <a href="/profile.html">Perfil</a>
             <a id="adminNavLink" class="hidden" href="/admin.html">Administrador</a>
@@ -31,21 +31,22 @@
         <section id="draftCreatorSection" class="card hidden">
             <h2>Nova Rodada (Criador)</h2>
             <p>Adicione participantes e depois execute o sorteio.</p>
+            <p id="draftReadonlyHint" class="hidden">Somente o criador e o dono podem editar esta fase.</p>
             <div class="participant-tools">
-                <input id="participantSearch" type="text" placeholder="Buscar usuario ou nickname">
-                <button id="searchParticipantsBtn" class="btn btn-outline" type="button">Buscar</button>
+                <input id="participantSearch" type="text" placeholder="Buscar usuário ou nickname">
+                <button id="searchParticipantsBtn" class="btn btn-outline participant-search-btn" type="button">Buscar</button>
             </div>
             <div id="participantSearchResults" class="search-results"></div>
             <h3>Participantes da rodada</h3>
-            <div id="participantList" class="participant-list"></div>
-            <div id="pairExclusionsSection">
-                <h3>Restricoes de Sorteio</h3>
-                <p>Marque quem NAO pode receber indicacao de cada participante.</p>
+            <div id="participantList" class="participant-list draft-participant-list"></div>
+            <div id="pairExclusionsSection" class="draft-restrictions-box">
+                <h3>Restrições de Sorteio</h3>
+                <p>Marque quem NÃO pode receber indicação de cada participante.</p>
                 <div id="pairExclusionsList" class="pair-exclusions-list"></div>
 
             </div>
-            <div class="inline-actions">
-                <button id="drawBtn" class="btn" type="button">Sortear Indicacoes</button>
+            <div class="inline-actions draft-draw-actions">
+                <button id="drawBtn" class="btn" type="button">Sortear Indicações</button>
             </div>
         </section>
 
@@ -57,26 +58,26 @@
         <section id="revealSection" class="card hidden">
             <h2>Tela de Sorteio</h2>
             <p>
-                Nesta fase todos podem espectar. O nome de quem recebe fica oculto ate o
+                Nesta fase todos podem espectar. O nome de quem recebe fica oculto até o
                 criador revelar.
             </p>
             <div id="revealList" class="participant-list"></div>
             <div id="startIndicationTools" class="hidden">
-                <label>Data/hora para liberar a sessao de notas</label>
+                <label>Data/hora para liberar a sessão de notas</label>
                 <input id="ratingStartsAtInput" type="datetime-local">
-                <button id="startIndicationBtn" class="btn" type="button">Ir para Sessao de Indicacao</button>
+                <button id="startIndicationBtn" class="btn" type="button">Ir para Sessão de Indicação</button>
             </div>
         </section>
 
         <section id="indicationSection" class="card hidden">
             <div class="row-between">
-                <h2>Sessao de Indicacoes</h2>
+                <h2>Sessão de Indicações</h2>
                 <button id="closeRoundBtn" class="btn btn-outline hidden" type="button">Encerrar Rodada</button>
                 <button id="finalizeRoundBtn" class="btn btn-success hidden" type="button">Finalizar Rodada</button>
             </div>
             <p id="assignmentText"></p>
             <div class="mini-tabs">
-                <button id="tabIndicationsBtn" class="mini-tab active" type="button">Indicacoes</button>
+                <button id="tabIndicationsBtn" class="mini-tab active" type="button">Indicações</button>
                 <button id="tabRatingsBtn" class="mini-tab" type="button">Notas Navais</button>
             </div>
 
@@ -99,25 +100,25 @@
                     <input name="steamAppId" type="hidden">
                     <img id="coverPreview" class="cover-preview hidden" alt="Preview da capa">
 
-                    <label>Descricao curta do jogo</label>
+                    <label>Descrição curta do jogo</label>
                     <textarea name="gameDescription" rows="3" maxlength="500" required></textarea>
 
                     <label>Por que a pessoa pode gostar (opcional)</label>
                     <textarea name="reason" rows="3" maxlength="500"></textarea>
 
-                    <button class="btn" type="submit">Salvar Indicacao</button>
+                    <button class="btn" type="submit">Salvar Indicação</button>
                 </form>
 
-                <h3>Indicacoes da Rodada</h3>
+                <h3>Indicações da Rodada</h3>
                 <div id="roundRecommendations" class="recommendation-grid"></div>
             </section>
 
             <section id="tabRatingsPanel" class="mini-tab-panel hidden">
-                <h3>Sessao de Notas Navais</h3>
+                <h3>Sessão de Notas Navais</h3>
                 <p id="ratingStatusText"></p>
 
                 <div id="ratingScheduleEditor" class="rating-schedule-editor hidden">
-                    <label for="ratingStartsAtEditInput">Data/hora da sessao de notas</label>
+                    <label for="ratingStartsAtEditInput">Data/hora da sessão de notas</label>
                     <input id="ratingStartsAtEditInput" type="datetime-local">
                     <button id="updateRatingStartsAtBtn" class="btn btn-outline" type="button">Atualizar Data das Notas</button>
                 </div>

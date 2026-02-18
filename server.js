@@ -1040,18 +1040,6 @@ async function nicknameExists(nickname, excludeUserId = 0) {
     return Boolean(exists);
 }
 
-async function pendingNicknameExists(nickname) {
-    const clean = sanitizeText(nickname, 30);
-    if (!clean) return false;
-    const exists = await dbGet(
-        `SELECT email FROM pending_registrations
-         WHERE LOWER(COALESCE(nickname, '')) = LOWER(?)
-         LIMIT 1`,
-        [clean]
-    );
-    return Boolean(exists);
-}
-
 async function generateAvailableNickname(seedText, fallbackUsername) {
     const baseSeed = sanitizeText(seedText, 30) || nicknameFromUsername(fallbackUsername);
     const compactBase = sanitizeText(baseSeed.replace(/\s+/g, " "), 30) || "Jogador";
@@ -1061,9 +1049,7 @@ async function generateAvailableNickname(seedText, fallbackUsername) {
         const candidate = sanitizeText(`${compactBase}${suffix}`, 30);
         if (!candidate) continue;
         const inUsers = await nicknameExists(candidate);
-        if (inUsers) continue;
-        const inPending = await pendingNicknameExists(candidate);
-        if (!inPending) return candidate;
+        if (!inUsers) return candidate;
     }
 
     return sanitizeText(`${compactBase} ${Date.now().toString().slice(-4)}`, 30) || "Jogador";
@@ -3120,11 +3106,6 @@ async function assertNicknameAvailable(nickname, excludeUserId = 0) {
     const inUsers = await nicknameExists(clean, excludeUserId);
     if (inUsers) {
         throw new Error("Nickname ja esta em uso.");
-    }
-
-    const inPending = await pendingNicknameExists(clean);
-    if (inPending) {
-        throw new Error("Nickname ja esta reservado em um cadastro pendente.");
     }
 }
 

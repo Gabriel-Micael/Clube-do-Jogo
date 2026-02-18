@@ -448,6 +448,31 @@ body[data-page="admin"] .admin-user-item .admin-achievement-tools .admin-achieve
     user-select: none;
 }
 
+body[data-page="admin"] .admin-round-item {
+    align-items: stretch;
+    flex-wrap: wrap;
+}
+
+body[data-page="admin"] .admin-round-item > div:first-child {
+    flex: 1 1 280px;
+    min-width: 0;
+}
+
+body[data-page="admin"] .admin-round-actions {
+    flex: 0 1 320px;
+    width: min(320px, 100%);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+    align-items: stretch;
+}
+
+body[data-page="admin"] .admin-round-actions .btn {
+    width: 100%;
+    min-height: 42px;
+    margin: 0;
+}
+
 body[data-page="admin"] .admin-user-item .admin-achievement-tools .admin-achievement-options-link:hover {
     color: var(--text);
     text-decoration-color: rgba(245, 248, 255, 0.7);

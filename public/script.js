@@ -102,13 +102,32 @@ function ensureRawgAttributionLink() {
 
 function normalizeTextArtifacts(value) {
     let text = String(value ?? "");
-    if (!text || !/[\u00C3\u00C2\u00E2]/.test(text)) return text;
+    const hasMojibake = /[\u00C3\u00C2\u00E2]/.test(text);
+    const hasBrokenQuestion = /[A-Za-zÀ-ÿ]\?[A-Za-zÀ-ÿ]/.test(text);
+    if (!text || (!hasMojibake && !hasBrokenQuestion)) return text;
     try {
         const repaired = decodeURIComponent(escape(text));
         if (repaired) text = repaired;
     } catch {
         // Mantem texto original quando nao for possivel reparar.
     }
+    text = text
+        .replace(/\bNao\b/g, "Não")
+        .replace(/\bnao\b/g, "não")
+        .replace(/\bVoce\b/g, "Você")
+        .replace(/\bvoce\b/g, "você")
+        .replace(/solicita\?\?o/gi, (m) => (m[0] === "S" ? "Solicitação" : "solicitação"))
+        .replace(/a\?\?o/gi, (m) => (m[0] === "A" ? "Ação" : "ação"))
+        .replace(/inv\?lid([ao])/gi, (_m, end) => `inválid${end}`)
+        .replace(/Inv\?lid([ao])/g, (_m, end) => `Inválid${end}`)
+        .replace(/usu\?rio/gi, (m) => (m[0] === "U" ? "Usuário" : "usuário"))
+        .replace(/coment\?rio/gi, (m) => (m[0] === "C" ? "Comentário" : "comentário"))
+        .replace(/sugest\?o/gi, (m) => (m[0] === "S" ? "Sugestão" : "sugestão"))
+        .replace(/decis\?o/gi, (m) => (m[0] === "D" ? "Decisão" : "decisão"))
+        .replace(/pap\?is/gi, (m) => (m[0] === "P" ? "Papéis" : "papéis"))
+        .replace(/c\?digo/gi, (m) => (m[0] === "C" ? "Código" : "código"))
+        .replace(/n\?o/gi, (m) => (m[0] === "N" ? "Não" : "não"))
+        .replace(/h\?/gi, (m) => (m[0] === "H" ? "Há" : "há"));
     text = text.replaceAll("\uFFFD", "");
     return text;
 }
@@ -3684,14 +3703,14 @@ function updateHomeRoundStatus(activeRound) {
             newBtn.classList.add("btn-success");
             newBtn.classList.remove("btn-disabled");
         } else {
-            textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled})`;
+            textEl.innerHTML = `Esperar Nova Rodada (${creatorNameStyled})`;
             newBtn.disabled = false;
             newBtn.textContent = "Ver Rodada em Andamento";
             newBtn.classList.add("btn-success");
             newBtn.classList.remove("btn-disabled");
         }
     } else if (activePhase === "reveal") {
-        textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled}) - fase de revelação.`;
+        textEl.innerHTML = `Esperar Nova Rodada (${creatorNameStyled}) - fase de revelação.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
@@ -3720,6 +3739,7 @@ function scheduleHomePhaseRefresh(activeRound) {
     const status = String(activeRound?.status || "");
     if (!ts || status !== "indication") return;
     const now = Math.floor(Date.now() / 1000);
+    if (ts <= now) return;
     const delayMs = Math.max(0, (ts - now) * 1000 + 120);
     homePhaseRefreshTimer = window.setTimeout(() => {
         Promise.all([refreshHomeActive(), refreshHomeFeed()]).catch(() => {
@@ -4795,15 +4815,17 @@ async function refreshRoundData(forceRoundId, options = {}) {
     const roundStatus = String(currentRound?.status || "");
     if (roundStatus === "indication" && ratingStartsAt > 0) {
         const now = Math.floor(Date.now() / 1000);
-        const delayMs = Math.max(0, (ratingStartsAt - now) * 1000 + 120);
-        roundPhaseRefreshTimer = window.setTimeout(() => {
-            if (!currentRound?.id) return;
-            refreshRoundData(currentRound.id, {
-                skipUserSearchReload: canManageDraftRound(currentRound)
-            }).catch(() => {
-                // sem acao
-            });
-        }, delayMs);
+        if (ratingStartsAt > now) {
+            const delayMs = Math.max(0, (ratingStartsAt - now) * 1000 + 120);
+            roundPhaseRefreshTimer = window.setTimeout(() => {
+                if (!currentRound?.id) return;
+                refreshRoundData(currentRound.id, {
+                    skipUserSearchReload: canManageDraftRound(currentRound)
+                }).catch(() => {
+                    // sem acao
+                });
+            }, delayMs);
+        }
     }
     if (canManageDraftRound(currentRound) && !skipUserSearchReload) {
         await loadUsersForRound(byId("participantSearch")?.value || "");
@@ -5180,7 +5202,7 @@ async function handleRoundPage() {
             const result = await sendForm(`/api/rounds/${currentRound.id}/recommendations`, data);
             currentRound = result.round;
             renderRoundState(currentRound);
-            setFeedback("roundFeedback", "Indicação salva sem precisar atualizar a página.", "ok");
+            setFeedback("roundFeedback", result.message || "Indicação salva sem precisar atualizar a página.", "ok");
             showAchievementUnlockNotifications(result.newlyUnlocked || []);
             claimAchievementUnlocksAndNotify();
         } catch (error) {

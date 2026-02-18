@@ -170,7 +170,19 @@ const ACHIEVEMENT_KEYWORDS = {
     drama: ["drama", "dramatico", "dramatic", "emocional", "emotional"],
     narrative: ["narrativo", "narrativa", "narrative", "story rich", "story-driven", "story driven"],
     rpg: ["rpg", "role playing", "role-playing", "jrpg", "arpg"],
-    platform: ["plataforma", "platformer", "platform"],
+    platform: [
+        "plataforma",
+        "jogo de plataforma",
+        "platformer",
+        "platforming",
+        "platform adventure",
+        "2d platformer",
+        "3d platformer",
+        "side scroller",
+        "side-scroller",
+        "sidescroller",
+        "metroidvania"
+    ],
     racing: ["corrida", "racing", "race", "automobilismo"],
     open_world: ["mundo aberto", "open world", "sandbox"],
     shooter: ["tiro", "shooter", "fps", "tps", "first person shooter", "third person shooter"],
@@ -685,6 +697,23 @@ function collectSteamGenreLabels(data) {
     return [...new Set(combined)];
 }
 
+function mergeGenreLabels(...labelLists) {
+    const byNormalized = new Map();
+    for (const list of labelLists) {
+        const labels = Array.isArray(list) ? list : [];
+        for (const rawLabel of labels) {
+            const cleaned = sanitizeText(rawLabel, 80);
+            if (!cleaned) continue;
+            const normalized = normalizeMatchText(cleaned);
+            if (!normalized) continue;
+            if (!byNormalized.has(normalized)) {
+                byNormalized.set(normalized, cleaned);
+            }
+        }
+    }
+    return [...byNormalized.values()];
+}
+
 async function getSteamAppDetails(appId) {
     const numericAppId = Number(appId);
     if (!Number.isInteger(numericAppId) || numericAppId <= 0) return null;
@@ -701,23 +730,25 @@ async function getSteamAppDetails(appId) {
         let genres = collectSteamGenreLabels(data);
         let releaseYear = parseSteamReleaseYear(data?.release_date?.date || "");
 
-        if (!description || seemsMostlyEnglishText(description)) {
-            const rawgDetails = await getRawgGameDetailsByName(name);
-            const rawgDescription = sanitizeText(rawgDetails?.description || "", 600);
-            if (rawgDescription && seemsPortugueseText(rawgDescription)) {
-                description = rawgDescription;
-            }
-            if ((!genres || !genres.length) && Array.isArray(rawgDetails?.genres) && rawgDetails.genres.length) {
-                genres = rawgDetails.genres.map((item) => sanitizeText(item, 80)).filter(Boolean);
-            }
-            if ((!releaseYear || releaseYear <= 0) && Number(rawgDetails?.releaseYear) > 0) {
-                releaseYear = Number(rawgDetails.releaseYear);
-            }
+        const rawgDetails = await getRawgGameDetailsByName(name);
+        const rawgDescription = sanitizeText(rawgDetails?.description || "", 600);
+        const rawgGenres = Array.isArray(rawgDetails?.genres)
+            ? rawgDetails.genres.map((item) => sanitizeText(item, 80)).filter(Boolean)
+            : [];
+
+        if (rawgDescription && (!description || seemsMostlyEnglishText(description)) && seemsPortugueseText(rawgDescription)) {
+            description = rawgDescription;
+        }
+
+        genres = mergeGenreLabels(genres, rawgGenres);
+
+        if ((!releaseYear || releaseYear <= 0) && Number(rawgDetails?.releaseYear) > 0) {
+            releaseYear = Number(rawgDetails.releaseYear);
         }
 
         return {
             appId: numericAppId,
-            source: "steam",
+            source: rawgDetails ? "steam+rawg" : "steam",
             name,
             description,
             headerImage: data.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${numericAppId}/header.jpg`,
@@ -820,19 +851,32 @@ async function getSteamAppDetailsByName(gameName) {
     }
 }
 
-async function getRawgGameDescriptionById(gameId) {
+async function getRawgGameMetadataById(gameId) {
     const numericId = Number(gameId);
-    if (!Number.isInteger(numericId) || numericId <= 0) return "";
-    if (!rawgApiKey) return "";
+    if (!Number.isInteger(numericId) || numericId <= 0) return null;
+    if (!rawgApiKey) return null;
     try {
         const endpoint = `https://api.rawg.io/api/games/${numericId}?key=${encodeURIComponent(rawgApiKey)}&lang=pt-br`;
         const response = await fetch(endpoint);
-        if (!response.ok) return "";
+        if (!response.ok) return null;
         const payload = await response.json();
         const raw = payload?.description_raw || payload?.description || "";
-        return sanitizeText(stripHtmlTags(raw), 600);
+        const genres = (Array.isArray(payload?.genres) ? payload.genres : [])
+            .map((genre) => sanitizeText(genre?.name || "", 60))
+            .filter(Boolean);
+        const tags = (Array.isArray(payload?.tags) ? payload.tags : [])
+            .map((tag) => sanitizeText(tag?.name || "", 60))
+            .filter(Boolean);
+        return {
+            description: sanitizeText(stripHtmlTags(raw), 600),
+            genres,
+            tags,
+            releaseYear: parseYearFromText(sanitizeText(payload?.released || "", 20)),
+            image: sanitizeText(payload?.background_image || "", 400),
+            name: sanitizeText(payload?.name || "", 120)
+        };
     } catch {
-        return "";
+        return null;
     }
 }
 
@@ -864,24 +908,36 @@ async function getRawgGameDetailsByName(gameName) {
         }
         if (!best || bestScore < 45) return null;
 
-        const genres = (Array.isArray(best.genres) ? best.genres : [])
+        const searchGenres = (Array.isArray(best.genres) ? best.genres : [])
             .map((genre) => sanitizeText(genre?.name || "", 60))
             .filter(Boolean);
-        const releaseYear = parseYearFromText(sanitizeText(best.released || "", 20));
-        const image = sanitizeText(best.background_image || "", 400);
-        let description = await getRawgGameDescriptionById(best.id);
+        const searchTags = (Array.isArray(best.tags) ? best.tags : [])
+            .map((tag) => sanitizeText(tag?.name || "", 60))
+            .filter(Boolean);
+        const expanded = await getRawgGameMetadataById(best.id);
+        const releaseYear = Number(expanded?.releaseYear || 0) > 0
+            ? Number(expanded.releaseYear)
+            : parseYearFromText(sanitizeText(best.released || "", 20));
+        const image = sanitizeText(expanded?.image || best.background_image || "", 400);
+        let description = sanitizeText(expanded?.description || "", 600);
         if (!description) {
             description = sanitizeText(stripHtmlTags(best.description_raw || best.description || ""), 600);
         }
+        const mergedGenres = mergeGenreLabels(
+            searchGenres,
+            searchTags,
+            expanded?.genres || [],
+            expanded?.tags || []
+        );
 
         const details = {
             appId: null,
             source: "rawg",
-            name: sanitizeText(best.name || cleaned, 120),
+            name: sanitizeText(expanded?.name || best.name || cleaned, 120),
             description,
             headerImage: image,
             libraryImage: image,
-            genres: [...new Set(genres)],
+            genres: mergedGenres,
             releaseYear: releaseYear > 0 ? releaseYear : null
         };
         rawgMetadataCache.set(cacheKey, { value: details, cachedAt: Date.now() });
@@ -893,9 +949,48 @@ async function getRawgGameDetailsByName(gameName) {
 }
 
 async function resolveManualGameMetadataByName(gameName) {
-    const fromRawg = await getRawgGameDetailsByName(gameName);
-    if (fromRawg) return fromRawg;
-    return getSteamAppDetailsByName(gameName);
+    const cleaned = sanitizeText(gameName, 120);
+    if (cleaned.length < 2) return null;
+
+    const [fromRawg, fromSteam] = await Promise.all([
+        getRawgGameDetailsByName(cleaned),
+        getSteamAppDetailsByName(cleaned)
+    ]);
+    if (!fromRawg && !fromSteam) return null;
+
+    const steamName = sanitizeText(fromSteam?.name || "", 120);
+    const rawgName = sanitizeText(fromRawg?.name || "", 120);
+    const steamDescription = sanitizeText(fromSteam?.description || "", 600);
+    const rawgDescription = sanitizeText(fromRawg?.description || "", 600);
+
+    let description = steamDescription;
+    if ((!description || seemsMostlyEnglishText(description)) && rawgDescription) {
+        if (seemsPortugueseText(rawgDescription) || !description) {
+            description = rawgDescription;
+        }
+    }
+    if (!description) {
+        description = rawgDescription || steamDescription;
+    }
+
+    const mergedGenres = mergeGenreLabels(fromSteam?.genres || [], fromRawg?.genres || []);
+    const steamYear = Number(fromSteam?.releaseYear || 0);
+    const rawgYear = Number(fromRawg?.releaseYear || 0);
+    const releaseYear = steamYear > 0 ? steamYear : (rawgYear > 0 ? rawgYear : 0);
+
+    return {
+        appId: Number(fromSteam?.appId || 0) || null,
+        source: fromSteam && fromRawg ? "steam+rawg" : (fromSteam ? "steam" : "rawg"),
+        name: steamName || rawgName || cleaned,
+        description,
+        headerImage: sanitizeText(fromSteam?.headerImage || fromRawg?.headerImage || "", 400),
+        libraryImage: sanitizeText(
+            fromSteam?.libraryImage || fromSteam?.headerImage || fromRawg?.libraryImage || fromRawg?.headerImage || "",
+            400
+        ),
+        genres: mergedGenres,
+        releaseYear: releaseYear > 0 ? releaseYear : null
+    };
 }
 
 function randomSecretHex() {
@@ -2014,6 +2109,21 @@ function detectRecommendationSignals(recommendation) {
         name.includes(winnerName) || winnerName.includes(name)
     );
     const awardsByKeyword = containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.awards);
+    const platformSpecificKeywords = [
+        "platformer",
+        "platforming",
+        "platform adventure",
+        "metroidvania",
+        "2d platformer",
+        "3d platformer",
+        "side scroller",
+        "side-scroller",
+        "jogo de plataforma"
+    ];
+    const hasPlatformSpecific = containsAnyKeyword(allText, platformSpecificKeywords);
+    const hasPlatformGeneric = containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.platform);
+    const hasRacing = containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.racing);
+    const platformDetected = hasPlatformSpecific || (hasPlatformGeneric && !hasRacing);
 
     return {
         action: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.action),
@@ -2021,8 +2131,8 @@ function detectRecommendationSignals(recommendation) {
         drama: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.drama),
         narrative: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.narrative),
         rpg: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.rpg),
-        platform: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.platform),
-        racing: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.racing),
+        platform: platformDetected,
+        racing: hasRacing,
         open_world: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.open_world),
         shooter: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.shooter),
         horror: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.horror),
@@ -4937,6 +5047,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                  WHERE round_id = ? AND giver_user_id = ? LIMIT 1`,
                 [roundId, req.session.userId]
             );
+            const isUpdate = Boolean(existing);
 
             let gameCoverUrl = coverUrlFromBody || "";
             if (req.file) {
@@ -5054,7 +5165,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
             let newlyUnlocked = [];
             try {
                 const achievementPayload = await syncUserAchievements(req.session.userId, {
-                    markNewAsNotified: false
+                    markNewAsNotified: true
                 });
                 newlyUnlocked = achievementPayload?.newlyUnlocked || [];
             } catch (achievementError) {
@@ -5066,7 +5177,11 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 roundId,
                 actorUserId: Number(req.session.userId) || 0
             });
-            return res.json({ message: "Indicação salva com sucesso.", round: payload, newlyUnlocked });
+            return res.json({
+                message: isUpdate ? "Indicação atualizada com sucesso." : "Indicação salva com sucesso.",
+                round: payload,
+                newlyUnlocked
+            });
         } catch (submitError) {
             console.error(submitError);
             return res.status(500).json({ message: "Erro ao salvar indicação." });

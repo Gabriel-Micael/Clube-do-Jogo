@@ -44,6 +44,10 @@ let achievementClaimInFlight = false;
 let achievementSound = null;
 const achievementAccentColorCache = new Map();
 const recentAchievementToastKeys = new Map();
+const achievementToastPendingQueue = [];
+let achievementToastQueueTimer = 0;
+const achievementToastQueueIntervalMs = 2000;
+const achievementToastNavigationStateKey = "achievement-toast-navigation-state-v1";
 let adminNotificationEventSource = null;
 let adminNotificationUnloadBound = false;
 let adminNotificationSyncBound = false;
@@ -425,6 +429,68 @@ function profileUrlByUserId(userId) {
     const numericUserId = Number(userId);
     if (!Number.isInteger(numericUserId) || numericUserId <= 0) return "/profile.html";
     return `/profile.html?userId=${numericUserId}`;
+}
+
+function normalizeAchievementKey(value) {
+    const rawValue = String(value || "").trim().toLowerCase();
+    if (!rawValue) return "";
+    const match = achievementKeysOrdered.find((item) => item.toLowerCase() === rawValue);
+    return match || "";
+}
+
+function profileAchievementsUrl(achievementLike = "") {
+    const url = new URL("/profile.html", window.location.origin);
+    const achievementKey = normalizeAchievementKey(achievementLike);
+    if (achievementKey) {
+        url.searchParams.set("achievement", achievementKey);
+    }
+    url.hash = "profileAchievementsSection";
+    return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function focusProfileAchievement(achievementLike = "", behavior = "smooth") {
+    const section = byId("profileAchievementsSection");
+    if (section) {
+        section.scrollIntoView({ behavior, block: "start" });
+    }
+
+    const achievementKey = normalizeAchievementKey(achievementLike);
+    if (!achievementKey) return;
+    const achievementItems = [...document.querySelectorAll("#achievementsGrid [data-achievement-key]")];
+    const targetItem = achievementItems.find((item) => {
+        if (!(item instanceof HTMLElement)) return false;
+        return String(item.getAttribute("data-achievement-key") || "").toLowerCase() === achievementKey.toLowerCase();
+    });
+    if (!(targetItem instanceof HTMLElement)) return;
+    targetItem.classList.remove("achievement-item-focus");
+    void targetItem.offsetWidth;
+    targetItem.classList.add("achievement-item-focus");
+    window.setTimeout(() => {
+        targetItem.classList.remove("achievement-item-focus");
+    }, 2200);
+}
+
+function openAchievementInProfile(achievementLike = "") {
+    const achievementKey = normalizeAchievementKey(achievementLike);
+    const viewedUserId = Number(getQueryParam("userId") || 0);
+    const viewingOwnProfile = page === "profile" && (!Number.isInteger(viewedUserId) || viewedUserId <= 0);
+
+    if (viewingOwnProfile) {
+        const currentUrl = new URL(window.location.href);
+        if (achievementKey) {
+            currentUrl.searchParams.set("achievement", achievementKey);
+        } else {
+            currentUrl.searchParams.delete("achievement");
+        }
+        currentUrl.hash = "profileAchievementsSection";
+        window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+        focusProfileAchievement(achievementKey);
+        return false;
+    }
+
+    persistPendingAchievementToastsForNavigation();
+    window.location.href = profileAchievementsUrl(achievementKey);
+    return true;
 }
 
 function userLinkHtml(userLike, userId) {
@@ -2043,6 +2109,77 @@ function playAchievementUnlockSound() {
     });
 }
 
+function achievementToastDedupeKey(achievement) {
+    return String(
+        achievement?.key
+        || achievement?.name
+        || `${achievement?.imageUrl || ""}:${achievement?.description || ""}`
+    ).trim().toLowerCase();
+}
+
+function normalizeAchievementToastPayload(achievement) {
+    if (!achievement || typeof achievement !== "object") return null;
+    const payload = {
+        key: String(achievement?.key || "").trim(),
+        name: String(achievement?.name || "").trim(),
+        imageUrl: String(achievement?.imageUrl || "").trim(),
+        description: String(achievement?.description || "").trim()
+    };
+    if (!payload.key && !payload.name && !payload.imageUrl && !payload.description) {
+        return null;
+    }
+    return payload;
+}
+
+function scheduleNextAchievementToast() {
+    if (achievementToastQueueTimer || !achievementToastPendingQueue.length) return;
+    const achievement = achievementToastPendingQueue.shift();
+    showAchievementUnlockNotification(achievement);
+    if (!achievementToastPendingQueue.length) return;
+    achievementToastQueueTimer = window.setTimeout(() => {
+        achievementToastQueueTimer = 0;
+        scheduleNextAchievementToast();
+    }, achievementToastQueueIntervalMs);
+}
+
+function persistPendingAchievementToastsForNavigation() {
+    try {
+        const pending = achievementToastPendingQueue
+            .map((achievement) => normalizeAchievementToastPayload(achievement))
+            .filter(Boolean);
+        if (!pending.length) {
+            window.sessionStorage.removeItem(achievementToastNavigationStateKey);
+            return;
+        }
+        window.sessionStorage.setItem(
+            achievementToastNavigationStateKey,
+            JSON.stringify({
+                expiresAt: Date.now() + 1000 * 45,
+                achievements: pending
+            })
+        );
+    } catch {
+        // sessionStorage pode falhar em ambientes restritos.
+    }
+}
+
+function restorePendingAchievementToastsAfterNavigation() {
+    try {
+        const raw = window.sessionStorage.getItem(achievementToastNavigationStateKey);
+        if (!raw) return;
+        window.sessionStorage.removeItem(achievementToastNavigationStateKey);
+
+        const parsed = JSON.parse(raw);
+        const expiresAt = Number(parsed?.expiresAt || 0);
+        if (!Number.isInteger(expiresAt) || Date.now() > expiresAt) return;
+        const achievements = Array.isArray(parsed?.achievements) ? parsed.achievements : [];
+        if (!achievements.length) return;
+        showAchievementUnlockNotifications(achievements);
+    } catch {
+        // ignora estado de navegação inválido.
+    }
+}
+
 function showAchievementUnlockNotification(achievement) {
     const stack = ensureAchievementToastStack();
     const existingToasts = [...stack.querySelectorAll(".achievement-toast")];
@@ -2050,9 +2187,14 @@ function showAchievementUnlockNotification(achievement) {
         existingToasts.map((item) => [item, item.getBoundingClientRect().top])
     );
     const description = String(achievement?.description || "").trim();
+    const achievementKey = String(achievement?.key || achievement?.name || "").trim();
+    const achievementTitle = String(achievement?.name || "Nova conquista").trim();
 
     const toast = document.createElement("article");
     toast.className = "achievement-toast";
+    toast.tabIndex = 0;
+    toast.setAttribute("role", "button");
+    toast.setAttribute("aria-label", `Abrir perfil para ver a conquista ${achievementTitle || "desbloqueada"}`);
     toast.innerHTML = `
         <img src="${escapeHtml(achievement.imageUrl || baseAvatar)}" alt="${escapeHtml(achievement.name || "Conquista")}">
         <div>
@@ -2061,6 +2203,15 @@ function showAchievementUnlockNotification(achievement) {
             ${description ? `<p class="achievement-toast-description">${escapeHtml(description)}</p>` : ""}
         </div>
     `;
+    const openProfileFromToast = () => {
+        openAchievementInProfile(achievementKey);
+    };
+    toast.addEventListener("click", openProfileFromToast);
+    toast.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        openProfileFromToast();
+    });
     stack.prepend(toast);
 
     requestAnimationFrame(() => {
@@ -2108,23 +2259,20 @@ function showAchievementUnlockNotifications(achievements) {
 
     const queue = [];
     achievements.forEach((achievement) => {
-        const dedupeKey = String(
-            achievement?.key
-            || achievement?.name
-            || `${achievement?.imageUrl || ""}:${achievement?.description || ""}`
-        ).trim().toLowerCase();
+        const normalizedAchievement = normalizeAchievementToastPayload(achievement);
+        if (!normalizedAchievement) return;
+        const dedupeKey = achievementToastDedupeKey(normalizedAchievement);
         if (!dedupeKey) {
-            queue.push(achievement);
+            queue.push(normalizedAchievement);
             return;
         }
         if (recentAchievementToastKeys.has(dedupeKey)) return;
         recentAchievementToastKeys.set(dedupeKey, now);
-        queue.push(achievement);
+        queue.push(normalizedAchievement);
     });
 
-    queue.forEach((achievement, index) => {
-        setTimeout(() => showAchievementUnlockNotification(achievement), index * 2000);
-    });
+    achievementToastPendingQueue.push(...queue);
+    scheduleNextAchievementToast();
 }
 
 async function claimAchievementUnlocksAndNotify() {
@@ -3061,6 +3209,15 @@ async function loadProfile() {
         renderProfileActivity(profileView.activity);
         renderProfileAchievements(profileAchievements);
         renderProfileComments(profileComments.comments || []);
+        const requestedAchievementKey = normalizeAchievementKey(getQueryParam("achievement"));
+        const shouldFocusAchievements =
+            Boolean(requestedAchievementKey)
+            || String(window.location.hash || "") === "#profileAchievementsSection";
+        if (shouldFocusAchievements) {
+            window.requestAnimationFrame(() => {
+                focusProfileAchievement(requestedAchievementKey || "", "smooth");
+            });
+        }
         resetProfileCommentFormState();
         return { ...data, canEdit };
     }
@@ -5256,6 +5413,7 @@ async function init() {
         } catch {
             // sem mapa de cargos, segue com nomes basicos
         }
+        restorePendingAchievementToastsAfterNavigation();
         claimAchievementUnlocksAndNotify();
         startRoundRealtimeStream();
     }

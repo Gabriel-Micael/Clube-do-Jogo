@@ -83,9 +83,6 @@
 
             <section id="tabIndicationsPanel" class="mini-tab-panel">
                 <form id="recommendationForm" class="hidden">
-                    <label>Nome do jogo</label>
-                    <input name="gameName" type="text" maxlength="120" required>
-
                     <div class="steam-search-block">
                         <label>Buscar na Steam (opcional)</label>
                         <div class="steam-search-shell">
@@ -93,6 +90,9 @@
                             <div id="steamResults" class="search-results steam-results-dropdown hidden"></div>
                         </div>
                     </div>
+
+                    <label>Nome do jogo</label>
+                    <input name="gameName" type="text" maxlength="120" required>
 
                     <label>Capa do jogo (upload)</label>
                     <input id="coverInput" name="cover" type="file" accept="image/*">

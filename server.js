@@ -2028,6 +2028,7 @@ async function countCompletedRoundsForUser(userId, gatedAfter = 0) {
                 FROM recommendations rec
                 WHERE rec.round_id = r.id
                   AND rec.giver_user_id = ?
+                  AND COALESCE(rec.updated_at, rec.created_at, 0) > ?
            )
            AND EXISTS (
                 SELECT 1
@@ -2036,8 +2037,9 @@ async function countCompletedRoundsForUser(userId, gatedAfter = 0) {
                 WHERE rec2.round_id = r.id
                   AND rec2.receiver_user_id = ?
                   AND rr.rater_user_id = ?
+                  AND COALESCE(rr.updated_at, rr.created_at, 0) > ?
            )`,
-        [gate, userId, userId, userId]
+        [gate, userId, gate, userId, userId, gate]
     );
     return Number(row?.total || 0);
 }
@@ -2049,14 +2051,21 @@ async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter =
          FROM recommendations rec
          JOIN rounds r ON r.id = rec.round_id
          WHERE rec.giver_user_id = ?
-           AND r.status = 'closed'
-           AND COALESCE(r.reopened_count, 0) = 0
-           AND COALESCE(r.closed_at, r.created_at, 0) > ?
+           AND (
+                (r.status = 'closed'
+                 AND COALESCE(r.reopened_count, 0) = 0
+                 AND COALESCE(r.closed_at, r.created_at, 0) > ?)
+                OR (
+                    r.status <> 'closed'
+                    AND COALESCE(rec.updated_at, rec.created_at, 0) > ?
+                )
+           )
+           AND COALESCE(rec.updated_at, rec.created_at, 0) > ?
            AND COALESCE(rec.steam_app_id, '') <> ''
            AND (rec.game_release_year IS NULL OR rec.game_release_year <= 0 OR COALESCE(rec.game_genres, '') = '')
          ORDER BY rec.id DESC
          LIMIT 24`,
-        [userId, gate]
+        [userId, gate, gate, gate]
     );
     for (const row of missing) {
         const appId = sanitizeText(row?.steam_app_id || "", 20);
@@ -2136,9 +2145,16 @@ async function getRecommendationAchievementSignals(userId, gatedAfter = 0) {
          FROM recommendations rec
          JOIN rounds r ON r.id = rec.round_id
          WHERE rec.giver_user_id = ?
-           AND COALESCE(r.reopened_count, 0) = 0
-           AND COALESCE(r.closed_at, r.created_at, 0) > ?`,
-        [userId, gate]
+           AND (
+                (COALESCE(r.reopened_count, 0) = 0
+                 AND COALESCE(r.closed_at, r.created_at, 0) > ?)
+                OR (
+                    r.status <> 'closed'
+                    AND COALESCE(rec.updated_at, rec.created_at, 0) > ?
+                )
+           )
+           AND COALESCE(rec.updated_at, rec.created_at, 0) > ?`,
+        [userId, gate, gate, gate]
     );
 
     const aggregate = {
@@ -2181,10 +2197,19 @@ async function countRatedRecommendationsForUser(userId, gatedAfter = 0) {
     const gate = Number(gatedAfter || 0);
     const row = await dbGet(
         `SELECT COUNT(*) AS total
-         FROM recommendation_ratings
-         WHERE rater_user_id = ?
-           AND COALESCE(updated_at, created_at, 0) > ?`,
-        [userId, gate]
+         FROM recommendation_ratings rr
+         JOIN recommendations rec ON rec.id = rr.recommendation_id
+         JOIN rounds r ON r.id = rec.round_id
+         WHERE rr.rater_user_id = ?
+           AND rec.receiver_user_id = ?
+           AND COALESCE(rr.updated_at, rr.created_at, 0) > ?
+           AND (
+                (r.status = 'closed'
+                 AND COALESCE(r.reopened_count, 0) = 0
+                 AND COALESCE(r.closed_at, r.created_at, 0) > ?)
+                OR r.status <> 'closed'
+           )`,
+        [userId, userId, gate, gate]
     );
     return Number(row?.total || 0);
 }

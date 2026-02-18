@@ -1114,6 +1114,35 @@ input[readonly] {
     overflow: hidden;
 }
 
+.achievement-item-focus {
+    animation: achievement-item-focus-pulse 1.8s ease;
+}
+
+@keyframes achievement-item-focus-pulse {
+    0% {
+        transform: translateY(0);
+        box-shadow:
+            inset 0 0 0 1px rgba(224, 194, 138, 0.2),
+            inset 0 0 0 3px rgba(43, 28, 14, 0.55),
+            0 6px 16px rgba(0, 0, 0, 0.35);
+    }
+    35% {
+        transform: translateY(-2px);
+        box-shadow:
+            inset 0 0 0 1px rgba(255, 230, 169, 0.55),
+            inset 0 0 0 3px rgba(119, 84, 38, 0.65),
+            0 0 0 2px rgba(255, 224, 154, 0.65),
+            0 14px 26px rgba(0, 0, 0, 0.42);
+    }
+    100% {
+        transform: translateY(0);
+        box-shadow:
+            inset 0 0 0 1px rgba(224, 194, 138, 0.2),
+            inset 0 0 0 3px rgba(43, 28, 14, 0.55),
+            0 6px 16px rgba(0, 0, 0, 0.35);
+    }
+}
+
 .achievement-item::before {
     content: "";
     position: absolute;
@@ -1231,7 +1260,13 @@ input[readonly] {
     padding: 0.7rem;
     transform: translateX(120%);
     opacity: 0;
+    cursor: pointer;
     transition: transform 0.35s ease, opacity 0.35s ease;
+}
+
+.achievement-toast:focus-visible {
+    outline: 2px solid rgba(141, 184, 255, 0.95);
+    outline-offset: 2px;
 }
 
 .achievement-toast.is-visible {

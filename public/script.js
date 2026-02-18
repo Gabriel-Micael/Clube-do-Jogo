@@ -45,10 +45,14 @@ let achievementClaimInFlight = false;
 let achievementPollTimer = null;
 let achievementSound = null;
 const achievementAccentColorCache = new Map();
+const recentAchievementToastKeys = new Map();
 let adminNotificationEventSource = null;
 let adminNotificationUnloadBound = false;
 let adminNotificationSyncBound = false;
 let adminLatestResolvedDecisionId = 0;
+let roundRealtimeEventSource = null;
+let roundRealtimeUnloadBound = false;
+let roundRealtimeLastEventSignature = "";
 const appBootOverlayStartedAt = Date.now();
 let appBootOverlayDone = false;
 
@@ -86,34 +90,53 @@ function byId(id) {
     return document.getElementById(id);
 }
 
+function ensureRawgAttributionLink() {
+    if (!document.body) return;
+    if (byId("rawgAttributionBadge")) return;
+    const badge = document.createElement("div");
+    badge.id = "rawgAttributionBadge";
+    badge.className = "rawg-attribution";
+    badge.innerHTML = 'Dados e imagens: <a href="https://rawg.io/apidocs" target="_blank" rel="noopener noreferrer">RAWG</a>';
+    document.body.appendChild(badge);
+}
+
 function normalizeTextArtifacts(value) {
     let text = String(value ?? "");
-    if (!text || !/[ÃâÂ]/.test(text)) return text;
+    if (!text || !/[ÃƒÃ¢Ã‚]/.test(text)) return text;
     const replacements = [
-        ["Ã¡", "á"], ["Ã ", "à"], ["Ã¢", "â"], ["Ã£", "ã"], ["Ã¤", "ä"],
-        ["Ã", "Á"], ["Ã€", "À"], ["Ã‚", "Â"], ["Ãƒ", "Ã"], ["Ã„", "Ä"],
-        ["Ã©", "é"], ["Ã¨", "è"], ["Ãª", "ê"], ["Ã«", "ë"],
-        ["Ã‰", "É"], ["Ãˆ", "È"], ["ÃŠ", "Ê"], ["Ã‹", "Ë"],
-        ["Ã­", "í"], ["Ã¬", "ì"], ["Ã®", "î"], ["Ã¯", "ï"],
-        ["Ã", "Í"], ["ÃŒ", "Ì"], ["ÃŽ", "Î"], ["Ã", "Ï"],
-        ["Ã³", "ó"], ["Ã²", "ò"], ["Ã´", "ô"], ["Ãµ", "õ"], ["Ã¶", "ö"],
-        ["Ã“", "Ó"], ["Ã’", "Ò"], ["Ã”", "Ô"], ["Ã•", "Õ"], ["Ã–", "Ö"],
-        ["Ãº", "ú"], ["Ã¹", "ù"], ["Ã»", "û"], ["Ã¼", "ü"],
-        ["Ãš", "Ú"], ["Ã™", "Ù"], ["Ã›", "Û"], ["Ãœ", "Ü"],
-        ["Ã§", "ç"], ["Ã‡", "Ç"],
-        ["â€™", "’"], ["â€˜", "‘"], ["â€œ", "“"], ["â€", "”"], ["â€¦", "…"],
-        ["â€“", "–"], ["â€”", "—"], ["â„¢", "™"],
-        ["â™¥", "♥"], ["â™¡", "♡"]
+        ["ÃƒÂ¡", "Ã¡"], ["Ãƒ ", "Ã "], ["ÃƒÂ¢", "Ã¢"], ["ÃƒÂ£", "Ã£"], ["ÃƒÂ¤", "Ã¤"],
+        ["ÃƒÂ", "Ã"], ["Ãƒâ‚¬", "Ã€"], ["Ãƒâ€š", "Ã‚"], ["ÃƒÆ’", "Ãƒ"], ["Ãƒâ€ž", "Ã„"],
+        ["ÃƒÂ©", "Ã©"], ["ÃƒÂ¨", "Ã¨"], ["ÃƒÂª", "Ãª"], ["ÃƒÂ«", "Ã«"],
+        ["Ãƒâ€°", "Ã‰"], ["ÃƒË†", "Ãˆ"], ["ÃƒÅ ", "ÃŠ"], ["Ãƒâ€¹", "Ã‹"],
+        ["ÃƒÂ­", "Ã­"], ["ÃƒÂ¬", "Ã¬"], ["ÃƒÂ®", "Ã®"], ["ÃƒÂ¯", "Ã¯"],
+        ["ÃƒÂ", "Ã"], ["ÃƒÅ’", "ÃŒ"], ["ÃƒÅ½", "ÃŽ"], ["ÃƒÂ", "Ã"],
+        ["ÃƒÂ³", "Ã³"], ["ÃƒÂ²", "Ã²"], ["ÃƒÂ´", "Ã´"], ["ÃƒÂµ", "Ãµ"], ["ÃƒÂ¶", "Ã¶"],
+        ["Ãƒâ€œ", "Ã“"], ["Ãƒâ€™", "Ã’"], ["Ãƒâ€", "Ã”"], ["Ãƒâ€¢", "Ã•"], ["Ãƒâ€“", "Ã–"],
+        ["ÃƒÂº", "Ãº"], ["ÃƒÂ¹", "Ã¹"], ["ÃƒÂ»", "Ã»"], ["ÃƒÂ¼", "Ã¼"],
+        ["ÃƒÅ¡", "Ãš"], ["Ãƒâ„¢", "Ã™"], ["Ãƒâ€º", "Ã›"], ["ÃƒÅ“", "Ãœ"],
+        ["ÃƒÂ§", "Ã§"], ["Ãƒâ€¡", "Ã‡"],
+        ["Ã¢â‚¬â„¢", "â€™"], ["Ã¢â‚¬Ëœ", "â€˜"], ["Ã¢â‚¬Å“", "â€œ"], ["Ã¢â‚¬Â", "â€"], ["Ã¢â‚¬Â¦", "â€¦"],
+        ["Ã¢â‚¬â€œ", "â€“"], ["Ã¢â‚¬â€", "â€”"], ["Ã¢â€žÂ¢", "â„¢"],
+        ["Ã¢â„¢Â¥", "â™¥"], ["Ã¢â„¢Â¡", "â™¡"]
     ];
     replacements.forEach(([from, to]) => {
         text = text.replaceAll(from, to);
     });
-    text = text.replaceAll("£o", "");
-    text = text.replaceAll("£", "");
-    text = text.replaceAll("�", "");
-    text = text.replaceAll("Â ", " ");
-    text = text.replaceAll("Â", "");
+    text = text.replaceAll("Â£o", "");
+    text = text.replaceAll("Â£", "");
+    text = text.replaceAll("ï¿½", "");
+    text = text.replaceAll("Ã‚ ", " ");
+    text = text.replaceAll("Ã‚", "");
     return text;
+}
+
+function looksMostlyEnglishText(value) {
+    const text = String(value || "").toLowerCase();
+    if (!text.trim()) return false;
+    const enHits = (text.match(/\b(the|and|you|your|with|for|from|into|about|game|players|story|world|discover|fight|build|survive)\b/g) || []).length;
+    const ptHits = (text.match(/\b(de|do|da|dos|das|um|uma|para|com|sem|sobre|entre|jogo|jogador|historia|voce|nao|que)\b/g) || []).length;
+    const accentHits = /[Ã¡Ã Ã¢Ã£Ã©ÃªÃ­Ã³Ã´ÃµÃºÃ§]/i.test(text) ? 1 : 0;
+    return enHits >= 3 && enHits > (ptHits + accentHits);
 }
 
 function normalizePayloadTextArtifacts(value, visited = new WeakSet()) {
@@ -370,8 +393,9 @@ function formatRoundDateTime(timestampSeconds) {
 
 function homeRoundPhaseLabel(round) {
     const phase = String(round?.phase || round?.status || "").toLowerCase();
-    if (phase === "rating") return "Fase de avaliação";
-    if (phase === "indication") return "Fase de indicação";
+    if (phase === "reopened") return "Fase de avaliação (reaberta)";
+    if (phase === "rating") return "Fase de avaliaÃ§Ã£o";
+    if (phase === "indication") return "Fase de indicaÃ§Ã£o";
     return String(round?.status || phase || "-");
 }
 
@@ -380,7 +404,7 @@ function suggestionTargetLabel(target) {
     if (normalized === "profile") return "Perfil";
     if (normalized === "round") return "Rodada";
     if (normalized === "admin") return "Administrador";
-    return "Início";
+    return "InÃ­cio";
 }
 
 function suggestionTargetsForCurrentUser() {
@@ -448,7 +472,7 @@ function commentLikeActionsHtml(comment, options = {}) {
             data-comment-id="${commentId}"${recommendationAttrs}
             aria-pressed="${likedByMe ? "true" : "false"}"
             title="${likedByMe ? "Descurtir" : "Curtir"}"
-        ><span class="comment-like-icon" aria-hidden="true">${likedByMe ? "♥" : "♡"}</span></button>
+        ><span class="comment-like-icon" aria-hidden="true">${likedByMe ? "â™¥" : "â™¡"}</span></button>
         ${likesCount > 0
             ? `<button class="comment-action comment-like-count" type="button" data-comment-like-list="${likeScope}" data-comment-id="${commentId}"${recommendationAttrs}>${likesCount}</button>`
             : ""}
@@ -540,7 +564,7 @@ function recommendationCommentIds(comments) {
 function recommendationCommentsHtml(recommendationId, comments, options = {}) {
     const rows = buildCommentDisplayRows(comments);
     if (!rows.length) {
-        return '<div class="comment-item">Sem comentários ainda.</div>';
+        return '<div class="comment-item">Sem comentÃ¡rios ainda.</div>';
     }
     return rows
         .map((row) =>
@@ -679,11 +703,11 @@ function updateCommentFormUi(recommendationId) {
     if (state.mode === "edit") {
         form.dataset.editCommentId = String(state.commentId || 0);
         if (submit) submit.textContent = "Salvar";
-        if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentário";
+        if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentÃ¡rio";
         if (context) {
             context.classList.remove("hidden");
             context.innerHTML = `
-                <span>Editando comentário</span>
+                <span>Editando comentÃ¡rio</span>
                 <button class="comment-action" type="button" data-comment-context-cancel="${id}">Cancelar</button>
             `;
         }
@@ -694,13 +718,13 @@ function updateCommentFormUi(recommendationId) {
     delete form.dataset.editCommentId;
     if (submit) submit.textContent = state.mode === "reply" ? "Responder" : "Comentar";
     if (input instanceof HTMLInputElement) {
-        input.placeholder = state.mode === "reply" ? "Escreva sua resposta" : "Comentar esta avaliação";
+        input.placeholder = state.mode === "reply" ? "Escreva sua resposta" : "Comentar esta avaliaÃ§Ã£o";
     }
     if (context) {
         if (state.mode === "reply" && state.parentCommentId > 0) {
             context.classList.remove("hidden");
             context.innerHTML = `
-                <span>Respondendo ${escapeHtml(state.label || "comentário")}</span>
+                <span>Respondendo ${escapeHtml(state.label || "comentÃ¡rio")}</span>
                 <button class="comment-action" type="button" data-comment-context-cancel="${id}">Cancelar</button>
             `;
         } else {
@@ -885,6 +909,81 @@ function startAdminNotificationStream() {
     }
 }
 
+function stopRoundRealtimeStream() {
+    if (roundRealtimeEventSource) {
+        try {
+            roundRealtimeEventSource.close();
+        } catch {
+            // sem acao
+        }
+        roundRealtimeEventSource = null;
+    }
+}
+
+async function handleRoundRealtimeChange(rawPayload) {
+    let payload = rawPayload;
+    if (typeof payload === "string") {
+        try {
+            payload = JSON.parse(payload);
+        } catch {
+            return;
+        }
+    }
+    const reason = String(payload?.reason || "").trim().toLowerCase();
+    if (reason !== "round_reopened") return;
+
+    const roundId = Number(payload?.roundId || 0);
+    const at = Number(payload?.at || 0);
+    const actorUserId = Number(payload?.actorUserId || 0);
+    const signature = `${reason}:${roundId}:${at}:${actorUserId}`;
+    if (!signature || signature === roundRealtimeLastEventSignature) return;
+    roundRealtimeLastEventSignature = signature;
+
+    if (actorUserId > 0 && actorUserId === Number(sessionUserId || 0)) {
+        return;
+    }
+
+    if (page === "home") {
+        await Promise.all([refreshHomeActive(), refreshHomeFeed()]);
+        return;
+    }
+
+    if (page === "round") {
+        const currentRoundId = Number(currentRound?.id || getQueryParam("roundId") || 0);
+        if (roundId > 0 && currentRoundId > 0 && roundId !== currentRoundId) {
+            return;
+        }
+        await refreshRoundData(roundId || currentRoundId, {
+            skipUserSearchReload: Boolean(currentRound && canManageDraftRound(currentRound))
+        });
+    }
+}
+
+function startRoundRealtimeStream() {
+    stopRoundRealtimeStream();
+    if (page !== "home" && page !== "round") return;
+    try {
+        const stream = new EventSource("/api/rounds/events");
+        stream.addEventListener("round-change", (event) => {
+            handleRoundRealtimeChange(event.data).catch(() => {
+                // ignora erros pontuais de sincronizacao
+            });
+        });
+        stream.onerror = () => {
+            // reconexao automatica do EventSource
+        };
+        roundRealtimeEventSource = stream;
+        if (!roundRealtimeUnloadBound) {
+            roundRealtimeUnloadBound = true;
+            window.addEventListener("beforeunload", () => {
+                stopRoundRealtimeStream();
+            }, { once: true });
+        }
+    } catch {
+        // EventSource indisponivel no navegador.
+    }
+}
+
 async function setupOwnerNavLink() {
     await ensureSessionProfile();
     syncOwnerNavLinkVisibility();
@@ -943,7 +1042,7 @@ function renderAdminDashboardUsers(users, userAchievementsMap) {
             const isReadOnlyAccount = isOwnerAccount || moderatorTargetLocked;
             const allowAchievementTools = !moderatorTargetLocked && (!isOwnerAccount || ownerSelfAccount);
             const shownEmail = actorIsModeratorOnly ? maskEmailForAdminDisplay(user.email) : String(user.email || "");
-            const roleLabel = isOwnerAccount ? "Dono" : (isModeratorAccount ? "Moderador" : "Usuário");
+            const roleLabel = isOwnerAccount ? "Dono" : (isModeratorAccount ? "Moderador" : "UsuÃ¡rio");
             const roleToggleButton = sessionIsOwner && !isOwnerAccount
                 ? `<button class="btn ${isModeratorAccount ? "btn-success" : "btn-outline"}" data-admin-set-role="${user.id}" data-admin-target-role="${isModeratorAccount ? "user" : "moderator"}" type="button">${isModeratorAccount ? "Remover Moderador" : "Tornar Moderador"}</button>`
                 : "";
@@ -963,8 +1062,8 @@ function renderAdminDashboardUsers(users, userAchievementsMap) {
                         <div>${escapeHtml(shownEmail)}</div>
                         <div>Cargo: ${roleLabel}</div>
                         <div>Status: ${user.blocked ? "Bloqueado" : "Ativo"}</div>
-                        ${isOwnerAccount ? "<div>Conta protegida para bloqueio, exclusão e alteração de cargo.</div>" : ""}
-                        ${moderatorTargetLocked ? "<div>Moderador não pode modificar outro moderador.</div>" : ""}
+                        ${isOwnerAccount ? "<div>Conta protegida para bloqueio, exclusÃ£o e alteraÃ§Ã£o de cargo.</div>" : ""}
+                        ${moderatorTargetLocked ? "<div>Moderador nÃ£o pode modificar outro moderador.</div>" : ""}
                         <div>Conquistas: ${escapeHtml(formatAchievementKeys(achievementState.keys))}</div>
                     </div>
                     ${adminActions ? `<div class="inline-actions">${adminActions}</div>` : ""}
@@ -975,7 +1074,7 @@ function renderAdminDashboardUsers(users, userAchievementsMap) {
                             </select>
                             <button class="btn btn-outline" data-admin-grant-achievement="${user.id}" type="button">Dar conquista</button>
                             <button class="btn btn-outline" data-admin-revoke-achievement="${user.id}" type="button">Tirar conquista</button>
-                            <span class="admin-achievement-options-link" data-admin-toggle-achievement-options="${user.id}" data-admin-achievement-options-expanded="0" role="button" tabindex="0">Mais opções</span>
+                            <span class="admin-achievement-options-link" data-admin-toggle-achievement-options="${user.id}" data-admin-achievement-options-expanded="0" role="button" tabindex="0">Mais opÃ§Ãµes</span>
                             <div class="admin-achievement-more-options hidden" data-admin-achievement-more-options="${user.id}">
                                 <button class="btn btn-danger" data-admin-reset-achievements="${user.id}" type="button">Zerar conquistas</button>
                             </div>
@@ -1000,7 +1099,12 @@ function renderAdminDashboardRounds(rounds) {
                     </div>
                     <div class="inline-actions">
                         <button class="btn btn-outline" data-admin-close-round="${round.id}" type="button">Fechar</button>
-                        <button class="btn btn-outline" data-admin-delete-round="${round.id}" type="button">Excluir</button>
+                        <button
+                            class="btn btn-danger"
+                            data-admin-delete-round="${round.id}"
+                            data-admin-delete-round-label="Rodada - ${escapeHtml(formatRoundDateTime(round.created_at))}"
+                            type="button"
+                        >Excluir</button>
                     </div>
                 </div>
             `
@@ -1011,7 +1115,7 @@ function renderAdminDashboardRounds(rounds) {
 function renderAdminOwnerActionRequests(requests) {
     const normalized = Array.isArray(requests) ? requests : [];
     if (!normalized.length) {
-        return `<p class="feedback ok">Sem solicitações pendentes no momento.</p>`;
+        return `<p class="feedback ok">Sem solicitaÃ§Ãµes pendentes no momento.</p>`;
     }
     return normalized
         .map((request) => {
@@ -1019,9 +1123,9 @@ function renderAdminOwnerActionRequests(requests) {
             return `
                 <div class="search-item admin-owner-request-item" data-admin-owner-request-id="${Number(request?.id) || 0}">
                     <div>
-                        <strong>Solicitação #${Number(request?.id) || 0}</strong>
+                        <strong>SolicitaÃ§Ã£o #${Number(request?.id) || 0}</strong>
                         <div>Solicitante: ${escapeHtml(String(request?.requester_name || "-"))}</div>
-                        <div>Ação: ${escapeHtml(String(request?.action_label || "-"))}</div>
+                        <div>AÃ§Ã£o: ${escapeHtml(String(request?.action_label || "-"))}</div>
                         ${Number(request?.created_at) > 0 ? `<div>Criada em: ${escapeHtml(formatRoundDateTime(request.created_at))}</div>` : ""}
                         ${Number(request?.expires_at) > 0 ? `<div>Expira em: ${escapeHtml(formatRoundDateTime(request.expires_at))}</div>` : ""}
                         ${details.length ? `<div class="admin-owner-request-details">${details.map((line) => `<div>${escapeHtml(String(line || ""))}</div>`).join("")}</div>` : ""}
@@ -1157,7 +1261,7 @@ async function showCommentLikesPopup(likeScope, commentId, anchorElement) {
 function renderAdminSuggestions(suggestions) {
     const normalized = Array.isArray(suggestions) ? suggestions : [];
     if (!normalized.length) {
-        return `<p class="feedback ok">Sem sugestões no momento.</p>`;
+        return `<p class="feedback ok">Sem sugestÃµes no momento.</p>`;
     }
     return normalized
         .map((suggestion) => {
@@ -1173,14 +1277,14 @@ function renderAdminSuggestions(suggestions) {
             return `
                 <div class="search-item admin-suggestion-item" data-admin-suggestion-id="${id}">
                     <div>
-                        <strong>Sugestão #${id}</strong>
-                        <div>Usuário: ${author}</div>
+                        <strong>SugestÃ£o #${id}</strong>
+                        <div>UsuÃ¡rio: ${author}</div>
                         <div>Tela: ${escapeHtml(targetLabel)}</div>
                         ${createdAt > 0 ? `<div>Criada em: ${escapeHtml(formatRoundDateTime(createdAt))}</div>` : ""}
                         <div class="admin-suggestion-text">${escapeHtml(text)}</div>
                     </div>
                     <div class="inline-actions admin-suggestion-actions">
-                        <button class="btn btn-danger" type="button" data-admin-delete-suggestion="${id}">Excluir sugestão</button>
+                        <button class="btn btn-danger" type="button" data-admin-delete-suggestion="${id}">Excluir sugestÃ£o</button>
                     </div>
                 </div>
             `;
@@ -1284,7 +1388,7 @@ async function handleAdminPage() {
         modal.className = "modal hidden";
         modal.innerHTML = `
             <div class="modal-card admin-decision-modal-card">
-                <h2 id="adminDecisionTitle">Solicitação processada</h2>
+                <h2 id="adminDecisionTitle">SolicitaÃ§Ã£o processada</h2>
                 <p id="adminDecisionSummary" class="feedback warn"></p>
                 <div id="adminDecisionDetails" class="admin-decision-details"></div>
                 <div class="inline-actions">
@@ -1325,16 +1429,16 @@ async function handleAdminPage() {
         const title = byId("adminDecisionTitle");
         const summary = byId("adminDecisionSummary");
         const details = byId("adminDecisionDetails");
-        if (title) title.textContent = `Solicitação ${String(decision.status_label || "processada")}`;
+        if (title) title.textContent = `SolicitaÃ§Ã£o ${String(decision.status_label || "processada")}`;
         if (summary) {
             const summaryText = decision.result_message
-                || `${String(decision.action_label || "Ação administrativa")} foi ${String(decision.status_label || "processada").toLowerCase()}.`;
+                || `${String(decision.action_label || "AÃ§Ã£o administrativa")} foi ${String(decision.status_label || "processada").toLowerCase()}.`;
             summary.textContent = summaryText;
             summary.className = `feedback ${String(decision.status || "").toLowerCase() === "approved" ? "ok" : "warn"}`;
         }
         if (details) {
             const items = [];
-            items.push(`<li><strong>Ação:</strong> ${escapeHtml(String(decision.action_label || "-"))}</li>`);
+            items.push(`<li><strong>AÃ§Ã£o:</strong> ${escapeHtml(String(decision.action_label || "-"))}</li>`);
             items.push(`<li><strong>Status:</strong> ${escapeHtml(String(decision.status_label || "-"))}</li>`);
             if (Number(decision.created_at) > 0) {
                 items.push(`<li><strong>Criada em:</strong> ${escapeHtml(formatRoundDateTime(decision.created_at))}</li>`);
@@ -1391,7 +1495,7 @@ async function handleAdminPage() {
                 adminOwnerRequestsCard.classList.toggle("hidden", ownerRequests.length === 0);
                 setAdminNotificationDotVisible(ownerRequests.length > 0);
                 if (ownerRequests.length > 0) {
-                    setFeedback("adminFeedback", "Você tem solicitações pendentes para permitir ou negar.", "warn");
+                    setFeedback("adminFeedback", "VocÃª tem solicitaÃ§Ãµes pendentes para permitir ou negar.", "warn");
                 }
             } else {
                 adminOwnerRequestsList.innerHTML = "";
@@ -1412,7 +1516,7 @@ async function handleAdminPage() {
         clearAllAdminUserFeedback();
         adminActionPendingLocked = Boolean(data?.pendingAdminAction) && sessionIsModerator && !sessionIsOwner;
         if (adminActionPendingLocked) {
-            setFeedback("adminFeedback", "Você tem uma solicitação pendente. Aguarde aprovação do dono para continuar.", "warn");
+            setFeedback("adminFeedback", "VocÃª tem uma solicitaÃ§Ã£o pendente. Aguarde aprovaÃ§Ã£o do dono para continuar.", "warn");
         }
         syncModeratorDecisionNotice(data?.latestResolvedAdminAction);
         syncAdminHeader();
@@ -1420,13 +1524,13 @@ async function handleAdminPage() {
 
     const ensureNotLocked = () => {
         if (adminActionPendingLocked && sessionIsModerator && !sessionIsOwner) {
-            throw new Error("Há uma solicitação pendente. Aguarde o dono permitir ou negar.");
+            throw new Error("HÃ¡ uma solicitaÃ§Ã£o pendente. Aguarde o dono permitir ou negar.");
         }
     };
 
     const handleAdminResult = async (result, options = {}) => {
         const pending = Boolean(result?.pendingApproval);
-        const message = result?.message || (pending ? "Solicitação enviada." : "Ação realizada.");
+        const message = result?.message || (pending ? "SolicitaÃ§Ã£o enviada." : "AÃ§Ã£o realizada.");
         const type = pending ? "warn" : "ok";
         setFeedback(
             "adminFeedback",
@@ -1455,7 +1559,7 @@ async function handleAdminPage() {
         const expanded = String(toggleBtn.dataset.adminAchievementOptionsExpanded || "0") === "1";
         const nextExpanded = !expanded;
         toggleBtn.dataset.adminAchievementOptionsExpanded = nextExpanded ? "1" : "0";
-        toggleBtn.textContent = nextExpanded ? "Menos opções" : "Mais opções";
+        toggleBtn.textContent = nextExpanded ? "Menos opÃ§Ãµes" : "Mais opÃ§Ãµes";
         optionsWrap.classList.toggle("hidden", !nextExpanded);
     };
 
@@ -1491,7 +1595,7 @@ async function handleAdminPage() {
                 const requestId = Number(ownerDecisionBtn.dataset.adminOwnerRequestId || 0);
                 const decision = String(ownerDecisionBtn.dataset.adminOwnerRequestDecision || "").trim().toLowerCase();
                 if (!requestId || !["allow", "deny"].includes(decision)) {
-                    throw new Error("Solicitação inválida.");
+                    throw new Error("SolicitaÃ§Ã£o invÃ¡lida.");
                 }
                 const result = await withButtonLoading(
                     ownerDecisionBtn,
@@ -1499,7 +1603,7 @@ async function handleAdminPage() {
                     () => sendJson(`/api/admin/action-requests/${requestId}/decision`, "POST", { decision })
                 );
                 await handleAdminResult(result, {
-                    globalMessage: result?.message || "Solicitação processada.",
+                    globalMessage: result?.message || "SolicitaÃ§Ã£o processada.",
                     globalMessageType: decision === "allow" ? "ok" : "warn"
                 });
                 return;
@@ -1542,6 +1646,9 @@ async function handleAdminPage() {
             if (deleteRoundBtn) {
                 ensureNotLocked();
                 const roundId = Number(deleteRoundBtn.dataset.adminDeleteRound);
+                const roundLabel = String(deleteRoundBtn.dataset.adminDeleteRoundLabel || `Rodada #${roundId}`).trim();
+                const confirmed = window.confirm(`Confirmar exclusÃ£o da ${roundLabel}?`);
+                if (!confirmed) return;
                 const result = await withButtonLoading(deleteRoundBtn, "Excluindo...", () =>
                     sendJson(`/api/admin/rounds/${roundId}`, "DELETE")
                 );
@@ -1632,12 +1739,12 @@ async function handleAdminPage() {
             if (deleteSuggestionBtn) {
                 if (!sessionIsOwner) return;
                 const suggestionId = Number(deleteSuggestionBtn.dataset.adminDeleteSuggestion || 0);
-                if (!suggestionId) throw new Error("Sugestão inválida.");
+                if (!suggestionId) throw new Error("SugestÃ£o invÃ¡lida.");
                 const result = await withButtonLoading(deleteSuggestionBtn, "Excluindo...", () =>
                     sendJson(`/api/admin/suggestions/${suggestionId}`, "DELETE")
                 );
                 await refreshAdmin();
-                setFeedback("adminFeedback", result?.message || "Sugestão excluída.", "ok");
+                setFeedback("adminFeedback", result?.message || "SugestÃ£o excluÃ­da.", "ok");
             }
         } catch (error) {
             if (feedbackUserId > 0) {
@@ -1792,7 +1899,7 @@ async function handleRecommendationCommentAction(event, scope, feedbackTarget) {
                 credentials: "include"
             }).then(async (response) => {
                 const data = await response.json().catch(() => ({}));
-                if (!response.ok) throw new Error(data.message || "Erro ao excluir comentário.");
+                if (!response.ok) throw new Error(data.message || "Erro ao excluir comentÃ¡rio.");
             });
             const updatedRecommendation = removeRecommendationComment(scope, recommendationId, commentId);
             syncRecommendationCommentList(updatedRecommendation, scope, true);
@@ -1890,18 +1997,18 @@ function mapRegisterErrorToField(message) {
     const lower = String(message || "").toLowerCase();
     if (!lower) return "";
     if (lower.includes("nickname")) return "nickname";
-    if (lower.includes("confirmação de senha") || lower.includes("confirme a senha")) return "confirmPassword";
+    if (lower.includes("confirmaÃ§Ã£o de senha") || lower.includes("confirme a senha")) return "confirmPassword";
     if (lower.includes("senha precisa")) return "password";
-    if (lower.includes("email inválido")) return "email";
-    if (lower.includes("nome de usuário inválido")) return "username";
-    if (lower.includes("email ou nome de usuário")) return "email_or_username";
+    if (lower.includes("email invÃ¡lido")) return "email";
+    if (lower.includes("nome de usuÃ¡rio invÃ¡lido")) return "username";
+    if (lower.includes("email ou nome de usuÃ¡rio")) return "email_or_username";
     return "";
 }
 
 function mapResetPasswordErrorToField(message) {
     const lower = String(message || "").toLowerCase();
     if (!lower) return "";
-    if (lower.includes("confirmação de senha") || lower.includes("confirme a senha")) return "confirmPassword";
+    if (lower.includes("confirmaÃ§Ã£o de senha") || lower.includes("confirme a senha")) return "confirmPassword";
     if (lower.includes("senha precisa")) return "password";
     return "";
 }
@@ -1980,7 +2087,32 @@ function showAchievementUnlockNotification(achievement) {
 
 function showAchievementUnlockNotifications(achievements) {
     if (!Array.isArray(achievements) || !achievements.length) return;
-    achievements.forEach((achievement, index) => {
+    const now = Date.now();
+    const toastTtlMs = 1000 * 90;
+
+    for (const [key, createdAt] of recentAchievementToastKeys.entries()) {
+        if (!Number.isFinite(createdAt) || now - createdAt > toastTtlMs) {
+            recentAchievementToastKeys.delete(key);
+        }
+    }
+
+    const queue = [];
+    achievements.forEach((achievement) => {
+        const dedupeKey = String(
+            achievement?.key
+            || achievement?.name
+            || `${achievement?.imageUrl || ""}:${achievement?.description || ""}`
+        ).trim().toLowerCase();
+        if (!dedupeKey) {
+            queue.push(achievement);
+            return;
+        }
+        if (recentAchievementToastKeys.has(dedupeKey)) return;
+        recentAchievementToastKeys.set(dedupeKey, now);
+        queue.push(achievement);
+    });
+
+    queue.forEach((achievement, index) => {
         setTimeout(() => showAchievementUnlockNotification(achievement), index * 2000);
     });
 }
@@ -2058,7 +2190,7 @@ async function sendJson(url, method = "GET", payload) {
     const rawData = await response.json().catch(() => ({}));
     const data = normalizePayloadTextArtifacts(rawData);
     if (!response.ok) {
-        const error = new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
+        const error = new Error(normalizeTextArtifacts(data.message || "Erro na requisiÃ§Ã£o."));
         error.statusCode = response.status;
         error.responseData = data;
         throw error;
@@ -2078,7 +2210,7 @@ async function sendJsonWithFallback(requests) {
         }
     }
     if (lastError) throw lastError;
-    throw new Error("Nenhuma requisição foi informada.");
+    throw new Error("Nenhuma requisiÃ§Ã£o foi informada.");
 }
 
 async function sendForm(url, formData) {
@@ -2090,7 +2222,7 @@ async function sendForm(url, formData) {
     const rawData = await response.json().catch(() => ({}));
     const data = normalizePayloadTextArtifacts(rawData);
     if (!response.ok) {
-        throw new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
+        throw new Error(normalizeTextArtifacts(data.message || "Erro na requisiÃ§Ã£o."));
     }
     return data;
 }
@@ -2107,12 +2239,12 @@ function showOAuthFeedbackFromQuery() {
     const error = getQueryParam("error");
     if (!error) return;
     const messages = {
-        google_not_configured: "Login Google ainda não foi configurado no servidor.",
+        google_not_configured: "Login Google ainda nÃ£o foi configurado no servidor.",
         google_auth_failed: "Falha ao autenticar com Google.",
-        google_email_unavailable: "Sua conta Google não retornou um email válido.",
+        google_email_unavailable: "Sua conta Google nÃ£o retornou um email vÃ¡lido.",
         account_blocked: "Conta Bloqueada"
     };
-    setFeedback("feedback", messages[error] || "Erro de autenticação.");
+    setFeedback("feedback", messages[error] || "Erro de autenticaÃ§Ã£o.");
 }
 
 function recommendationCardTemplate(rec, options = {}) {
@@ -2127,7 +2259,7 @@ function recommendationCardTemplate(rec, options = {}) {
     const reasonHtml = hasReason
         ? `
             <div class="recommendation-reason-wrap">
-                <p class="recommendation-section-label">Motivação</p>
+                <p class="recommendation-section-label">MotivaÃ§Ã£o</p>
                 <p class="recommendation-reason">${escapeHtml(rec.reason)}</p>
             </div>
         `
@@ -2150,17 +2282,17 @@ function recommendationCardTemplate(rec, options = {}) {
                         </div>
                         <div class="desc-grade-row">
                             ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
-                            <span class="recommendation-section-label">Descrição</span>
+                            <span class="recommendation-section-label">DescriÃ§Ã£o</span>
                             <p>${escapeHtml(rec.game_description)}</p>
                         </div>
                         ${reasonHtml}
                     </div>
                     <div class="recommendation-comments-shell">
-                        <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentários ainda.</div>'}</div>
+                        <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentÃ¡rios ainda.</div>'}</div>
                         <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
                         <form class="comment-form" data-comment-form="${rec.id}">
                             <input type="hidden" name="parentCommentId" value="">
-                            <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliação">
+                            <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliaÃ§Ã£o">
                             <button class="btn btn-outline" type="submit">Comentar</button>
                         </form>
                     </div>
@@ -2183,15 +2315,15 @@ function recommendationCardTemplate(rec, options = {}) {
             </div>
             <div class="desc-grade-row">
                 ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
-                <span class="recommendation-section-label">Descrição</span>
+                <span class="recommendation-section-label">DescriÃ§Ã£o</span>
                 <p>${escapeHtml(rec.game_description)}</p>
             </div>
             ${reasonHtml}
-            <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentários ainda.</div>'}</div>
+            <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentÃ¡rios ainda.</div>'}</div>
             <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
             <form class="comment-form" data-comment-form="${rec.id}">
                 <input type="hidden" name="parentCommentId" value="">
-                <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliação">
+                <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliaÃ§Ã£o">
                 <button class="btn btn-outline" type="submit">Comentar</button>
             </form>
         </article>
@@ -2236,15 +2368,15 @@ async function handleRegister() {
         clearAllFieldFeedback(form);
         const payload = Object.fromEntries(new FormData(form).entries());
         if (String(payload.password || "") !== String(payload.confirmPassword || "")) {
-            setFieldFeedback(form, "confirmPassword", "A confirmação de senha não confere.", "error");
+            setFieldFeedback(form, "confirmPassword", "A confirmaÃ§Ã£o de senha nÃ£o confere.", "error");
             return;
         }
         const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await withButtonLoading(submitBtn, "Enviando código...", async () => {
+            await withButtonLoading(submitBtn, "Enviando cÃ³digo...", async () => {
                 await sendJson("/api/auth/register", "POST", payload);
             });
-            setFeedback("feedback", "Código enviado. Confira seu email e confirme seu cadastro.", "ok");
+            setFeedback("feedback", "CÃ³digo enviado. Confira seu email e confirme seu cadastro.", "ok");
             setTimeout(() => {
                 window.location.href = `/verify-email.html?email=${encodeURIComponent(payload.email)}`;
             }, 900);
@@ -2310,7 +2442,7 @@ async function handleForgotPassword() {
 async function handleResetPassword() {
     const token = getResetTokenFromQuery();
     if (!token) {
-        setFeedback("feedback", "Token de troca de senha não encontrado.", "error");
+        setFeedback("feedback", "Token de troca de senha nÃ£o encontrado.", "error");
         return;
     }
 
@@ -2322,7 +2454,7 @@ async function handleResetPassword() {
         clearAllFieldFeedback(form);
         const payload = Object.fromEntries(new FormData(form).entries());
         if (String(payload.password || "") !== String(payload.confirmPassword || "")) {
-            setFieldFeedback(form, "confirmPassword", "A confirmação de senha não confere.", "error");
+            setFieldFeedback(form, "confirmPassword", "A confirmaÃ§Ã£o de senha nÃ£o confere.", "error");
             return;
         }
         payload.token = token;
@@ -2397,7 +2529,7 @@ async function loadProfile() {
         parentCommentId: 0,
         label: ""
     };
-    const defaultEmailLabel = "Email (não editável)";
+    const defaultEmailLabel = "Email (nÃ£o editÃ¡vel)";
 
     function setupAchievementImageProtection() {
         if (!achievementsGrid || achievementsGrid.dataset.achievementImageProtectionBound === "1") return;
@@ -2420,34 +2552,32 @@ async function loadProfile() {
         });
     }
 
-    function rememberAchievementImageSource(item, key, imageEl) {
-        if (!key || !(imageEl instanceof HTMLImageElement)) return;
-        const currentSrc = String(imageEl.getAttribute("src") || imageEl.currentSrc || "").trim();
-        if (!currentSrc || currentSrc === lockedAchievementImageDataUri) return;
-        if (!achievementImageSourceByKey.has(key)) {
-            achievementImageSourceByKey.set(key, currentSrc);
-        }
-    }
-
-    function setAchievementImageByUnlockState(item, key, unlocked) {
+    function setAchievementImageByUnlockState(item, key, unlocked, achievement = null) {
         const imageEl = item.querySelector("img");
         if (!(imageEl instanceof HTMLImageElement)) return;
         imageEl.setAttribute("draggable", "false");
-        rememberAchievementImageSource(item, key, imageEl);
-
-        const originalSrc = String(achievementImageSourceByKey.get(key) || "").trim();
-        const currentSrc = String(imageEl.getAttribute("src") || imageEl.currentSrc || "").trim();
+        const unlockedSrc = String(achievement?.imageUrl || achievementImageSourceByKey.get(key) || "").trim();
 
         if (unlocked) {
-            if (originalSrc && currentSrc !== originalSrc) {
-                imageEl.src = originalSrc;
+            if (key && unlockedSrc && unlockedSrc !== lockedAchievementImageDataUri) {
+                achievementImageSourceByKey.set(key, unlockedSrc);
             }
+            const finalSrc = String(achievementImageSourceByKey.get(key) || "").trim();
+            if (finalSrc) {
+                imageEl.src = finalSrc;
+            }
+            const unlockedName = String(achievement?.name || "").trim();
+            imageEl.alt = unlockedName ? `TrofÃ©u ${unlockedName}` : "TrofÃ©u desbloqueado";
+            imageEl.removeAttribute("title");
             return;
         }
 
+        const currentSrc = String(imageEl.getAttribute("src") || imageEl.currentSrc || "").trim();
         if (currentSrc !== lockedAchievementImageDataUri) {
             imageEl.src = lockedAchievementImageDataUri;
         }
+        imageEl.alt = "TrofÃ©u bloqueado";
+        imageEl.removeAttribute("title");
     }
 
     function clearPendingAvatarSelection() {
@@ -2529,11 +2659,11 @@ async function loadProfile() {
                 nickname: candidate,
                 available: true,
                 sameAsCurrent: true,
-                message: "Esse já é o seu nickname atual."
+                message: "Esse jÃ¡ Ã© o seu nickname atual."
             };
         }
 
-        // Verificação por busca de usuários (evita 404 quando o endpoint dedicado não existe no servidor em execução).
+        // VerificaÃ§Ã£o por busca de usuÃ¡rios (evita 404 quando o endpoint dedicado nÃ£o existe no servidor em execuÃ§Ã£o).
         const usersPayload = await sendJson(`/api/users?term=${encodeURIComponent(candidate)}`);
         const users = Array.isArray(usersPayload?.users) ? usersPayload.users : [];
         const normalizedCandidate = candidate.toLowerCase();
@@ -2548,7 +2678,7 @@ async function loadProfile() {
             nickname: candidate,
             available: !inUse,
             sameAsCurrent: false,
-            message: inUse ? "Nickname já está em uso." : "Nickname disponível."
+            message: inUse ? "Nickname jÃ¡ estÃ¡ em uso." : "Nickname disponÃ­vel."
         };
     }
 
@@ -2564,7 +2694,7 @@ async function loadProfile() {
         const reasonHtml = item.reason
             ? `
                 <div class="recommendation-reason-wrap">
-                    <p class="recommendation-section-label">Motivação</p>
+                    <p class="recommendation-section-label">MotivaÃ§Ã£o</p>
                     <p class="recommendation-reason">${escapeHtml(item.reason)}</p>
                 </div>
             `
@@ -2585,7 +2715,7 @@ async function loadProfile() {
                         </div>
                         <div class="desc-grade-row">
                             <span class="${gradeClass}">${escapeHtml(grade)}</span>
-                            <span class="recommendation-section-label">Descrição</span>
+                            <span class="recommendation-section-label">DescriÃ§Ã£o</span>
                             <p>${escapeHtml(item.game_description || "")}</p>
                         </div>
                         ${reasonHtml}
@@ -2605,14 +2735,14 @@ async function loadProfile() {
         const cards = pageItems.length
             ? pageItems.map((item) => activityCardHtml(item, mode)).join("")
             : mode === "given"
-                ? "<p>Nenhuma indicação feita ainda.</p>"
-                : "<p>Nenhuma indicação recebida ainda.</p>";
+                ? "<p>Nenhuma indicaÃ§Ã£o feita ainda.</p>"
+                : "<p>Nenhuma indicaÃ§Ã£o recebida ainda.</p>";
         const pagination = items.length > profilePageSize
             ? `
                 <div class="pagination-controls">
                     <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="prev" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
-                    <span>Página ${currentPage} de ${totalPages}</span>
-                    <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="next" ${currentPage >= totalPages ? "disabled" : ""}>Próxima</button>
+                    <span>PÃ¡gina ${currentPage} de ${totalPages}</span>
+                    <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="next" ${currentPage >= totalPages ? "disabled" : ""}>PrÃ³xima</button>
                 </div>
               `
             : "";
@@ -2692,11 +2822,11 @@ async function loadProfile() {
         if (state.mode === "edit" && state.commentId > 0) {
             profileCommentForm.dataset.editCommentId = String(state.commentId);
             if (submit) submit.textContent = "Salvar";
-            if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentário";
+            if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentÃ¡rio";
             if (profileCommentContext) {
                 profileCommentContext.classList.remove("hidden");
                 profileCommentContext.innerHTML = `
-                    <span>Editando comentário</span>
+                    <span>Editando comentÃ¡rio</span>
                     <button class="comment-action" type="button" data-profile-comment-context-cancel="1">Cancelar</button>
                 `;
             }
@@ -2708,13 +2838,13 @@ async function loadProfile() {
         if (input instanceof HTMLInputElement) {
             input.placeholder = state.mode === "reply"
                 ? "Escreva sua resposta"
-                : "Escreva um comentário neste perfil";
+                : "Escreva um comentÃ¡rio neste perfil";
         }
         if (profileCommentContext) {
             if (state.mode === "reply" && state.parentCommentId > 0) {
                 profileCommentContext.classList.remove("hidden");
                 profileCommentContext.innerHTML = `
-                    <span>Respondendo ${escapeHtml(state.label || "comentário")}</span>
+                    <span>Respondendo ${escapeHtml(state.label || "comentÃ¡rio")}</span>
                     <button class="comment-action" type="button" data-profile-comment-context-cancel="1">Cancelar</button>
                 `;
             } else {
@@ -2763,7 +2893,7 @@ async function loadProfile() {
         profileCommentsCache.sort((a, b) => commentSortValue(a) - commentSortValue(b));
         const rows = buildCommentDisplayRows(profileCommentsCache);
         if (!rows.length) {
-            profileCommentsList.innerHTML = '<div class="comment-item">Sem comentários ainda.</div>';
+            profileCommentsList.innerHTML = '<div class="comment-item">Sem comentÃ¡rios ainda.</div>';
             return;
         }
         profileCommentsList.innerHTML = rows
@@ -2787,7 +2917,7 @@ async function loadProfile() {
             const key = item.getAttribute("data-achievement-key");
             const achievement = achievementMap.get(key);
             const unlocked = Boolean(achievement?.unlocked);
-            setAchievementImageByUnlockState(item, String(key || ""), unlocked);
+            setAchievementImageByUnlockState(item, String(key || ""), unlocked, achievement);
             item.classList.toggle("unlocked", unlocked);
             item.classList.toggle("locked", !unlocked);
             if (unlocked) {
@@ -2796,13 +2926,9 @@ async function loadProfile() {
                 item.style.removeProperty("--achievement-accent-color");
             }
             const nameEl = item.querySelector("strong");
-            const savedName =
-                String(item.getAttribute("data-achievement-name") || "").trim() ||
-                String(nameEl?.textContent || "").trim() ||
-                String(key || "").trim();
-            if (savedName) item.setAttribute("data-achievement-name", savedName);
             if (nameEl) {
-                nameEl.textContent = unlocked ? savedName : "??????";
+                const unlockedName = String(achievement?.name || "").trim() || String(key || "").trim();
+                nameEl.textContent = unlocked ? unlockedName : "??????";
             }
             const descriptionEl = item.querySelector(".achievement-description, .achievement-state");
             if (descriptionEl) {
@@ -3002,7 +3128,7 @@ async function loadProfile() {
             return;
         }
         if (isSameNicknameAsCurrent(nicknameCandidate)) {
-            setFeedback(nicknameCheckFeedback, "Esse já é o seu nickname atual.", "warn");
+            setFeedback(nicknameCheckFeedback, "Esse jÃ¡ Ã© o seu nickname atual.", "warn");
             syncNicknameCheckButtonState();
             return;
         }
@@ -3023,7 +3149,7 @@ async function loadProfile() {
             };
             setFeedback(
                 nicknameCheckFeedback,
-                result?.message || (result?.available ? "Nickname disponível." : "Nickname indisponível."),
+                result?.message || (result?.available ? "Nickname disponÃ­vel." : "Nickname indisponÃ­vel."),
                 result?.available ? "ok" : "error"
             );
         } catch (error) {
@@ -3103,7 +3229,7 @@ async function loadProfile() {
                         resolve(true);
                     };
                     probe.onerror = () => {
-                        // Mantém o preview local visível se a URL final falhar momentaneamente.
+                        // MantÃ©m o preview local visÃ­vel se a URL final falhar momentaneamente.
                         resolve(false);
                     };
                     probe.src = finalAvatarUrl;
@@ -3187,7 +3313,7 @@ async function loadProfile() {
             resetProfileCommentFormState();
             setFeedback(
                 "profileCommentFeedback",
-                editCommentId > 0 ? "Comentário atualizado." : "Comentário publicado.",
+                editCommentId > 0 ? "ComentÃ¡rio atualizado." : "ComentÃ¡rio publicado.",
                 "ok"
             );
 
@@ -3281,7 +3407,7 @@ async function loadProfile() {
 
         if (action === "delete") {
             if (!canDeleteProfileComment(comment)) return;
-            const confirmed = window.confirm("Excluir este comentário?");
+            const confirmed = window.confirm("Excluir este comentÃ¡rio?");
             if (!confirmed) return;
             try {
                 await withButtonLoading(actionBtn, "Excluindo...", () =>
@@ -3296,7 +3422,7 @@ async function loadProfile() {
                     profileCommentForm?.reset();
                     resetProfileCommentFormState();
                 }
-                setFeedback("profileCommentFeedback", "Comentário excluído.", "ok");
+                setFeedback("profileCommentFeedback", "ComentÃ¡rio excluÃ­do.", "ok");
             } catch (error) {
                 setFeedback("profileCommentFeedback", error.message, "error");
             }
@@ -3454,7 +3580,7 @@ function renderFeed(rounds) {
     recommendationCommentIdsCaches.home.clear();
 
     if (!rounds.length) {
-        container.innerHTML = '<p>Nenhuma indicação publicada ainda.</p>';
+        container.innerHTML = '<p>Nenhuma indicaÃ§Ã£o publicada ainda.</p>';
         clearStaleCommentSignatures("home", []);
         return;
     }
@@ -3477,12 +3603,20 @@ function renderFeed(rounds) {
                     start,
                     start + HOME_FEED_RECOMMENDATION_PAGE_SIZE
                 );
+                const participants = Array.isArray(round.participants) ? round.participants : [];
+                const isRoundParticipant = participants.some((item) => Number(item?.id || 0) === Number(sessionUserId || 0));
+                const canReopenRound = Boolean(sessionIsOwner || sessionIsModerator);
+                const canEditReopenedRound = Boolean(
+                    round.status === "reopened"
+                    && (isRoundParticipant || sessionIsOwner || sessionIsModerator)
+                );
+                const showRoundActions = round.status === "closed" || round.status === "reopened";
                 const pagination = recommendations.length > HOME_FEED_RECOMMENDATION_PAGE_SIZE
                     ? `
                         <div class="pagination-controls">
                             <button class="btn btn-outline" type="button" data-feed-page-action="prev" data-feed-round-id="${round.id}" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
-                            <span>Página ${currentPage} de ${totalPages}</span>
-                            <button class="btn btn-outline" type="button" data-feed-page-action="next" data-feed-round-id="${round.id}" ${currentPage >= totalPages ? "disabled" : ""}>Próxima</button>
+                            <span>PÃ¡gina ${currentPage} de ${totalPages}</span>
+                            <button class="btn btn-outline" type="button" data-feed-page-action="next" data-feed-round-id="${round.id}" ${currentPage >= totalPages ? "disabled" : ""}>PrÃ³xima</button>
                         </div>
                       `
                     : "";
@@ -3490,10 +3624,11 @@ function renderFeed(rounds) {
                 <section class="round-carousel" data-round-id="${round.id}">
                     <div class="row-between">
                         <h3>Rodada - ${escapeHtml(formatRoundDateTime(round.created_at))} - ${escapeHtml(homeRoundPhaseLabel(round))}</h3>
-                        ${round.status === "closed"
+                        ${showRoundActions
         ? `
                                 <div class="inline-actions home-round-actions">
-                                    ${sessionIsOwner || sessionIsModerator ? `<button class="btn btn-warn" data-home-reopen-round="${round.id}" type="button">Reabrir Rodada</button>` : ""}
+                                    ${round.status === "closed" && canReopenRound ? `<button class="btn btn-warn" data-home-reopen-round="${round.id}" type="button">Reabrir Rodada</button>` : ""}
+                                    ${canEditReopenedRound ? `<button class="btn btn-success" data-home-edit-round="${round.id}" type="button">Editar Rodada</button>` : ""}
                                     <button class="btn btn-outline" data-open-naval-plan="${round.id}" type="button">Plano Naval</button>
                                 </div>
                             `
@@ -3562,7 +3697,7 @@ function updateHomeRoundStatus(activeRound) {
 
     if (activePhase === "draft") {
         if (activeRound.isCreator) {
-            textEl.textContent = `Sua rodada de ${formatRoundDateTime(activeRound.created_at)} está em preparação.`;
+            textEl.textContent = `Sua rodada de ${formatRoundDateTime(activeRound.created_at)} estÃ¡ em preparaÃ§Ã£o.`;
             newBtn.disabled = false;
             newBtn.textContent = "Gerenciar Rodada";
             newBtn.classList.add("btn-success");
@@ -3575,19 +3710,19 @@ function updateHomeRoundStatus(activeRound) {
             newBtn.classList.remove("btn-disabled");
         }
     } else if (activePhase === "reveal") {
-        textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled}) - fase de revelação.`;
+        textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled}) - fase de revelaÃ§Ã£o.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
         newBtn.classList.remove("btn-disabled");
     } else if (activePhase === "rating") {
-        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em fase de avaliação.`;
+        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em fase de avaliaÃ§Ã£o.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
         newBtn.classList.remove("btn-disabled");
     } else {
-        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em Fase de indicação.`;
+        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em Fase de indicaÃ§Ã£o.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
@@ -3677,7 +3812,7 @@ async function handleHome() {
         const targetPage = String(suggestionTargetPage.value || "").trim().toLowerCase();
         const suggestionContent = String(suggestionText.value || "").trim();
         if (!targetPage) {
-            setFeedback("suggestionFormFeedback", "Selecione a tela da sugestão.", "error");
+            setFeedback("suggestionFormFeedback", "Selecione a tela da sugestÃ£o.", "error");
             return;
         }
         if (suggestionContent.length < 5) {
@@ -3692,7 +3827,7 @@ async function handleHome() {
                 })
             );
             closeSuggestionModal();
-            setFeedback("homeFeedback", result?.message || "Sugestão enviada com sucesso.", "ok");
+            setFeedback("homeFeedback", result?.message || "SugestÃ£o enviada com sucesso.", "ok");
         } catch (error) {
             setFeedback("suggestionFormFeedback", error.message, "error");
         }
@@ -3717,7 +3852,7 @@ async function handleHome() {
             const created = await sendJson("/api/rounds/new", "POST", {});
             homeActiveRound = created.round;
             updateHomeRoundStatus(homeActiveRound);
-            setFeedback("homeFeedback", "Nova rodada criada. Você já pode abrir e gerenciar.", "ok");
+            setFeedback("homeFeedback", "Nova rodada criada. VocÃª jÃ¡ pode abrir e gerenciar.", "ok");
         } catch (error) {
             setFeedback("homeFeedback", error.message, "error");
             if (String(error.message || "").includes("rodada ativa")) {
@@ -3767,6 +3902,14 @@ async function handleHome() {
             } catch (error) {
                 setFeedback("homeFeedback", error.message, "error");
             }
+            return;
+        }
+
+        const editRoundBtn = event.target.closest("button[data-home-edit-round]");
+        if (editRoundBtn) {
+            const roundId = Number(editRoundBtn.dataset.homeEditRound);
+            if (!roundId) return;
+            window.location.href = `/round.html?roundId=${roundId}`;
             return;
         }
 
@@ -3828,6 +3971,8 @@ let roundUsers = [];
 let roundPollTimer = null;
 let roundRecommendationsStructureSignature = "";
 let roundLastPhase = "";
+let pairExclusionAutosaveToken = 0;
+let pairExclusionsRenderSignature = "";
 
 function renderParticipantList(round) {
     const list = byId("participantList");
@@ -3906,7 +4051,7 @@ function validatePairExclusionsConfig(participants, pairs, options = {}) {
             const giverName = namesById.get(giverId) || "Participante";
             return {
                 ok: false,
-                message: `${giverName} precisa ter pelo menos 1 pessoa disponível para sortear.`,
+                message: `${giverName} precisa ter pelo menos 1 pessoa disponÃ­vel para sortear.`,
                 invalidGiverId: giverId
             };
         }
@@ -3933,7 +4078,7 @@ function validatePairExclusionsConfig(participants, pairs, options = {}) {
         const fallbackGiverId = Number(options.changedGiverUserId || 0);
         return {
             ok: false,
-            message: "Restrições inconsistentes: ajuste os bloqueios para permitir um sorteio válido para todos.",
+            message: "RestriÃ§Ãµes inconsistentes: ajuste os bloqueios para permitir um sorteio vÃ¡lido para todos.",
             invalidGiverId: Number.isInteger(fallbackGiverId) && fallbackGiverId > 0 ? fallbackGiverId : 0
         };
     }
@@ -3947,7 +4092,8 @@ function renderPairExclusionsEditor(round) {
     if (!section || !list) return;
     const canManage = canManageDraftRound(round);
 
-    if (!round?.isCreator || round.phase !== "draft") {
+    if (round.phase !== "draft") {
+        pairExclusionsRenderSignature = "";
         section.classList.add("hidden");
         list.innerHTML = "";
         return;
@@ -3956,8 +4102,21 @@ function renderPairExclusionsEditor(round) {
     section.classList.remove("hidden");
 
     const participants = round.participants || [];
+    const participantSignature = participants
+        .map((item) => `${Number(item?.id) || 0}:${String(item?.username || "")}:${String(item?.nickname || "")}`)
+        .join("|");
+    const exclusionsSignature = (round.pair_exclusions || [])
+        .map((item) => pairExclusionKey(item.giver_user_id, item.receiver_user_id))
+        .sort()
+        .join("|");
+    const renderSignature = `draft|manage:${canManage ? 1 : 0}|participants:${participantSignature}|exclusions:${exclusionsSignature}`;
+    if (renderSignature === pairExclusionsRenderSignature) {
+        return;
+    }
+    pairExclusionsRenderSignature = renderSignature;
+
     if (participants.length < 2) {
-        list.innerHTML = "<p>Adicione ao menos 2 participantes para configurar restrições.</p>";
+        list.innerHTML = "<p>Adicione ao menos 2 participantes para configurar restriÃ§Ãµes.</p>";
         return;
     }
 
@@ -3985,7 +4144,7 @@ function renderPairExclusionsEditor(round) {
                 <div class="pair-exclusion-row" data-pair-giver-row="${giver.id}">
                     <div class="pair-exclusion-row-feedback" data-pair-error-for="${giver.id}"></div>
                     <div class="pair-exclusion-giver">${displayNameStyledHtml(giver)}</div>
-                    <div class="pair-exclusion-options" role="group" aria-label="Restrições de ${escapeHtml(displayName(giver))}">
+                    <div class="pair-exclusion-options" role="group" aria-label="RestriÃ§Ãµes de ${escapeHtml(displayName(giver))}">
                         ${options}
                     </div>
                 </div>
@@ -4045,11 +4204,11 @@ async function persistPairExclusionsForCurrentRound() {
 async function autosavePairExclusionsForCurrentRound() {
     if (!canManageDraftRound(currentRound)) return;
     const token = ++pairExclusionAutosaveToken;
-    setFeedback("roundFeedback", "Salvando restrições...", "");
+    setFeedback("roundFeedback", "Salvando restriÃ§Ãµes...", "");
     try {
         await persistPairExclusionsForCurrentRound();
         if (token !== pairExclusionAutosaveToken) return;
-        setFeedback("roundFeedback", "Restrições atualizadas.", "ok");
+        setFeedback("roundFeedback", "RestriÃ§Ãµes atualizadas.", "ok");
     } catch (error) {
         if (token !== pairExclusionAutosaveToken) return;
         setFeedback("roundFeedback", error.message, "error");
@@ -4066,7 +4225,7 @@ function renderRoundRecommendations(round) {
         .join("|");
 
     if (!recommendations.length) {
-        container.innerHTML = "<p>Ainda não há indicações enviadas nesta rodada.</p>";
+        container.innerHTML = "<p>Ainda nÃ£o hÃ¡ indicaÃ§Ãµes enviadas nesta rodada.</p>";
         recommendationCommentSignatureCaches.round.clear();
         recommendationCommentIdsCaches.round.clear();
         clearStaleCommentSignatures("round", []);
@@ -4103,7 +4262,7 @@ function resetRoundSections() {
 function canManageDraftRound(roundLike = currentRound) {
     const round = roundLike || null;
     if (!round || String(round.phase || "") !== "draft") return false;
-    return Boolean(round.isCreator || sessionIsOwner);
+    return Boolean(round.isCreator || sessionIsOwner || sessionIsModerator);
 }
 
 function applyDraftReadOnlyUi(round) {
@@ -4121,6 +4280,17 @@ function applyDraftReadOnlyUi(round) {
     if (searchInput instanceof HTMLInputElement) {
         searchInput.disabled = !canManage;
     }
+    const searchTools = draftSection.querySelector(".participant-tools");
+    if (searchTools instanceof HTMLElement) {
+        searchTools.classList.toggle("hidden", !canManage);
+    }
+    const searchResults = byId("participantSearchResults");
+    if (searchResults instanceof HTMLElement) {
+        searchResults.classList.toggle("hidden", !canManage);
+        if (!canManage) {
+            searchResults.innerHTML = "";
+        }
+    }
 
     const searchBtn = byId("searchParticipantsBtn");
     if (searchBtn instanceof HTMLButtonElement) {
@@ -4129,10 +4299,7 @@ function applyDraftReadOnlyUi(round) {
 
     const drawBtn = byId("drawBtn");
     if (drawBtn instanceof HTMLButtonElement) {
-        const creatorIsOwner =
-            Boolean(round?.creator_is_owner)
-            || String(round?.creator_role || "").toLowerCase() === "owner";
-        const canUseDraw = Boolean(sessionIsOwner || (sessionIsModerator && !creatorIsOwner));
+        const canUseDraw = canManage;
         drawBtn.classList.toggle("hidden", !canUseDraw);
         drawBtn.disabled = !canUseDraw;
     }
@@ -4287,7 +4454,7 @@ function renderNavalChart(round) {
 
     const rated = (round.recommendations || []).filter((rec) => rec.rating_letter && rec.interest_score);
     if (!rated.length) {
-        chart.innerHTML = "<p style='padding:12px;color:#9fb3e0;'>Ainda não há notas nesta rodada.</p>";
+        chart.innerHTML = "<p style='padding:12px;color:#9fb3e0;'>Ainda nÃ£o hÃ¡ notas nesta rodada.</p>";
         return;
     }
 
@@ -4351,7 +4518,7 @@ function renderRevealList(round) {
     if (!listEl) return;
     const assignments = round.assignments || [];
     if (!assignments.length) {
-        listEl.innerHTML = "<p>O sorteio ainda não foi gerado.</p>";
+        listEl.innerHTML = "<p>O sorteio ainda nÃ£o foi gerado.</p>";
         return;
     }
 
@@ -4369,7 +4536,8 @@ function renderRevealList(round) {
                     username: item.receiver_username
                 }
                 : "Oculto";
-            const revealBtn = round.isCreator && !item.revealed
+            const canReveal = Boolean(round.isCreator || sessionIsOwner || sessionIsModerator);
+            const revealBtn = canReveal && !item.revealed
                 ? `<button class="btn btn-outline" data-reveal-giver="${item.giver_user_id}" type="button">Mostrar sorteado</button>`
                 : "";
             const giverHtml = displayNameStyledHtml(giverUser);
@@ -4395,9 +4563,9 @@ function renderRoundState(round) {
             : round.phase === "reveal"
               ? "Sorteio concluido. Revele os pareamentos."
               : round.phase === "indication"
-                ? "Sessão de indicações aberta."
+                ? "SessÃ£o de indicaÃ§Ãµes aberta."
                 : round.phase === "rating"
-                  ? "Sessão de notas navais aberta."
+                  ? "SessÃ£o de notas navais aberta."
               : "Rodada encerrada.";
 
     renderRoundRecommendations(round);
@@ -4417,7 +4585,7 @@ function renderRoundState(round) {
         byId("revealSection")?.classList.remove("hidden");
         renderRevealList(round);
         const tools = byId("startIndicationTools");
-        if (round.isCreator) {
+        if (round.isCreator || sessionIsOwner || sessionIsModerator) {
             tools?.classList.remove("hidden");
             const input = byId("ratingStartsAtInput");
             if (input && document.activeElement !== input) {
@@ -4452,15 +4620,27 @@ function renderRoundState(round) {
         const closeBtn = byId("closeRoundBtn");
         const finalizeBtn = byId("finalizeRoundBtn");
         const canOwnerOrCreator = Boolean(round.isCreator || sessionIsOwner);
-        const canModeratorReopen = Boolean(sessionIsModerator && !canOwnerOrCreator && round.phase === "closed");
-        if (canOwnerOrCreator || canModeratorReopen) {
-            if (round.phase === "closed") {
+        const canOwnerOrModerator = Boolean(sessionIsOwner || sessionIsModerator);
+        const isReopenedRound = String(round.status || "") === "reopened";
+        const canReopenClosedRound = round.phase === "closed" && canOwnerOrModerator;
+        const canFinalizeReopenedRound = round.phase === "rating" && isReopenedRound && canOwnerOrModerator;
+
+        if (canReopenClosedRound || canFinalizeReopenedRound || canOwnerOrCreator) {
+            if (canReopenClosedRound) {
                 closeBtn?.classList.add("hidden");
                 finalizeBtn?.classList.remove("hidden");
                 if (finalizeBtn) {
                     finalizeBtn.textContent = "Reabrir Rodada";
                     finalizeBtn.classList.remove("btn-success");
                     finalizeBtn.classList.add("btn-warn");
+                }
+            } else if (canFinalizeReopenedRound) {
+                closeBtn?.classList.add("hidden");
+                finalizeBtn?.classList.remove("hidden");
+                if (finalizeBtn) {
+                    finalizeBtn.textContent = "Finalizar Rodada Reaberta";
+                    finalizeBtn.classList.remove("btn-warn");
+                    finalizeBtn.classList.add("btn-success");
                 }
             } else if (round.phase === "rating") {
                 closeBtn?.classList.add("hidden");
@@ -4494,8 +4674,8 @@ function renderRoundState(round) {
             const assignmentText = byId("assignmentText");
             if (assignmentText) {
                 assignmentText.innerHTML = canIndicate
-                    ? `Sua indicação desta rodada vai para: ${displayNameStyledHtml(targetUser)}`
-                    : `Indicações encerradas. Você indicou para: ${displayNameStyledHtml(targetUser)}`;
+                    ? `Sua indicaÃ§Ã£o desta rodada vai para: ${displayNameStyledHtml(targetUser)}`
+                    : `IndicaÃ§Ãµes encerradas. VocÃª indicou para: ${displayNameStyledHtml(targetUser)}`;
             }
             if (canIndicate) byId("recommendationForm")?.classList.remove("hidden");
             else byId("recommendationForm")?.classList.add("hidden");
@@ -4503,16 +4683,20 @@ function renderRoundState(round) {
             if (canIndicate) {
                 const form = byId("recommendationForm");
                 const submitBtn = form?.querySelector("button[type='submit']");
-                if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar Indicação" : "Salvar Indicação";
+                if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar IndicaÃ§Ã£o" : "Salvar IndicaÃ§Ã£o";
             }
         } else {
-            byId("assignmentText").textContent = "Você está espectando esta rodada.";
+            byId("assignmentText").textContent = "VocÃª estÃ¡ espectando esta rodada.";
             byId("recommendationForm")?.classList.add("hidden");
         }
 
         const ratingScheduleEditor = byId("ratingScheduleEditor");
         const ratingStartsAtEditInput = byId("ratingStartsAtEditInput");
-        if ((round.isCreator || sessionIsOwner || sessionIsModerator) && round.phase !== "closed") {
+        const canEditRatingSchedule =
+            String(round.status || "") === "reopened"
+                ? Boolean(sessionIsOwner || sessionIsModerator)
+                : Boolean(round.isCreator || sessionIsOwner || sessionIsModerator);
+        if (canEditRatingSchedule && round.phase !== "closed") {
             ratingScheduleEditor?.classList.remove("hidden");
             if (ratingStartsAtEditInput && document.activeElement !== ratingStartsAtEditInput) {
                 const localValue = toDateTimeLocalValue(round.rating_starts_at);
@@ -4537,19 +4721,19 @@ function renderRoundState(round) {
         } else if (round.ratingOpen) {
             const items = round.ratingsToDo || [];
             if (items.length) {
-                ratingText.textContent = "A sessão de notas foi liberada. Avalie os jogos que você recebeu.";
+                ratingText.textContent = "A sessÃ£o de notas foi liberada. Avalie os jogos que vocÃª recebeu.";
                 ratingForm?.classList.remove("hidden");
                 ratingSelect.innerHTML = items
                     .map((rec) => `<option value="${rec.id}">${escapeHtml(rec.game_name)} (de ${escapeHtml(displayName({ id: rec.giver_user_id, nickname: rec.giver_nickname, username: rec.giver_username }))})</option>`)
                     .join("");
             } else {
-                ratingText.textContent = "Você não recebeu jogos para avaliar nesta rodada.";
+                ratingText.textContent = "VocÃª nÃ£o recebeu jogos para avaliar nesta rodada.";
                 ratingForm?.classList.add("hidden");
             }
         } else {
             const dateText = round.rating_starts_at
                 ? new Date(round.rating_starts_at * 1000).toLocaleString("pt-BR")
-                : "data não definida";
+                : "data nÃ£o definida";
             ratingText.textContent = `Notas navais liberam em: ${dateText}.`;
             ratingForm?.classList.add("hidden");
         }
@@ -4575,14 +4759,14 @@ function renderUserSearchResults() {
 
     const canManage = canManageDraftRound(currentRound);
     if (!canManage) {
-        container.innerHTML = "<p>Somente o criador e o dono podem alterar os participantes.</p>";
+        container.innerHTML = "";
         return;
     }
 
     const existingIds = new Set((currentRound.participants || []).map((item) => item.id));
     const filtered = roundUsers.filter((user) => !existingIds.has(user.id));
     if (!filtered.length) {
-        container.innerHTML = "<p>Nenhum usuário disponível para adicionar.</p>";
+        container.innerHTML = "<p>Nenhum usuÃ¡rio disponÃ­vel para adicionar.</p>";
         return;
     }
 
@@ -4604,7 +4788,8 @@ function renderUserSearchResults() {
         .join("");
 }
 
-async function refreshRoundData(forceRoundId) {
+async function refreshRoundData(forceRoundId, options = {}) {
+    const skipUserSearchReload = Boolean(options?.skipUserSearchReload);
     let roundId = forceRoundId || Number(getQueryParam("roundId") || 0);
 
     if (!roundId) {
@@ -4618,8 +4803,9 @@ async function refreshRoundData(forceRoundId) {
             recommendationCommentSignatureCaches.round.clear();
             recommendationCommentIdsCaches.round.clear();
             roundLastPhase = "";
+            pairExclusionsRenderSignature = "";
         byId("roundHeading").textContent = "Sem rodada ativa";
-        byId("roundStatusText").textContent = "Crie uma nova rodada na página inicial.";
+        byId("roundStatusText").textContent = "Crie uma nova rodada na pÃ¡gina inicial.";
         resetRoundSections();
         byId("roundRecommendations").innerHTML = "";
         return;
@@ -4639,7 +4825,7 @@ async function refreshRoundData(forceRoundId) {
         await claimAchievementUnlocksAndNotify();
     }
     roundLastPhase = currentRound.phase;
-    if (canManageDraftRound(currentRound)) {
+    if (canManageDraftRound(currentRound) && !skipUserSearchReload) {
         await loadUsersForRound(byId("participantSearch")?.value || "");
     }
     renderUserSearchResults();
@@ -4779,10 +4965,6 @@ async function handleRoundPage() {
     });
 
     byId("drawBtn")?.addEventListener("click", async (event) => {
-        const creatorIsOwner =
-            Boolean(currentRound?.creator_is_owner)
-            || String(currentRound?.creator_role || "").toLowerCase() === "owner";
-        if (!sessionIsOwner && (!sessionIsModerator || creatorIsOwner)) return;
         if (!canManageDraftRound(currentRound)) return;
         const btn = event.currentTarget;
         setFeedback("roundFeedback", "", "");
@@ -4819,7 +5001,7 @@ async function handleRoundPage() {
         try {
             const raw = byId("ratingStartsAtInput")?.value || "";
             const ts = Math.floor(new Date(raw).getTime() / 1000);
-            await withButtonLoading(btn, "Abrindo sessão...", async () => {
+            await withButtonLoading(btn, "Abrindo sessÃ£o...", async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}/start-indication`, "POST", {
                     ratingStartsAt: ts
                 });
@@ -4833,9 +5015,11 @@ async function handleRoundPage() {
     });
 
     byId("updateRatingStartsAtBtn")?.addEventListener("click", async (event) => {
+        const isReopenedRound = String(currentRound?.status || "") === "reopened";
         if (
             !currentRound
             || currentRound.phase === "closed"
+            || (isReopenedRound && !sessionIsOwner && !sessionIsModerator)
             || (!currentRound.isCreator && !sessionIsOwner && !sessionIsModerator)
         ) {
             return;
@@ -4845,7 +5029,7 @@ async function handleRoundPage() {
             const raw = byId("ratingStartsAtEditInput")?.value || "";
             const ts = Math.floor(new Date(raw).getTime() / 1000);
             if (!Number.isInteger(ts) || ts <= 0) {
-                throw new Error("Defina uma data válida para as notas navais.");
+                throw new Error("Defina uma data vÃ¡lida para as notas navais.");
             }
             await withButtonLoading(btn, "Atualizando...", async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}`, "PUT", {
@@ -4853,7 +5037,7 @@ async function handleRoundPage() {
                 });
                 currentRound = result.round;
                 renderRoundState(currentRound);
-                setFeedback("roundFeedback", "Data da sessão de notas atualizada.", "ok");
+                setFeedback("roundFeedback", "Data da sessÃ£o de notas atualizada.", "ok");
             });
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
@@ -4967,7 +5151,7 @@ async function handleRoundPage() {
         const selectionToken = ++steamSelectionToken;
         const descriptionSnapshot = form.elements.gameDescription.value;
         const coverSnapshot = byId("coverUrlInput").value;
-        const needsDescription = !descriptionSnapshot.trim();
+        const needsDescription = !descriptionSnapshot.trim() || looksMostlyEnglishText(descriptionSnapshot);
         const needsCover = !coverSnapshot.trim();
         if (!needsDescription && !needsCover) return;
 
@@ -5016,7 +5200,7 @@ async function handleRoundPage() {
             const result = await sendForm(`/api/rounds/${currentRound.id}/recommendations`, data);
             currentRound = result.round;
             renderRoundState(currentRound);
-            setFeedback("roundFeedback", "Indicação salva sem precisar atualizar a página.", "ok");
+            setFeedback("roundFeedback", "IndicaÃ§Ã£o salva sem precisar atualizar a pÃ¡gina.", "ok");
             showAchievementUnlockNotifications(result.newlyUnlocked || []);
             claimAchievementUnlocksAndNotify();
         } catch (error) {
@@ -5058,15 +5242,17 @@ async function handleRoundPage() {
     if (roundPollTimer) clearInterval(roundPollTimer);
     roundPollTimer = setInterval(async () => {
         if (!currentRound) return;
-        if (canManageDraftRound(currentRound)) return;
         try {
-            await refreshRoundData(currentRound.id);
+            await refreshRoundData(currentRound.id, {
+                skipUserSearchReload: canManageDraftRound(currentRound)
+            });
         } catch {
             // polling silencioso
         }
     }, 1500);
 }
 async function init() {
+    ensureRawgAttributionLink();
     await handleLogoutButton();
     setupPasswordVisibilityToggles();
     setupPasswordPasteBlock();
@@ -5082,6 +5268,7 @@ async function init() {
         }
         claimAchievementUnlocksAndNotify();
         startAchievementPolling();
+        startRoundRealtimeStream();
     }
 
     if (page === "login" || page === "register") {
@@ -5101,6 +5288,7 @@ async function init() {
 }
 
 init();
+
 
 
 

@@ -318,6 +318,8 @@ fs.mkdirSync(coverDir, { recursive: true });
 
 const adminEventClients = new Map();
 let adminEventClientSeq = 0;
+const roundEventClients = new Map();
+let roundEventClientSeq = 0;
 
 function emitAdminChange(reason = "updated", payload = {}) {
     const data = JSON.stringify({
@@ -335,6 +337,26 @@ function emitAdminChange(reason = "updated", payload = {}) {
                 // sem acao
             }
             adminEventClients.delete(clientId);
+        }
+    }
+}
+
+function emitRoundChange(reason = "updated", payload = {}) {
+    const data = JSON.stringify({
+        reason: sanitizeText(reason, 80) || "updated",
+        at: nowInSeconds(),
+        ...payload
+    });
+    for (const [clientId, client] of roundEventClients.entries()) {
+        try {
+            client.res.write(`event: round-change\ndata: ${data}\n\n`);
+        } catch {
+            try {
+                client.res.end();
+            } catch {
+                // sem acao
+            }
+            roundEventClients.delete(clientId);
         }
     }
 }
@@ -456,6 +478,8 @@ const steamCache = {
     loadedAt: 0,
     apps: []
 };
+const rawgApiKey = sanitizeText(process.env.RAWG_API_KEY || "", 160);
+const rawgMetadataCache = new Map();
 
 async function loadSteamAppList() {
     const cacheIsFresh = Date.now() - steamCache.loadedAt < 1000 * 60 * 60 * 6;
@@ -649,12 +673,30 @@ async function getSteamAppDetails(appId) {
         const node = payload?.[String(numericAppId)];
         if (!node?.success || !node?.data) return null;
         const data = node.data;
-        const genres = collectSteamGenreLabels(data);
-        const releaseYear = parseSteamReleaseYear(data?.release_date?.date || "");
+        const name = sanitizeText(data.name || `App ${numericAppId}`, 120);
+        let description = sanitizeText(data.short_description || "", 600);
+        let genres = collectSteamGenreLabels(data);
+        let releaseYear = parseSteamReleaseYear(data?.release_date?.date || "");
+
+        if (!description || seemsMostlyEnglishText(description)) {
+            const rawgDetails = await getRawgGameDetailsByName(name);
+            const rawgDescription = sanitizeText(rawgDetails?.description || "", 600);
+            if (rawgDescription && seemsPortugueseText(rawgDescription)) {
+                description = rawgDescription;
+            }
+            if ((!genres || !genres.length) && Array.isArray(rawgDetails?.genres) && rawgDetails.genres.length) {
+                genres = rawgDetails.genres.map((item) => sanitizeText(item, 80)).filter(Boolean);
+            }
+            if ((!releaseYear || releaseYear <= 0) && Number(rawgDetails?.releaseYear) > 0) {
+                releaseYear = Number(rawgDetails.releaseYear);
+            }
+        }
+
         return {
             appId: numericAppId,
-            name: sanitizeText(data.name || `App ${numericAppId}`, 120),
-            description: sanitizeText(data.short_description || "", 600),
+            source: "steam",
+            name,
+            description,
             headerImage: data.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${numericAppId}/header.jpg`,
             libraryImage: `https://cdn.cloudflare.steamstatic.com/steam/apps/${numericAppId}/library_600x900_2x.jpg`,
             genres,
@@ -663,6 +705,174 @@ async function getSteamAppDetails(appId) {
     } catch {
         return null;
     }
+}
+
+function stripHtmlTags(value) {
+    return String(value || "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function scoreLanguageHints(text, dictionary) {
+    const normalized = normalizeMatchText(text);
+    if (!normalized) return 0;
+    const words = normalized.split(" ").filter(Boolean);
+    let score = 0;
+    for (const word of words) {
+        if (dictionary.has(word)) score += 1;
+    }
+    return score;
+}
+
+function seemsPortugueseText(text) {
+    const source = String(text || "");
+    if (!source.trim()) return false;
+    const ptWords = new Set([
+        "de", "do", "da", "dos", "das", "um", "uma", "para", "com", "sem",
+        "sobre", "entre", "jogo", "jogador", "historia", "voce", "nao", "que"
+    ]);
+    const accents = /[áàâãéêíóôõúç]/i.test(source) ? 2 : 0;
+    const pt = scoreLanguageHints(source, ptWords) + accents;
+    return pt >= 3;
+}
+
+function seemsMostlyEnglishText(text) {
+    const source = String(text || "");
+    if (!source.trim()) return false;
+    const enWords = new Set([
+        "the", "and", "you", "your", "with", "for", "from", "into", "about",
+        "game", "players", "story", "world", "discover", "fight", "build"
+    ]);
+    const ptWords = new Set([
+        "de", "do", "da", "dos", "das", "um", "uma", "para", "com", "sem",
+        "sobre", "entre", "jogo", "jogador", "historia", "voce", "nao", "que"
+    ]);
+    const en = scoreLanguageHints(source, enWords);
+    const pt = scoreLanguageHints(source, ptWords) + (/[áàâãéêíóôõúç]/i.test(source) ? 2 : 0);
+    return en >= 3 && en > pt;
+}
+
+function scoreGameNameMatch(candidateName, targetName) {
+    const candidate = normalizeMatchText(candidateName || "");
+    const target = normalizeMatchText(targetName || "");
+    if (!candidate || !target) return 0;
+    if (candidate === target) return 100;
+    if (candidate.startsWith(target) || target.startsWith(candidate)) return 85;
+    if (candidate.includes(target) || target.includes(candidate)) return 70;
+    const tokens = target.split(" ").filter(Boolean);
+    if (!tokens.length) return 0;
+    let hits = 0;
+    for (const token of tokens) {
+        if (candidate.includes(token)) hits += 1;
+    }
+    return Math.round((hits / tokens.length) * 60);
+}
+
+async function getSteamAppDetailsByName(gameName) {
+    const cleaned = sanitizeText(gameName, 120);
+    if (cleaned.length < 2) return null;
+    try {
+        const endpoint = `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(cleaned)}&l=portuguese&cc=br`;
+        const response = await fetch(endpoint);
+        if (!response.ok) return null;
+        const payload = await response.json();
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        if (!items.length) return null;
+
+        let bestAppId = 0;
+        let bestScore = 0;
+        for (const item of items.slice(0, 10)) {
+            const appId = Number(item?.id || 0);
+            const score = scoreGameNameMatch(item?.name || "", cleaned);
+            if (appId > 0 && score > bestScore) {
+                bestScore = score;
+                bestAppId = appId;
+            }
+        }
+        if (!bestAppId || bestScore < 45) return null;
+        return getSteamAppDetails(bestAppId);
+    } catch {
+        return null;
+    }
+}
+
+async function getRawgGameDescriptionById(gameId) {
+    const numericId = Number(gameId);
+    if (!Number.isInteger(numericId) || numericId <= 0) return "";
+    if (!rawgApiKey) return "";
+    try {
+        const endpoint = `https://api.rawg.io/api/games/${numericId}?key=${encodeURIComponent(rawgApiKey)}&lang=pt-br`;
+        const response = await fetch(endpoint);
+        if (!response.ok) return "";
+        const payload = await response.json();
+        const raw = payload?.description_raw || payload?.description || "";
+        return sanitizeText(stripHtmlTags(raw), 600);
+    } catch {
+        return "";
+    }
+}
+
+async function getRawgGameDetailsByName(gameName) {
+    if (!rawgApiKey) return null;
+    const cleaned = sanitizeText(gameName, 120);
+    if (cleaned.length < 2) return null;
+    const cacheKey = normalizeMatchText(cleaned);
+    const cached = rawgMetadataCache.get(cacheKey);
+    if (cached && (Date.now() - cached.cachedAt) < 1000 * 60 * 60 * 12) {
+        return cached.value;
+    }
+    try {
+        const endpoint = `https://api.rawg.io/api/games?key=${encodeURIComponent(rawgApiKey)}&search=${encodeURIComponent(cleaned)}&page_size=8&search_precise=true`;
+        const response = await fetch(endpoint);
+        if (!response.ok) return null;
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.results) ? payload.results : [];
+        if (!rows.length) return null;
+
+        let best = null;
+        let bestScore = 0;
+        for (const row of rows) {
+            const score = scoreGameNameMatch(row?.name || "", cleaned);
+            if (score > bestScore) {
+                bestScore = score;
+                best = row;
+            }
+        }
+        if (!best || bestScore < 45) return null;
+
+        const genres = (Array.isArray(best?.genres) ? best.genres : [])
+            .map((genre) => sanitizeText(genre?.name || "", 60))
+            .filter(Boolean);
+        const releaseYear = parseYearFromText(sanitizeText(best?.released || "", 20));
+        const image = sanitizeText(best?.background_image || "", 400);
+        let description = await getRawgGameDescriptionById(best?.id);
+        if (!description) {
+            description = sanitizeText(stripHtmlTags(best?.description_raw || best?.description || ""), 600);
+        }
+
+        const details = {
+            appId: null,
+            source: "rawg",
+            name: sanitizeText(best?.name || cleaned, 120),
+            description,
+            headerImage: image,
+            libraryImage: image,
+            genres: [...new Set(genres)],
+            releaseYear: releaseYear > 0 ? releaseYear : null
+        };
+        rawgMetadataCache.set(cacheKey, { value: details, cachedAt: Date.now() });
+        return details;
+    } catch (error) {
+        console.warn("[rawg-lookup]", error?.message || error);
+        return null;
+    }
+}
+
+async function resolveManualGameMetadataByName(gameName) {
+    const fromRawg = await getRawgGameDetailsByName(gameName);
+    if (fromRawg) return fromRawg;
+    return getSteamAppDetailsByName(gameName);
 }
 
 function randomSecretHex() {
@@ -2077,9 +2287,13 @@ async function getRoundPayload(roundId, currentUserId) {
     const ratingsToDo = recommendations.filter((item) => item.receiver_user_id === currentUserId);
     const now = nowInSeconds();
     const ratingStartsAt = round.rating_starts_at || null;
-    const ratingOpen = ratingStartsAt ? now >= ratingStartsAt : false;
+    const roundStatus = String(round.status || "");
+    const isReopened = roundStatus === "reopened";
+    const ratingOpen = isReopened ? true : (ratingStartsAt ? now >= ratingStartsAt : false);
     let phase = round.status;
-    if (round.status === "indication" && ratingOpen) {
+    if (isReopened) {
+        phase = "rating";
+    } else if (round.status === "indication" && ratingOpen) {
         phase = "rating";
     }
 
@@ -2094,6 +2308,7 @@ async function getRoundPayload(roundId, currentUserId) {
         ratingsToDo,
         ratingOpen,
         phase,
+        isReopened,
         isCreator: round.creator_user_id === currentUserId
     };
 }
@@ -2495,7 +2710,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
     throw error;
 }
 
-async function executePreparedAdminAction(actionType, preparedPayload) {
+async function executePreparedAdminAction(actionType, preparedPayload, actorUserId = 0) {
     if (actionType === "user_block") {
         const blocked = Number(preparedPayload.blocked) === 1 ? 1 : 0;
         await dbRun(
@@ -2585,14 +2800,26 @@ async function executePreparedAdminAction(actionType, preparedPayload) {
         if (String(round.status || "") === "closed") {
             await dbRun(
                 `UPDATE rounds
-                 SET status = 'indication',
+                 SET status = 'reopened',
                      rating_starts_at = ?,
                      closed_at = NULL,
                      reopened_count = COALESCE(reopened_count, 0) + 1
                  WHERE id = ?`,
                 [nowInSeconds(), roundId]
             );
-            return { message: "Rodada reaberta." };
+            emitRoundChange("round_reopened", {
+                roundId,
+                status: "reopened",
+                actorUserId: Number(actorUserId || 0)
+            });
+            return { message: "Rodada reaberta para edição de notas navais." };
+        }
+        if (String(round.status || "") === "reopened") {
+            await dbRun(
+                "UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?",
+                [nowInSeconds(), roundId]
+            );
+            return { message: "Rodada reaberta finalizada." };
         }
         await dbRun(
             "UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?",
@@ -2652,7 +2879,7 @@ async function queueOrExecuteAdminAction(actorUser, actionType, rawPayload) {
             message: "Solicitacao enviada ao dono para aprovacao."
         };
     }
-    const result = await executePreparedAdminAction(actionType, preparedPayload);
+    const result = await executePreparedAdminAction(actionType, preparedPayload, Number(actorUser?.id) || 0);
     emitAdminChange("admin_action_executed", {
         actorUserId: Number(actorUser?.id) || 0,
         actionType: sanitizeText(actionType, 80)
@@ -4158,7 +4385,7 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
         const payload = parseJsonSafely(row.payload_json, {});
         try {
             const actionType = String(row.action_type || row.action_key || "");
-            const result = await executePreparedAdminAction(actionType, payload);
+            const result = await executePreparedAdminAction(actionType, payload, Number(req.currentUser?.id) || 0);
             await dbRun(
                 `UPDATE admin_action_requests
                  SET status = 'approved',
@@ -4208,6 +4435,38 @@ app.get("/api/rounds/active", requireAuth, async (req, res) => {
         console.error(error);
         return res.status(500).json({ message: "Erro ao carregar rodada ativa." });
     }
+});
+
+app.get("/api/rounds/events", requireAuth, (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof res.flushHeaders === "function") {
+        res.flushHeaders();
+    }
+
+    const clientId = ++roundEventClientSeq;
+    const keepAliveTimer = setInterval(() => {
+        try {
+            res.write(": keepalive\n\n");
+        } catch {
+            clearInterval(keepAliveTimer);
+            roundEventClients.delete(clientId);
+        }
+    }, 25000);
+
+    roundEventClients.set(clientId, {
+        res,
+        userId: Number(req.currentUser?.id) || 0
+    });
+    res.write(": connected\n\n");
+    res.write(`event: round-change\ndata: ${JSON.stringify({ reason: "connected", at: nowInSeconds() })}\n\n`);
+
+    req.on("close", () => {
+        clearInterval(keepAliveTimer);
+        roundEventClients.delete(clientId);
+    });
 });
 
 app.get("/api/rounds/:roundId", requireAuth, async (req, res) => {
@@ -4421,27 +4680,55 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
         if (!round) {
             return res.status(404).json({ message: "Rodada nao encontrada." });
         }
-        const canManageRound = Boolean(req.currentUser?.isOwner) || Number(round.creator_user_id) === Number(req.currentUser.id);
-        if (!canManageRound) {
-            return res.status(403).json({ message: "Sem permissao para gerenciar essa rodada." });
-        }
-
         if (round.status === "closed") {
+            const canReopenRound =
+                Boolean(req.currentUser?.isOwner)
+                || Boolean(req.currentUser?.isModerator);
+            if (!canReopenRound) {
+                return res.status(403).json({ message: "Sem permissao para reabrir essa rodada." });
+            }
             const reopenAt = nowInSeconds();
             await dbRun(
                 `UPDATE rounds
-                 SET status = 'indication',
+                 SET status = 'reopened',
                      rating_starts_at = ?,
                      closed_at = NULL,
                      reopened_count = COALESCE(reopened_count, 0) + 1
                  WHERE id = ?`,
                 [reopenAt, roundId]
             );
+            emitRoundChange("round_reopened", {
+                roundId,
+                status: "reopened",
+                actorUserId: Number(req.currentUser?.id) || 0
+            });
             const payload = await getRoundPayload(roundId, req.currentUser.id);
             return res.json({
-                message: "Rodada reaberta. A sessao de notas navais foi liberada novamente.",
+                message: "Rodada reaberta para edição de notas navais.",
                 round: payload
             });
+        }
+
+        if (round.status === "reopened") {
+            const canFinalizeReopened =
+                Boolean(req.currentUser?.isOwner)
+                || Boolean(req.currentUser?.isModerator);
+            if (!canFinalizeReopened) {
+                return res.status(403).json({ message: "Sem permissao para finalizar rodada reaberta." });
+            }
+            await dbRun("UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?", [
+                nowInSeconds(),
+                roundId
+            ]);
+            const payload = await getRoundPayload(roundId, req.currentUser.id);
+            return res.json({ message: "Rodada reaberta finalizada.", round: payload });
+        }
+
+        const canCloseRound =
+            Boolean(req.currentUser?.isOwner)
+            || Number(round.creator_user_id) === Number(req.currentUser.id);
+        if (!canCloseRound) {
+            return res.status(403).json({ message: "Sem permissao para encerrar essa rodada." });
         }
 
         await dbRun("UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?", [
@@ -4464,7 +4751,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
         if (!round) {
             return res.status(404).json({ message: "Rodada nao encontrada." });
         }
-        if (!req.currentUser?.isOwner && round.creator_user_id !== req.currentUser.id) {
+        if (!req.currentUser?.isOwner && !req.currentUser?.isModerator && round.creator_user_id !== req.currentUser.id) {
             return res.status(403).json({ message: "Sem permissao para editar essa rodada." });
         }
 
@@ -4472,7 +4759,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
         const params = [];
 
         if (req.body.status) {
-            const allowed = new Set(["draft", "reveal", "indication", "closed"]);
+            const allowed = new Set(["draft", "reveal", "indication", "reopened", "closed"]);
             const status = String(req.body.status);
             if (!allowed.has(status)) {
                 return res.status(400).json({ message: "Status de rodada invalido." });
@@ -4568,6 +4855,8 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
             let steamDetails = null;
             if (steamAppId) {
                 steamDetails = await getSteamAppDetails(steamAppId);
+            } else if (gameName) {
+                steamDetails = await resolveManualGameMetadataByName(gameName);
             }
             if (steamDetails && (!gameName || !gameDescription || !gameCoverUrl)) {
                 if (!gameName) {
@@ -4581,6 +4870,18 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                         steamDetails?.headerImage || steamDetails?.libraryImage || "",
                         400
                     );
+                }
+            }
+
+            // Se a descricao vier em ingles, tenta substituir por uma descricao em portugues via RAWG.
+            if (gameName && gameDescription && seemsMostlyEnglishText(gameDescription)) {
+                const rawgDetails = await getRawgGameDetailsByName(gameName);
+                const rawgDescription = sanitizeText(rawgDetails?.description || "", 500);
+                if (rawgDescription && seemsPortugueseText(rawgDescription)) {
+                    gameDescription = rawgDescription;
+                }
+                if (!steamDetails && rawgDetails) {
+                    steamDetails = rawgDetails;
                 }
             }
 
@@ -4612,6 +4913,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 steamReleaseYear > 0
                     ? steamReleaseYear
                     : (Number(existing?.game_release_year || 0) > 0 ? Number(existing?.game_release_year) : null);
+            const resolvedSteamAppId = steamAppId || (steamDetails?.appId ? String(steamDetails.appId) : null);
 
             if (existing) {
                 await dbRun(
@@ -4625,7 +4927,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                         gameCoverUrl,
                         gameDescription,
                         reason,
-                        steamAppId || null,
+                        resolvedSteamAppId,
                         resolvedGenres,
                         resolvedReleaseYear,
                         nowInSeconds(),
@@ -4649,7 +4951,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                         reason,
                         "J",
                         1,
-                        steamAppId || null,
+                        resolvedSteamAppId,
                         resolvedGenres,
                         resolvedReleaseYear,
                         now,
@@ -4692,10 +4994,12 @@ app.post("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
         }
 
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
-        if (!round || round.status !== "indication") {
+        const roundStatus = String(round?.status || "");
+        const canRateInRound = round && (roundStatus === "indication" || roundStatus === "reopened");
+        if (!canRateInRound) {
             return res.status(400).json({ message: "A rodada nao esta na fase de notas." });
         }
-        if (!round.rating_starts_at || nowInSeconds() < round.rating_starts_at) {
+        if (roundStatus !== "reopened" && (!round.rating_starts_at || nowInSeconds() < round.rating_starts_at)) {
             return res.status(400).json({ message: "A sessao de notas ainda nao foi liberada." });
         }
 

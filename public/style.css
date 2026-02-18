@@ -1064,6 +1064,7 @@ input[readonly] {
 .achievements-grid {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
     gap: 0.8rem;
 }
 
@@ -1077,7 +1078,10 @@ input[readonly] {
     padding: 0.62rem;
     text-align: center;
     display: grid;
+    grid-template-rows: 1fr auto auto;
     gap: 0.35rem;
+    height: 100%;
+    min-height: 300px;
     box-shadow:
         inset 0 0 0 1px rgba(224, 194, 138, 0.2),
         inset 0 0 0 3px rgba(43, 28, 14, 0.55),
@@ -1117,7 +1121,8 @@ input[readonly] {
 .achievement-item img {
     width: 100%;
     aspect-ratio: 3 / 4;
-    height: auto;
+    height: 100%;
+    max-height: 210px;
     object-fit: cover;
     object-position: center;
     display: block;
@@ -1149,6 +1154,16 @@ input[readonly] {
     letter-spacing: 0.03em;
     color: #f6e6c8;
     text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+    line-height: 1.2;
+    min-height: 2.1em;
+    max-height: 2.1em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
 }
 
 .achievement-description,
@@ -1156,9 +1171,17 @@ input[readonly] {
     color: #e8d8bd;
     font-size: 0.82rem;
     line-height: 1.25;
-    min-height: 2.1em;
+    min-height: 2.5em;
+    max-height: 2.5em;
     display: block;
     text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
 }
 
 .achievement-toast-stack {
@@ -2187,7 +2210,10 @@ body[data-page="round"] .draft-draw-actions {
 }
 
 .pair-exclusion-options {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
     gap: 0.4rem;
     max-height: 180px;
     overflow-y: auto;
@@ -2211,10 +2237,11 @@ body[data-page="round"] .draft-draw-actions {
 }
 
 .pair-exclusion-item {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    width: fit-content;
+    max-width: 100%;
     border: 1px solid rgba(121, 155, 233, 0.3);
     border-radius: 10px;
     padding: 0.4rem 0.55rem;
@@ -2222,6 +2249,10 @@ body[data-page="round"] .draft-draw-actions {
     line-height: 1.2;
     background: rgba(9, 15, 31, 0.88);
     transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.pair-exclusion-item > span {
+    white-space: nowrap;
 }
 
 .pair-exclusion-item:hover {
@@ -2751,6 +2782,11 @@ body[data-page="round"] .draft-draw-actions {
 
     .achievement-item {
         padding: 0.45rem;
+        min-height: 270px;
+    }
+
+    .achievement-item img {
+        max-height: 176px;
     }
 
     .panel-grid {
@@ -3472,4 +3508,28 @@ body[data-page="round"] .draft-draw-actions {
 
 .pair-exclusion-row-feedback.active {
     display: block;
+}
+
+.rawg-attribution {
+    position: fixed;
+    right: 8px;
+    bottom: 6px;
+    z-index: 15;
+    font-size: 0.58rem;
+    letter-spacing: 0.01em;
+    color: rgba(173, 197, 236, 0.52);
+    opacity: 0.72;
+    user-select: none;
+    pointer-events: auto;
+}
+
+.rawg-attribution a {
+    color: rgba(173, 197, 236, 0.62);
+    text-decoration: none;
+}
+
+.rawg-attribution a:hover,
+.rawg-attribution a:focus-visible {
+    color: rgba(216, 229, 255, 0.86);
+    text-decoration: underline;
 }

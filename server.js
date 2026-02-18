@@ -2062,7 +2062,12 @@ async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter =
            )
            AND COALESCE(rec.updated_at, rec.created_at, 0) > ?
            AND COALESCE(rec.steam_app_id, '') <> ''
-           AND (rec.game_release_year IS NULL OR rec.game_release_year <= 0 OR COALESCE(rec.game_genres, '') = '')
+           AND (
+                rec.game_release_year IS NULL
+                OR rec.game_release_year <= 0
+                OR COALESCE(rec.game_genres, '') = ''
+                OR LENGTH(COALESCE(rec.game_genres, '')) = 320
+           )
          ORDER BY rec.id DESC
          LIMIT 24`,
         [userId, gate, gate, gate]
@@ -2072,7 +2077,7 @@ async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter =
         if (!appId) continue;
         const details = await getSteamAppDetails(appId);
         if (!details) continue;
-        const genresText = sanitizeText((details.genres || []).join(", "), 320);
+        const genresText = sanitizeText((details.genres || []).join(", "), 2000);
         const releaseYear = Number(details.releaseYear || 0);
         await dbRun(
             `UPDATE recommendations

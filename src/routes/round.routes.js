@@ -571,9 +571,9 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 return res.status(400).json({ message: "Envie a capa do jogo (arquivo ou capa da Steam)." });
             }
 
-            const steamGenres = sanitizeText((steamDetails?.genres || []).join(", "), 320);
+            const steamGenres = sanitizeText((steamDetails?.genres || []).join(", "), 2000);
             const steamReleaseYear = Number(steamDetails?.releaseYear || 0);
-            const resolvedGenres = steamGenres || sanitizeText(existing?.game_genres || "", 320) || null;
+            const resolvedGenres = steamGenres || sanitizeText(existing?.game_genres || "", 2000) || null;
             const resolvedReleaseYear =
                 steamReleaseYear > 0
                     ? steamReleaseYear

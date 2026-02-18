@@ -1135,6 +1135,17 @@ async function initDb() {
     await ensureColumn("users", "phone TEXT");
     await ensureColumn("users", "blocked INTEGER NOT NULL DEFAULT 0");
     await ensureColumn("users", "is_moderator INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "psn_online_id TEXT");
+    await ensureColumn("users", "psn_account_id TEXT");
+    await ensureColumn("users", "psn_avatar_url TEXT");
+    await ensureColumn("users", "psn_trophy_level INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "psn_trophy_progress INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "psn_trophies_bronze INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "psn_trophies_silver INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "psn_trophies_gold INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "psn_trophies_platinum INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "psn_linked_at INTEGER");
+    await ensureColumn("users", "psn_updated_at INTEGER");
 
     await dbRun(`
         CREATE TABLE IF NOT EXISTS pending_registrations (
@@ -1341,6 +1352,31 @@ async function initDb() {
             achievement_key TEXT NOT NULL,
             gated_after INTEGER NOT NULL,
             PRIMARY KEY (user_id, achievement_key),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    await dbRun(`
+        CREATE TABLE IF NOT EXISTS user_psn_titles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            np_service_name TEXT NOT NULL,
+            np_communication_id TEXT NOT NULL,
+            title_name TEXT NOT NULL,
+            title_icon_url TEXT,
+            title_platform TEXT,
+            progress INTEGER NOT NULL DEFAULT 0,
+            earned_bronze INTEGER NOT NULL DEFAULT 0,
+            earned_silver INTEGER NOT NULL DEFAULT 0,
+            earned_gold INTEGER NOT NULL DEFAULT 0,
+            earned_platinum INTEGER NOT NULL DEFAULT 0,
+            defined_bronze INTEGER NOT NULL DEFAULT 0,
+            defined_silver INTEGER NOT NULL DEFAULT 0,
+            defined_gold INTEGER NOT NULL DEFAULT 0,
+            defined_platinum INTEGER NOT NULL DEFAULT 0,
+            last_updated_at INTEGER,
+            synced_at INTEGER NOT NULL,
+            UNIQUE (user_id, np_service_name, np_communication_id),
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     `);
@@ -2707,6 +2743,7 @@ async function deleteUserCascade(userId) {
     await dbRun("DELETE FROM password_resets WHERE user_id = ?", [userId]);
     await dbRun("DELETE FROM suggestions WHERE user_id = ?", [userId]);
     await dbRun("DELETE FROM user_achievement_gates WHERE user_id = ?", [userId]);
+    await dbRun("DELETE FROM user_psn_titles WHERE user_id = ?", [userId]);
     await dbRun(
         "DELETE FROM admin_action_requests WHERE requester_user_id = ? OR decided_by_user_id = ?",
         [userId, userId]

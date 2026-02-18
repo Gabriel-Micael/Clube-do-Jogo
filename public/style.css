@@ -1082,6 +1082,218 @@ input[readonly] {
     margin: 0;
 }
 
+.psn-summary-text {
+    margin: 0 0 0.8rem;
+    color: rgba(216, 226, 247, 0.86);
+}
+
+.psn-help-text {
+    margin: 0 0 0.9rem;
+    color: rgba(189, 207, 236, 0.82);
+    font-size: 0.84rem;
+}
+
+.psn-help-text a {
+    color: #9fcbff;
+}
+
+.btn-psn {
+    background: linear-gradient(140deg, #0056d7, #006df2);
+    color: #ffffff;
+    border: 1px solid rgba(177, 215, 255, 0.42);
+    box-shadow: 0 10px 24px rgba(0, 47, 121, 0.42);
+    letter-spacing: 0.02em;
+}
+
+.btn-psn::before {
+    content: "PS";
+    font-family: "Orbitron", sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-right: 0.45rem;
+    padding: 0.04rem 0.34rem;
+    border: 1px solid rgba(209, 234, 255, 0.45);
+    border-radius: 999px;
+}
+
+.btn-psn:hover {
+    filter: brightness(1.06);
+}
+
+#profilePsnSection .inline-actions {
+    align-items: stretch;
+}
+
+#profilePsnSection .inline-actions .btn {
+    margin: 0;
+    min-height: 42px;
+}
+
+.psn-profile-head {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 0.9rem;
+    align-items: center;
+    border: 1px solid rgba(118, 154, 247, 0.34);
+    border-radius: 12px;
+    background: linear-gradient(138deg, rgba(8, 15, 34, 0.92), rgba(18, 31, 65, 0.95));
+    padding: 0.85rem;
+    margin-bottom: 0.9rem;
+}
+
+.psn-profile-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 14px;
+    object-fit: cover;
+    border: 1px solid rgba(162, 188, 246, 0.55);
+    background: rgba(11, 18, 40, 0.95);
+}
+
+.psn-profile-meta {
+    min-width: 0;
+}
+
+.psn-profile-meta h3 {
+    margin: 0;
+    font-size: 1.08rem;
+}
+
+.psn-updated-text {
+    margin: 0.2rem 0 0;
+    font-size: 0.8rem;
+    color: rgba(193, 210, 240, 0.8);
+}
+
+.psn-summary-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.45rem;
+}
+
+.psn-summary-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.24rem;
+    padding: 0.24rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid rgba(136, 166, 232, 0.35);
+    background: rgba(21, 34, 67, 0.68);
+    font-size: 0.78rem;
+    color: rgba(234, 243, 255, 0.95);
+}
+
+.psn-summary-pill.psn-bronze {
+    border-color: rgba(175, 127, 88, 0.72);
+}
+
+.psn-summary-pill.psn-silver {
+    border-color: rgba(180, 189, 206, 0.72);
+}
+
+.psn-summary-pill.psn-gold {
+    border-color: rgba(219, 181, 84, 0.78);
+}
+
+.psn-summary-pill.psn-platinum {
+    border-color: rgba(135, 196, 233, 0.82);
+}
+
+.psn-titles-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.72rem;
+}
+
+.psn-title-card {
+    border: 1px solid rgba(100, 129, 194, 0.34);
+    border-radius: 12px;
+    background: rgba(8, 14, 33, 0.82);
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 0.62rem;
+    align-items: center;
+    padding: 0.6rem;
+}
+
+.psn-title-card > img {
+    width: 58px;
+    height: 58px;
+    border-radius: 10px;
+    object-fit: cover;
+    border: 1px solid rgba(132, 164, 237, 0.42);
+    background: rgba(5, 10, 28, 0.9);
+}
+
+.psn-title-main {
+    min-width: 0;
+}
+
+.psn-title-name {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.2;
+    color: #f2f7ff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.psn-title-meta {
+    margin: 0.2rem 0 0;
+    font-size: 0.77rem;
+    color: rgba(196, 214, 244, 0.86);
+}
+
+.psn-title-trophy-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.45rem;
+    margin-top: 0.25rem;
+}
+
+.psn-title-trophy-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.74rem;
+    color: rgba(236, 243, 255, 0.95);
+}
+
+.psn-tier-icon {
+    width: 14px;
+    height: 14px;
+    object-fit: contain;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+#psnShowMoreBtn {
+    margin-top: 0.75rem;
+}
+
+.psn-title-progress {
+    margin: 0.28rem 0 0;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(115, 142, 197, 0.25);
+    overflow: hidden;
+}
+
+.psn-title-progress > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #4ea1ff, #83d0ff);
+}
+
+.psn-empty-state {
+    margin: 0;
+    color: rgba(196, 214, 244, 0.82);
+}
+
 .achievement-progress {
     display: none;
 }
@@ -2403,6 +2615,17 @@ body[data-page="round"] .draft-draw-actions {
     gap: 0.35rem;
 }
 
+.rating-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+}
+
+#ratingForm .rating-actions .btn {
+    margin-top: 0;
+}
+
 #ratingStartsAtEditInput {
     margin-bottom: 0.35rem;
 }
@@ -2565,12 +2788,26 @@ body[data-page="round"] .draft-draw-actions {
     cursor: pointer;
 }
 
+.naval-point-preview {
+    pointer-events: none;
+    cursor: default;
+    border-style: dashed;
+    border-color: rgba(146, 195, 255, 0.88);
+    opacity: 0.72;
+    z-index: 16;
+}
+
 .naval-point img {
     width: 100%;
     height: 100%;
     border-radius: 50%;
     object-fit: cover;
     border: 2px solid rgba(255, 255, 255, 0.25);
+}
+
+.naval-point-preview img {
+    opacity: 0.42;
+    filter: grayscale(0.35) saturate(0.78);
 }
 
 .naval-grade-badge {
@@ -2590,6 +2827,11 @@ body[data-page="round"] .draft-draw-actions {
     text-align: center;
     pointer-events: none;
     z-index: 3;
+}
+
+.naval-grade-badge-preview {
+    border-style: dashed;
+    background: rgba(8, 16, 32, 0.88);
 }
 
 .naval-grade-badge-stack {
@@ -2832,6 +3074,23 @@ body[data-page="round"] .draft-draw-actions {
     }
 
     .profile-info-row {
+        grid-template-columns: 1fr;
+    }
+
+    .psn-profile-head {
+        grid-template-columns: 1fr;
+        text-align: center;
+    }
+
+    .psn-profile-avatar {
+        justify-self: center;
+    }
+
+    .psn-summary-pills {
+        justify-content: center;
+    }
+
+    .psn-titles-grid {
         grid-template-columns: 1fr;
     }
 
@@ -3128,6 +3387,16 @@ body[data-page="round"] .draft-draw-actions {
         max-width: none;
         flex: 0 1 auto;
         margin: 0;
+    }
+
+    .psn-title-card {
+        grid-template-columns: 50px minmax(0, 1fr);
+        gap: 0.5rem;
+    }
+
+    .psn-title-card > img {
+        width: 50px;
+        height: 50px;
     }
 
     .participant-tools {

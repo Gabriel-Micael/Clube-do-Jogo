@@ -741,6 +741,61 @@ app.post("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
         return res.status(500).json({ message: "Erro ao registrar nota naval." });
     }
 });
+
+app.delete("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
+    try {
+        const roundId = Number(req.params.roundId);
+        const recommendationId = Number(req.body?.recommendationId);
+        if (!Number.isInteger(recommendationId) || recommendationId <= 0) {
+            return res.status(400).json({ message: "Indicação inválida para limpar o voto." });
+        }
+
+        const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
+        const roundStatus = String(round?.status || "");
+        const canRateInRound = round && (roundStatus === "indication" || roundStatus === "reopened");
+        if (!canRateInRound) {
+            return res.status(400).json({ message: "A rodada não está na fase de notas." });
+        }
+        if (roundStatus !== "reopened" && (!round.rating_starts_at || nowInSeconds() < round.rating_starts_at)) {
+            return res.status(400).json({ message: "A sessão de notas ainda não foi liberada." });
+        }
+
+        const recommendation = await dbGet(
+            "SELECT id, receiver_user_id FROM recommendations WHERE id = ? AND round_id = ? LIMIT 1",
+            [recommendationId, roundId]
+        );
+        if (!recommendation) {
+            return res.status(404).json({ message: "Indicação não encontrada para esta rodada." });
+        }
+        if (recommendation.receiver_user_id !== req.session.userId) {
+            return res.status(403).json({ message: "Apenas quem recebeu a indicação pode limpar a nota naval." });
+        }
+
+        const existing = await dbGet(
+            "SELECT id FROM recommendation_ratings WHERE recommendation_id = ? LIMIT 1",
+            [recommendationId]
+        );
+        if (!existing) {
+            return res.status(404).json({ message: "Esta indicação ainda não possui nota naval registrada." });
+        }
+
+        await dbRun("DELETE FROM recommendation_ratings WHERE id = ?", [existing.id]);
+        const payload = await getRoundPayload(roundId, req.session.userId);
+        emitRoundChange("round_rating_cleared", {
+            roundId,
+            recommendationId,
+            actorUserId: Number(req.session.userId) || 0
+        });
+        return res.json({
+            message: "Nota naval removida.",
+            round: payload
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao limpar nota naval." });
+    }
+});
+
 app.post("/api/recommendations/:recommendationId/comments", requireAuth, async (req, res) => {
     try {
         const recommendationId = Number(req.params.recommendationId);

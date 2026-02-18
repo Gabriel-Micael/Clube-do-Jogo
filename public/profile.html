@@ -62,10 +62,25 @@
             <p id="feedback" class="feedback"></p>
         </section>
 
-        <section class="card">
-            <h2>Senha</h2>
-            <p>Para trocar a senha, enviaremos um link de confirmação para o email da sua conta.</p>
-            <button id="sendResetFromProfile" class="btn" type="button">Enviar link de troca de senha</button>
+        <section id="profilePsnSection" class="card">
+            <h2>Conquistas da PSN</h2>
+            <p id="psnSummaryText" class="psn-summary-text">Conecte sua PSN para exibir troféus no perfil.</p>
+            <div class="inline-actions">
+                <button id="psnLinkBtn" class="btn btn-psn hidden" type="button">Vincular PSN</button>
+                <button id="psnUnlinkBtn" class="btn btn-outline hidden" type="button">Desvincular PSN</button>
+            </div>
+            <p class="psn-help-text">
+                Ao vincular, o sistema sincroniza automaticamente seus trofeus da PSN e exibe para todos no perfil.
+                Se precisar, acesse
+                <a href="https://ca.account.sony.com/api/v1/ssocookie" target="_blank" rel="noopener noreferrer">https://ca.account.sony.com/api/v1/ssocookie</a>
+                para obter o NPSSO.
+            </p>
+            <div id="psnProfileHead" class="psn-profile-head hidden"></div>
+            <div id="psnTitlesGrid" class="psn-titles-grid"></div>
+            <div class="inline-actions">
+                <button id="psnShowMoreBtn" class="btn btn-outline hidden" type="button">Ver mais</button>
+            </div>
+            <p id="psnFeedback" class="feedback"></p>
         </section>
 
         <section id="profileAchievementsSection" class="card">
@@ -173,6 +188,12 @@
                     <span class="achievement-description"></span>
                 </article>
             </div>
+        </section>
+
+        <section class="card">
+            <h2>Senha</h2>
+            <p>Para trocar a senha, enviaremos um link de confirmação para o email da sua conta.</p>
+            <button id="sendResetFromProfile" class="btn" type="button">Enviar link de troca de senha</button>
         </section>
 
         <section id="profileActivitySection" class="card">

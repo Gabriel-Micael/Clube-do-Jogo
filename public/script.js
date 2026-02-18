@@ -2650,6 +2650,13 @@ async function loadProfile() {
     const profileActivitySection = byId("profileActivitySection");
     const achievementsGrid = byId("achievementsGrid");
     const achievementsProgress = byId("achievementsProgress");
+    const psnSummaryText = byId("psnSummaryText");
+    const psnLinkBtn = byId("psnLinkBtn");
+    const psnUnlinkBtn = byId("psnUnlinkBtn");
+    const psnProfileHead = byId("psnProfileHead");
+    const psnTitlesGrid = byId("psnTitlesGrid");
+    const psnShowMoreBtn = byId("psnShowMoreBtn");
+    const psnFeedback = byId("psnFeedback");
     const viewedUserId = Number(getQueryParam("userId") || 0);
     let currentProfileUserId = 0;
     let ownUserId = 0;
@@ -2681,6 +2688,15 @@ async function loadProfile() {
         label: ""
     };
     const defaultEmailLabel = "Email (não editável)";
+    const sonySsoCookieUrl = "https://ca.account.sony.com/api/v1/ssocookie";
+    const psnTrophyIconByTier = Object.freeze({
+        platinum: "/assets/psn/trophy-platinum.svg",
+        gold: "/assets/psn/trophy-gold.svg",
+        silver: "/assets/psn/trophy-silver.svg",
+        bronze: "/assets/psn/trophy-bronze.svg"
+    });
+    let psnVisibleTitlesLimit = 10;
+    let psnCachedTitles = [];
 
     function setupAchievementImageProtection() {
         if (!achievementsGrid || achievementsGrid.dataset.achievementImageProtectionBound === "1") return;
@@ -3055,6 +3071,209 @@ async function loadProfile() {
             .join("");
     }
 
+    function formatPsnSyncDate(timestampSeconds) {
+        const value = Number(timestampSeconds || 0);
+        if (!Number.isInteger(value) || value <= 0) return "Nunca";
+        const date = new Date(value * 1000);
+        return date.toLocaleString("pt-BR", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit"
+        });
+    }
+
+    function formatPsnCount(value) {
+        return Number(value || 0).toLocaleString("pt-BR");
+    }
+
+    function normalizeNpssoValue(rawValue) {
+        return String(rawValue || "")
+            .trim()
+            .replace(/^"+|"+$/g, "")
+            .slice(0, 200);
+    }
+
+    function extractNpssoFromRaw(rawValue) {
+        const raw = String(rawValue || "").trim();
+        if (!raw) return "";
+        const direct = normalizeNpssoValue(raw);
+        if (direct && !direct.includes("{") && !direct.includes("}")) {
+            return direct;
+        }
+
+        try {
+            const parsed = JSON.parse(raw);
+            const fromJson = normalizeNpssoValue(parsed?.npsso || "");
+            if (fromJson) return fromJson;
+        } catch {}
+
+        const jsonMatch = raw.match(/"npsso"\s*:\s*"([^"]+)"/i);
+        if (jsonMatch?.[1]) {
+            return normalizeNpssoValue(jsonMatch[1]);
+        }
+
+        const queryMatch = raw.match(/[?&]npsso=([^&\s]+)/i);
+        if (queryMatch?.[1]) {
+            return normalizeNpssoValue(decodeURIComponent(queryMatch[1]));
+        }
+
+        return "";
+    }
+
+    async function tryAutoReadNpssoFromSonyCookie() {
+        try {
+            const response = await fetch(sonySsoCookieUrl, {
+                method: "GET",
+                credentials: "include",
+                headers: { Accept: "application/json" }
+            });
+            if (!response.ok) return "";
+            const payload = await response.json().catch(() => null);
+            if (!payload) return "";
+            const value = typeof payload === "object"
+                ? payload?.npsso || ""
+                : String(payload || "");
+            return extractNpssoFromRaw(value);
+        } catch {
+            return "";
+        }
+    }
+
+    async function requestNpssoForLinkFlow() {
+        const autoNpsso = await tryAutoReadNpssoFromSonyCookie();
+        if (autoNpsso) return autoNpsso;
+
+        const rawInput = window.prompt(
+            "Nao foi possivel obter o NPSSO automaticamente. Faca login na conta PlayStation neste navegador e tente novamente. Se preferir, cole aqui o JSON completo (ou apenas o valor de npsso)."
+        );
+        return extractNpssoFromRaw(rawInput);
+    }
+
+    function psnTitleTrophyCountHtml(label, tier, value) {
+        const icon = String(psnTrophyIconByTier[tier] || "").trim();
+        return `
+            <span class="psn-title-trophy-chip" title="${escapeHtml(label)}">
+                <img class="psn-tier-icon" src="${escapeHtml(icon)}" alt="${escapeHtml(label)}">
+                <span>${escapeHtml(formatPsnCount(value))}</span>
+            </span>
+        `;
+    }
+
+    function renderPsnTitlesCards(titles) {
+        if (!psnTitlesGrid) return;
+        if (!Array.isArray(titles) || !titles.length) {
+            psnTitlesGrid.innerHTML = '<p class="psn-empty-state">Nenhum titulo de trofeu visivel para esta conta.</p>';
+            if (psnShowMoreBtn) psnShowMoreBtn.classList.add("hidden");
+            return;
+        }
+
+        const visibleCount = Math.max(0, Math.min(psnVisibleTitlesLimit, titles.length));
+        const visibleTitles = titles.slice(0, visibleCount);
+        psnTitlesGrid.innerHTML = visibleTitles
+            .map((title) => {
+                const icon = String(title?.titleIconUrl || baseAvatar).trim() || baseAvatar;
+                const progress = Math.max(0, Math.min(100, Number(title?.progress || 0)));
+                return `
+                    <article class="psn-title-card">
+                        <img src="${escapeHtml(icon)}" alt="${escapeHtml(String(title?.titleName || "Titulo PSN"))}">
+                        <div class="psn-title-main">
+                            <p class="psn-title-name">${escapeHtml(String(title?.titleName || "Titulo"))}</p>
+                            <p class="psn-title-meta">
+                                ${escapeHtml(String(title?.titlePlatform || "-"))} - ${escapeHtml(String(progress))}%
+                            </p>
+                            <div class="psn-title-trophy-counts">
+                                ${psnTitleTrophyCountHtml("Platina", "platinum", title?.earnedPlatinum || 0)}
+                                ${psnTitleTrophyCountHtml("Ouro", "gold", title?.earnedGold || 0)}
+                                ${psnTitleTrophyCountHtml("Prata", "silver", title?.earnedSilver || 0)}
+                                ${psnTitleTrophyCountHtml("Bronze", "bronze", title?.earnedBronze || 0)}
+                            </div>
+                            <p class="psn-title-progress"><span style="width:${escapeHtml(String(progress))}%"></span></p>
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
+
+        if (psnShowMoreBtn) {
+            const hasMore = titles.length > visibleCount;
+            psnShowMoreBtn.classList.toggle("hidden", !hasMore);
+            if (hasMore) {
+                const nextBatch = Math.min(5, titles.length - visibleCount);
+                psnShowMoreBtn.textContent = `Ver mais (${nextBatch})`;
+            }
+        }
+    }
+
+    function renderPsnProfile(psnProfile, canEdit) {
+        const linked = Boolean(psnProfile?.linked);
+        if (psnLinkBtn) {
+            psnLinkBtn.classList.toggle("hidden", !canEdit);
+            psnLinkBtn.textContent = linked ? "Sincronizar PSN" : "Vincular PSN";
+        }
+        if (psnUnlinkBtn) {
+            psnUnlinkBtn.classList.toggle("hidden", !canEdit);
+            psnUnlinkBtn.disabled = !linked;
+        }
+
+        if (!linked) {
+            if (psnSummaryText) {
+                psnSummaryText.textContent = canEdit
+                    ? "Clique em Vincular PSN para sincronizar seus trofeus automaticamente."
+                    : "Este usuario ainda nao vinculou uma conta da PSN.";
+            }
+            if (psnProfileHead) {
+                psnProfileHead.classList.add("hidden");
+                psnProfileHead.innerHTML = "";
+            }
+            if (psnTitlesGrid) {
+                psnTitlesGrid.innerHTML = '<p class="psn-empty-state">Sem conquistas da PSN sincronizadas.</p>';
+            }
+            if (psnShowMoreBtn) {
+                psnShowMoreBtn.classList.add("hidden");
+            }
+            psnCachedTitles = [];
+            psnVisibleTitlesLimit = 10;
+            return;
+        }
+
+        const summary = psnProfile?.summary || {};
+        if (psnSummaryText) {
+            psnSummaryText.textContent = `Conta vinculada: ${String(psnProfile?.onlineId || "-")}`;
+        }
+        if (psnProfileHead) {
+            const avatar = String(psnProfile?.avatarUrl || baseAvatar).trim() || baseAvatar;
+            psnProfileHead.classList.remove("hidden");
+            psnProfileHead.innerHTML = `
+                <img class="psn-profile-avatar" src="${escapeHtml(avatar)}" alt="Avatar PSN">
+                <div class="psn-profile-meta">
+                    <h3>${escapeHtml(String(psnProfile?.onlineId || "PSN"))}</h3>
+                    <p class="psn-updated-text">Atualizado em ${escapeHtml(formatPsnSyncDate(psnProfile?.updatedAt || 0))}</p>
+                    <div class="psn-summary-pills">
+                        <span class="psn-summary-pill">Nivel ${escapeHtml(String(summary?.level || 0))}</span>
+                        <span class="psn-summary-pill">Progresso ${escapeHtml(String(summary?.progress || 0))}%</span>
+                        <span class="psn-summary-pill psn-bronze">Bronze ${escapeHtml(formatPsnCount(summary?.bronze || 0))}</span>
+                        <span class="psn-summary-pill psn-silver">Prata ${escapeHtml(formatPsnCount(summary?.silver || 0))}</span>
+                        <span class="psn-summary-pill psn-gold">Ouro ${escapeHtml(formatPsnCount(summary?.gold || 0))}</span>
+                        <span class="psn-summary-pill psn-platinum">Platina ${escapeHtml(formatPsnCount(summary?.platinum || 0))}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        psnCachedTitles = Array.isArray(psnProfile?.titles)
+            ? psnProfile.titles.slice().sort((a, b) => {
+                const progressA = Number(a?.progress || 0);
+                const progressB = Number(b?.progress || 0);
+                if (progressB !== progressA) return progressB - progressA;
+                return String(a?.titleName || "").localeCompare(String(b?.titleName || ""), "pt-BR");
+            })
+            : [];
+        psnVisibleTitlesLimit = 10;
+        renderPsnTitlesCards(psnCachedTitles);
+    }
+
     function renderProfileAchievements(achievementData) {
         if (achievementsProgress) {
             achievementsProgress.textContent = "";
@@ -3118,6 +3337,7 @@ async function loadProfile() {
                     profileView = {
                         profile: data.profile,
                         activity: { given: [], received: [] },
+                        psnProfile: { linked: false },
                         canEdit: true
                     };
                 };
@@ -3132,6 +3352,7 @@ async function loadProfile() {
                 profileView = {
                     profile: data.profile,
                     activity: { given: [], received: [] },
+                    psnProfile: { linked: false },
                     canEdit: true
                 };
             }
@@ -3207,6 +3428,7 @@ async function loadProfile() {
             && Number(currentProfileUserId) === Number(ownUserId);
 
         renderProfileActivity(profileView.activity);
+        renderPsnProfile(profileView?.psnProfile || { linked: false }, canEdit);
         renderProfileAchievements(profileAchievements);
         renderProfileComments(profileComments.comments || []);
         const requestedAchievementKey = normalizeAchievementKey(getQueryParam("achievement"));
@@ -3432,6 +3654,51 @@ async function loadProfile() {
         } catch (error) {
             setFeedback("feedback", error.message, "error");
         }
+    });
+
+    psnLinkBtn?.addEventListener("click", async () => {
+        if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
+        setFeedback(psnFeedback, "", "");
+        const npsso = await requestNpssoForLinkFlow();
+        if (!npsso || npsso.length < 20) {
+            setFeedback(
+                psnFeedback,
+                "Nao foi possivel obter o NPSSO. Entre na conta PlayStation no navegador e tente novamente.",
+                "error"
+            );
+            return;
+        }
+        try {
+            const label = String(psnLinkBtn?.textContent || "").toLowerCase();
+            const loadingText = label.includes("sincronizar") ? "Sincronizando..." : "Vinculando...";
+            const result = await withButtonLoading(psnLinkBtn, loadingText, async () =>
+                sendJson("/api/user/psn/link", "POST", { npsso })
+            );
+            setFeedback(psnFeedback, result?.message || "Conta PSN sincronizada.", "ok");
+            await refreshProfile();
+        } catch (error) {
+            setFeedback(psnFeedback, error.message, "error");
+        }
+    });
+    psnUnlinkBtn?.addEventListener("click", async () => {
+        if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
+        if (!window.confirm("Deseja desvincular a conta PSN deste perfil?")) return;
+        setFeedback(psnFeedback, "", "");
+        try {
+            const result = await withButtonLoading(psnUnlinkBtn, "Desvinculando...", async () =>
+                sendJson("/api/user/psn/unlink", "POST")
+            );
+            setFeedback(psnFeedback, result?.message || "Conta PSN desvinculada.", "ok");
+            await refreshProfile();
+        } catch (error) {
+            setFeedback(psnFeedback, error.message, "error");
+        }
+    });
+
+    psnShowMoreBtn?.addEventListener("click", () => {
+        if (!psnCachedTitles.length) return;
+        psnVisibleTitlesLimit += 5;
+        renderPsnTitlesCards(psnCachedTitles);
     });
 
     profileCommentForm?.addEventListener("submit", async (event) => {
@@ -4110,6 +4377,8 @@ let roundUsers = [];
 let roundRecommendationsStructureSignature = "";
 let pairExclusionAutosaveToken = 0;
 let pairExclusionsRenderSignature = "";
+let roundRatingActionInFlight = false;
+const navalRatingLetters = "ABCDEFGHIJ";
 
 function renderParticipantList(round) {
     const list = byId("participantList");
@@ -4577,6 +4846,194 @@ function navalGradeLabel(rec) {
     return `${letter}${score}`;
 }
 
+function recommendationHasNavalRating(recommendation) {
+    if (!recommendation) return false;
+    const letter = String(recommendation.rating_letter || "").toUpperCase();
+    const score = Number(recommendation.interest_score || 0);
+    return navalRatingLetters.includes(letter) && Number.isInteger(score) && score >= 1 && score <= 10;
+}
+
+function getSelectedRatingRecommendation(round = currentRound) {
+    const items = Array.isArray(round?.ratingsToDo) ? round.ratingsToDo : [];
+    if (!items.length) return null;
+    const select = byId("ratingRecommendationSelect");
+    const selectedId = Number(select?.value || 0);
+    if (selectedId > 0) {
+        const match = items.find((item) => Number(item.id) === selectedId);
+        if (match) return match;
+    }
+    return items[0] || null;
+}
+
+function syncRatingFormFieldsWithSelectedRecommendation(round = currentRound) {
+    const form = byId("ratingForm");
+    if (!(form instanceof HTMLFormElement)) return;
+    const selected = getSelectedRatingRecommendation(round);
+    const ratingLetterField = form.elements?.ratingLetter;
+    const interestField = form.elements?.interestScore;
+    if (!(ratingLetterField instanceof HTMLSelectElement) || !(interestField instanceof HTMLInputElement)) {
+        return;
+    }
+
+    if (recommendationHasNavalRating(selected)) {
+        ratingLetterField.value = String(selected.rating_letter || "A").toUpperCase();
+        interestField.value = String(Math.max(1, Math.min(10, Number(selected.interest_score || 1))));
+    } else {
+        if (!navalRatingLetters.includes(String(ratingLetterField.value || "").toUpperCase())) {
+            ratingLetterField.value = "A";
+        }
+        const numeric = Number(interestField.value || 0);
+        if (!Number.isInteger(numeric) || numeric < 1 || numeric > 10) {
+            interestField.value = "1";
+        }
+    }
+}
+
+function syncClearRatingButtonState(round = currentRound) {
+    const clearBtn = byId("clearRatingBtn");
+    if (!(clearBtn instanceof HTMLButtonElement)) return;
+    const form = byId("ratingForm");
+    const formOpen = form instanceof HTMLElement && !form.classList.contains("hidden");
+    const selected = getSelectedRatingRecommendation(round);
+    const canClear = formOpen && recommendationHasNavalRating(selected) && !roundRatingActionInFlight;
+    clearBtn.disabled = !canClear;
+}
+
+function getNavalCoordinateFromPointerEvent(chart, event) {
+    if (!(chart instanceof HTMLElement) || !(event instanceof MouseEvent)) return null;
+    const rect = chart.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+
+    const localX = Math.max(0, Math.min(rect.width - 0.0001, event.clientX - rect.left));
+    const localY = Math.max(0, Math.min(rect.height - 0.0001, event.clientY - rect.top));
+    const xBucket = Math.floor((localX / rect.width) * 10);
+    const yBucket = Math.floor((localY / rect.height) * 10);
+    const interestScore = Math.max(1, Math.min(10, xBucket + 1));
+    const ratingLetter = navalRatingLetters[Math.max(0, Math.min(9, yBucket))] || "A";
+    const left = ((interestScore - 0.5) / 10) * 100;
+    const top = ((Math.max(0, Math.min(9, yBucket)) + 0.5) / 10) * 100;
+    return {
+        interestScore,
+        ratingLetter,
+        grade: `${ratingLetter}${interestScore}`,
+        left,
+        top
+    };
+}
+
+function ensureRoundNavalPreviewPoint(chart) {
+    if (!(chart instanceof HTMLElement)) return null;
+    let point = chart.querySelector(".naval-point-preview");
+    if (point instanceof HTMLElement) return point;
+    point = document.createElement("div");
+    point.className = "naval-point naval-point-preview hidden";
+    point.innerHTML = `
+        <img src="${escapeHtml(baseAvatar)}" alt="Prévia da nota naval">
+        <span class="naval-grade-badge naval-grade-badge-preview"></span>
+    `;
+    chart.appendChild(point);
+    return point;
+}
+
+function hideRoundNavalPreviewPoint(chart = byId("navalChart")) {
+    if (!(chart instanceof HTMLElement)) return;
+    const point = chart.querySelector(".naval-point-preview");
+    if (!(point instanceof HTMLElement)) return;
+    point.classList.add("hidden");
+}
+
+function canShowRoundNavalHoverPreview(round = currentRound) {
+    if (!round || round.phase === "closed" || !round.ratingOpen || roundRatingActionInFlight) return false;
+    const form = byId("ratingForm");
+    if (!(form instanceof HTMLElement) || form.classList.contains("hidden")) return false;
+    const ratingsToDo = Array.isArray(round?.ratingsToDo) ? round.ratingsToDo : [];
+    if (ratingsToDo.some((item) => recommendationHasNavalRating(item))) return false;
+    const selected = getSelectedRatingRecommendation(round);
+    return Boolean(selected);
+}
+
+function updateRoundNavalHoverPreviewFromPointer(event) {
+    const chart = byId("navalChart");
+    if (!(chart instanceof HTMLElement)) return;
+    const previewAllowed = canShowRoundNavalHoverPreview(currentRound);
+    if (!previewAllowed) {
+        hideRoundNavalPreviewPoint(chart);
+        return;
+    }
+
+    const coordinate = getNavalCoordinateFromPointerEvent(chart, event);
+    const selected = getSelectedRatingRecommendation(currentRound);
+    if (!coordinate || !selected) {
+        hideRoundNavalPreviewPoint(chart);
+        return;
+    }
+
+    const previewPoint = ensureRoundNavalPreviewPoint(chart);
+    if (!(previewPoint instanceof HTMLElement)) return;
+    const img = previewPoint.querySelector("img");
+    const badge = previewPoint.querySelector(".naval-grade-badge");
+    if (img instanceof HTMLImageElement) {
+        img.src = String(selected.game_cover_url || baseAvatar).trim() || baseAvatar;
+        img.alt = `Prévia ${selected.game_name || "nota naval"}`;
+    }
+    if (badge instanceof HTMLElement) {
+        badge.textContent = coordinate.grade;
+    }
+    previewPoint.style.left = `${coordinate.left}%`;
+    previewPoint.style.top = `${coordinate.top}%`;
+    previewPoint.classList.remove("hidden");
+}
+
+async function submitRoundRatingPayload(payload) {
+    if (!currentRound || roundRatingActionInFlight) return false;
+    roundRatingActionInFlight = true;
+    syncClearRatingButtonState(currentRound);
+    try {
+        const result = await sendJson(`/api/rounds/${currentRound.id}/ratings`, "POST", payload);
+        currentRound = result.round;
+        renderRoundState(currentRound);
+        setFeedback("roundFeedback", result.message, "ok");
+        showAchievementUnlockNotifications(result.newlyUnlocked || []);
+        claimAchievementUnlocksAndNotify();
+        return true;
+    } catch (error) {
+        setFeedback("roundFeedback", error.message, "error");
+        return false;
+    } finally {
+        roundRatingActionInFlight = false;
+        syncClearRatingButtonState(currentRound);
+        hideRoundNavalPreviewPoint();
+    }
+}
+
+async function clearSelectedRoundRating() {
+    if (!currentRound || roundRatingActionInFlight) return false;
+    const selected = getSelectedRatingRecommendation(currentRound);
+    if (!selected || !recommendationHasNavalRating(selected)) {
+        setFeedback("roundFeedback", "Nenhuma nota naval registrada para limpar.", "error");
+        return false;
+    }
+
+    roundRatingActionInFlight = true;
+    syncClearRatingButtonState(currentRound);
+    try {
+        const result = await sendJson(`/api/rounds/${currentRound.id}/ratings`, "DELETE", {
+            recommendationId: Number(selected.id)
+        });
+        currentRound = result.round;
+        renderRoundState(currentRound);
+        setFeedback("roundFeedback", result.message || "Nota naval removida.", "ok");
+        return true;
+    } catch (error) {
+        setFeedback("roundFeedback", error.message, "error");
+        return false;
+    } finally {
+        roundRatingActionInFlight = false;
+        syncClearRatingButtonState(currentRound);
+        hideRoundNavalPreviewPoint();
+    }
+}
+
 function toDateTimeLocalValue(timestampSeconds) {
     const ts = Number(timestampSeconds || 0);
     if (!Number.isInteger(ts) || ts <= 0) return "";
@@ -4851,10 +5308,13 @@ function renderRoundState(round) {
         const ratingText = byId("ratingStatusText");
         const ratingForm = byId("ratingForm");
         const ratingSelect = byId("ratingRecommendationSelect");
+        const previousSelectionId = Number(ratingSelect?.value || 0);
 
         if (round.phase === "closed") {
             ratingText.textContent = "Rodada encerrada. Veja o plano naval final.";
             ratingForm?.classList.add("hidden");
+            syncClearRatingButtonState(round);
+            hideRoundNavalPreviewPoint();
         } else if (round.ratingOpen) {
             const items = round.ratingsToDo || [];
             if (items.length) {
@@ -4863,9 +5323,16 @@ function renderRoundState(round) {
                 ratingSelect.innerHTML = items
                     .map((rec) => `<option value="${rec.id}">${escapeHtml(rec.game_name)} (de ${escapeHtml(displayName({ id: rec.giver_user_id, nickname: rec.giver_nickname, username: rec.giver_username }))})</option>`)
                     .join("");
+                if (previousSelectionId > 0 && items.some((rec) => Number(rec.id) === previousSelectionId)) {
+                    ratingSelect.value = String(previousSelectionId);
+                }
+                syncRatingFormFieldsWithSelectedRecommendation(round);
+                syncClearRatingButtonState(round);
             } else {
                 ratingText.textContent = "Você não recebeu jogos para avaliar nesta rodada.";
                 ratingForm?.classList.add("hidden");
+                syncClearRatingButtonState(round);
+                hideRoundNavalPreviewPoint();
             }
         } else {
             const dateText = round.rating_starts_at
@@ -4873,6 +5340,8 @@ function renderRoundState(round) {
                 : "data não definida";
             ratingText.textContent = `Notas navais liberam em: ${dateText}.`;
             ratingForm?.classList.add("hidden");
+            syncClearRatingButtonState(round);
+            hideRoundNavalPreviewPoint();
         }
         return;
     }
@@ -5050,6 +5519,49 @@ async function handleRoundPage() {
 
     byId("tabIndicationsBtn")?.addEventListener("click", () => setRoundTab("indications"));
     byId("tabRatingsBtn")?.addEventListener("click", () => setRoundTab("ratings"));
+    byId("ratingRecommendationSelect")?.addEventListener("change", () => {
+        syncRatingFormFieldsWithSelectedRecommendation(currentRound);
+        syncClearRatingButtonState(currentRound);
+        hideRoundNavalPreviewPoint();
+    });
+    byId("navalChart")?.addEventListener("mousemove", (event) => {
+        if (!(event instanceof MouseEvent)) return;
+        updateRoundNavalHoverPreviewFromPointer(event);
+    });
+    byId("navalChart")?.addEventListener("mouseleave", () => {
+        hideRoundNavalPreviewPoint();
+    });
+    byId("navalChart")?.addEventListener("click", async (event) => {
+        if (!currentRound || currentRound.phase === "closed" || !currentRound.ratingOpen || roundRatingActionInFlight) {
+            return;
+        }
+        const form = byId("ratingForm");
+        if (!(form instanceof HTMLFormElement) || form.classList.contains("hidden")) return;
+        const target = event.target;
+        if (target instanceof HTMLElement && target.closest(".naval-stack")) return;
+
+        const selected = getSelectedRatingRecommendation(currentRound);
+        if (!selected) return;
+        const coordinate = getNavalCoordinateFromPointerEvent(event.currentTarget, event);
+        if (!coordinate) return;
+
+        const ratingLetterField = form.elements?.ratingLetter;
+        const interestField = form.elements?.interestScore;
+        if (ratingLetterField instanceof HTMLSelectElement) {
+            ratingLetterField.value = coordinate.ratingLetter;
+        }
+        if (interestField instanceof HTMLInputElement) {
+            interestField.value = String(coordinate.interestScore);
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        await submitRoundRatingPayload({
+            recommendationId: Number(selected.id),
+            ratingLetter: coordinate.ratingLetter,
+            interestScore: coordinate.interestScore
+        });
+    });
 
     byId("searchParticipantsBtn")?.addEventListener("click", async () => {
         if (!canManageDraftRound(currentRound)) return;
@@ -5376,16 +5888,21 @@ async function handleRoundPage() {
             ratingLetter: form.elements.ratingLetter.value,
             interestScore: Number(form.elements.interestScore.value)
         };
-        try {
-            const result = await sendJson(`/api/rounds/${currentRound.id}/ratings`, "POST", payload);
-            currentRound = result.round;
-            renderRoundState(currentRound);
-            setFeedback("roundFeedback", result.message, "ok");
-            showAchievementUnlockNotifications(result.newlyUnlocked || []);
-            claimAchievementUnlocksAndNotify();
-        } catch (error) {
-            setFeedback("roundFeedback", error.message, "error");
+        const submitButton = form.querySelector("button[type='submit']");
+        if (submitButton instanceof HTMLButtonElement) {
+            await withButtonLoading(submitButton, "Salvando...", async () => {
+                await submitRoundRatingPayload(payload);
+            });
+        } else {
+            await submitRoundRatingPayload(payload);
         }
+    });
+    byId("clearRatingBtn")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        if (!(button instanceof HTMLButtonElement)) return;
+        await withButtonLoading(button, "Limpando...", async () => {
+            await clearSelectedRoundRating();
+        });
     });
 
     byId("roundRecommendations")?.addEventListener("click", async (event) => {

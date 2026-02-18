@@ -1,3 +1,11 @@
+const {
+    exchangeNpssoForAccessCode,
+    exchangeAccessCodeForAuthTokens,
+    getProfileFromAccountId,
+    getUserTitles,
+    getUserTrophyProfileSummary
+} = require("psn-api");
+
 module.exports = function registerUserRoutes(app, deps) {
 const {
     adminEventClients,
@@ -27,6 +35,264 @@ const {
     syncUserAchievements,
 } = deps;
 let adminEventClientSeq = Number(initialAdminEventClientSeq) || 0;
+
+function clampInt(value, min = 0, max = Number.MAX_SAFE_INTEGER) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return min;
+    return Math.max(min, Math.min(max, Math.round(parsed)));
+}
+
+function parseIsoDateToSeconds(value) {
+    const iso = String(value || "").trim();
+    if (!iso) return 0;
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0;
+}
+
+function psnProfileMessageFromError(error) {
+    const raw = String(error?.message || "").trim();
+    const text = raw.toLowerCase();
+    if (text.includes("npsso") || text.includes("unauthorized") || text.includes("401")) {
+        return "Token NPSSO invalido ou expirado.";
+    }
+    if (text.includes("forbidden") || text.includes("private")) {
+        return "Nao foi possivel acessar os trofeus desta conta PSN. Verifique a privacidade da conta.";
+    }
+    if (text.includes("not found") || text.includes("404")) {
+        return "Conta PSN nao encontrada.";
+    }
+    return "Falha ao sincronizar conquistas da PSN.";
+}
+
+function chooseBestPsnAvatar(avatarUrls = []) {
+    const rows = Array.isArray(avatarUrls) ? avatarUrls : [];
+    if (!rows.length) return "";
+    return sanitizeText(
+        rows[rows.length - 1]?.avatarUrl || rows[rows.length - 1]?.url || rows[0]?.avatarUrl || rows[0]?.url || "",
+        500
+    );
+}
+
+function normalizePsnTitleList(rawTitles = []) {
+    const rows = Array.isArray(rawTitles) ? rawTitles : [];
+    return rows
+        .map((title) => {
+            const npCommunicationId = sanitizeText(title?.npCommunicationId || "", 40);
+            const npServiceName = sanitizeText(title?.npServiceName || "", 16) || "trophy2";
+            const titleName = sanitizeText(title?.trophyTitleName || "", 140);
+            if (!npCommunicationId || !titleName) return null;
+            const earned = title?.earnedTrophies || {};
+            const defined = title?.definedTrophies || {};
+            return {
+                npServiceName,
+                npCommunicationId,
+                titleName,
+                titleIconUrl: sanitizeText(title?.trophyTitleIconUrl || "", 500),
+                titlePlatform: sanitizeText(title?.trophyTitlePlatform || "", 40),
+                progress: clampInt(title?.progress, 0, 100),
+                earnedBronze: clampInt(earned?.bronze, 0),
+                earnedSilver: clampInt(earned?.silver, 0),
+                earnedGold: clampInt(earned?.gold, 0),
+                earnedPlatinum: clampInt(earned?.platinum, 0),
+                definedBronze: clampInt(defined?.bronze, 0),
+                definedSilver: clampInt(defined?.silver, 0),
+                definedGold: clampInt(defined?.gold, 0),
+                definedPlatinum: clampInt(defined?.platinum, 0),
+                lastUpdatedAt: parseIsoDateToSeconds(title?.lastUpdatedDateTime)
+            };
+        })
+        .filter(Boolean);
+}
+
+async function fetchPsnSnapshot({ npsso }) {
+    const npssoToken = sanitizeText(npsso, 200);
+    if (!npssoToken || npssoToken.length < 20) {
+        const error = new Error("Informe um token NPSSO valido.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const code = await exchangeNpssoForAccessCode(npssoToken);
+    const auth = await exchangeAccessCodeForAuthTokens(code);
+    const authorization = { accessToken: auth.accessToken };
+    const summaryResponse = await getUserTrophyProfileSummary(authorization, "me");
+    const accountId = sanitizeText(summaryResponse?.accountId || "", 40);
+    if (!accountId) {
+        const error = new Error("Conta PSN nao encontrada.");
+        error.statusCode = 404;
+        throw error;
+    }
+    const titleResponse = await getUserTitles(authorization, "me", { limit: 80, offset: 0 });
+    const profile = await getProfileFromAccountId(authorization, accountId).catch(() => null);
+    const summaryEarned = summaryResponse?.earnedTrophies || {};
+    const titles = normalizePsnTitleList(titleResponse?.trophyTitles || []);
+    const onlineId = sanitizeText(profile?.onlineId || "", 40) || accountId;
+
+    return {
+        onlineId,
+        accountId,
+        avatarUrl: chooseBestPsnAvatar(profile?.avatars || []),
+        trophyLevel: clampInt(summaryResponse?.trophyLevel, 0),
+        trophyProgress: clampInt(summaryResponse?.progress, 0, 100),
+        trophies: {
+            bronze: clampInt(summaryEarned?.bronze, 0),
+            silver: clampInt(summaryEarned?.silver, 0),
+            gold: clampInt(summaryEarned?.gold, 0),
+            platinum: clampInt(summaryEarned?.platinum, 0)
+        },
+        titles
+    };
+}
+
+async function savePsnSnapshotForUser(userId, snapshot) {
+    const now = nowInSeconds();
+    await dbRun(
+        `UPDATE users
+         SET psn_online_id = ?,
+             psn_account_id = ?,
+             psn_avatar_url = ?,
+             psn_trophy_level = ?,
+             psn_trophy_progress = ?,
+             psn_trophies_bronze = ?,
+             psn_trophies_silver = ?,
+             psn_trophies_gold = ?,
+             psn_trophies_platinum = ?,
+             psn_linked_at = CASE
+                                WHEN COALESCE(psn_linked_at, 0) > 0 THEN psn_linked_at
+                                ELSE ?
+                             END,
+             psn_updated_at = ?
+         WHERE id = ?`,
+        [
+            sanitizeText(snapshot?.onlineId || "", 40),
+            sanitizeText(snapshot?.accountId || "", 40),
+            sanitizeText(snapshot?.avatarUrl || "", 500),
+            clampInt(snapshot?.trophyLevel, 0),
+            clampInt(snapshot?.trophyProgress, 0, 100),
+            clampInt(snapshot?.trophies?.bronze, 0),
+            clampInt(snapshot?.trophies?.silver, 0),
+            clampInt(snapshot?.trophies?.gold, 0),
+            clampInt(snapshot?.trophies?.platinum, 0),
+            now,
+            now,
+            userId
+        ]
+    );
+
+    await dbRun("DELETE FROM user_psn_titles WHERE user_id = ?", [userId]);
+    for (const title of snapshot?.titles || []) {
+        await dbRun(
+            `INSERT INTO user_psn_titles
+                (user_id, np_service_name, np_communication_id, title_name, title_icon_url, title_platform,
+                 progress, earned_bronze, earned_silver, earned_gold, earned_platinum,
+                 defined_bronze, defined_silver, defined_gold, defined_platinum, last_updated_at, synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                userId,
+                sanitizeText(title?.npServiceName || "", 16),
+                sanitizeText(title?.npCommunicationId || "", 40),
+                sanitizeText(title?.titleName || "", 140),
+                sanitizeText(title?.titleIconUrl || "", 500),
+                sanitizeText(title?.titlePlatform || "", 40),
+                clampInt(title?.progress, 0, 100),
+                clampInt(title?.earnedBronze, 0),
+                clampInt(title?.earnedSilver, 0),
+                clampInt(title?.earnedGold, 0),
+                clampInt(title?.earnedPlatinum, 0),
+                clampInt(title?.definedBronze, 0),
+                clampInt(title?.definedSilver, 0),
+                clampInt(title?.definedGold, 0),
+                clampInt(title?.definedPlatinum, 0),
+                clampInt(title?.lastUpdatedAt, 0),
+                now
+            ]
+        );
+    }
+}
+
+async function clearPsnSnapshotForUser(userId) {
+    await dbRun("DELETE FROM user_psn_titles WHERE user_id = ?", [userId]);
+    await dbRun(
+        `UPDATE users
+         SET psn_online_id = NULL,
+             psn_account_id = NULL,
+             psn_avatar_url = NULL,
+             psn_trophy_level = 0,
+             psn_trophy_progress = 0,
+             psn_trophies_bronze = 0,
+             psn_trophies_silver = 0,
+             psn_trophies_gold = 0,
+             psn_trophies_platinum = 0,
+             psn_linked_at = NULL,
+             psn_updated_at = NULL
+         WHERE id = ?`,
+        [userId]
+    );
+}
+
+async function getPsnProfileView(userId) {
+    const row = await dbGet(
+        `SELECT psn_online_id, psn_account_id, psn_avatar_url,
+                psn_trophy_level, psn_trophy_progress,
+                psn_trophies_bronze, psn_trophies_silver, psn_trophies_gold, psn_trophies_platinum,
+                psn_linked_at, psn_updated_at
+         FROM users
+         WHERE id = ? LIMIT 1`,
+        [userId]
+    );
+    const storedOnlineId = sanitizeText(row?.psn_online_id || "", 40);
+    const storedAccountId = sanitizeText(row?.psn_account_id || "", 40);
+    if (!row || (!storedOnlineId && !storedAccountId)) {
+        return { linked: false };
+    }
+
+    const titles = await dbAll(
+        `SELECT np_service_name, np_communication_id, title_name, title_icon_url, title_platform,
+                progress, earned_bronze, earned_silver, earned_gold, earned_platinum,
+                defined_bronze, defined_silver, defined_gold, defined_platinum,
+                last_updated_at, synced_at
+         FROM user_psn_titles
+         WHERE user_id = ?
+         ORDER BY progress DESC, COALESCE(last_updated_at, synced_at) DESC, title_name COLLATE NOCASE ASC
+         LIMIT 60`,
+        [userId]
+    );
+
+    return {
+        linked: true,
+        onlineId: storedOnlineId || storedAccountId,
+        accountId: storedAccountId,
+        avatarUrl: sanitizeText(row.psn_avatar_url || "", 500),
+        linkedAt: Number(row.psn_linked_at || 0) || null,
+        updatedAt: Number(row.psn_updated_at || 0) || null,
+        summary: {
+            level: clampInt(row.psn_trophy_level, 0),
+            progress: clampInt(row.psn_trophy_progress, 0, 100),
+            bronze: clampInt(row.psn_trophies_bronze, 0),
+            silver: clampInt(row.psn_trophies_silver, 0),
+            gold: clampInt(row.psn_trophies_gold, 0),
+            platinum: clampInt(row.psn_trophies_platinum, 0)
+        },
+        titles: (titles || []).map((item) => ({
+            npServiceName: sanitizeText(item.np_service_name || "", 16),
+            npCommunicationId: sanitizeText(item.np_communication_id || "", 40),
+            titleName: sanitizeText(item.title_name || "", 140),
+            titleIconUrl: sanitizeText(item.title_icon_url || "", 500),
+            titlePlatform: sanitizeText(item.title_platform || "", 40),
+            progress: clampInt(item.progress, 0, 100),
+            earnedBronze: clampInt(item.earned_bronze, 0),
+            earnedSilver: clampInt(item.earned_silver, 0),
+            earnedGold: clampInt(item.earned_gold, 0),
+            earnedPlatinum: clampInt(item.earned_platinum, 0),
+            definedBronze: clampInt(item.defined_bronze, 0),
+            definedSilver: clampInt(item.defined_silver, 0),
+            definedGold: clampInt(item.defined_gold, 0),
+            definedPlatinum: clampInt(item.defined_platinum, 0),
+            lastUpdatedAt: clampInt(item.last_updated_at, 0),
+            syncedAt: clampInt(item.synced_at, 0)
+        }))
+    };
+}
 
 app.get("/api/user/profile", requireAuth, async (req, res) => {
     try {
@@ -149,9 +415,11 @@ app.get("/api/users/:userId/profile-view", requireAuth, async (req, res) => {
             user.email = maskEmailForDisplay(user.email);
         }
         const activity = await getUserProfileActivity(userId);
+        const psnProfile = await getPsnProfileView(userId);
         return res.json({
             profile: user,
             activity,
+            psnProfile,
             canEdit: userId === req.currentUser.id
         });
     } catch (error) {
@@ -177,9 +445,11 @@ app.get("/api/user/profile-view", requireAuth, async (req, res) => {
             user.email = maskEmailForDisplay(user.email);
         }
         const activity = await getUserProfileActivity(userId);
+        const psnProfile = await getPsnProfileView(userId);
         return res.json({
             profile: user,
             activity,
+            psnProfile,
             canEdit: userId === req.currentUser.id
         });
     } catch (error) {
@@ -243,6 +513,37 @@ app.put("/api/user/profile", requireAuth, async (req, res) => {
             return res.status(409).json({ message: error.message });
         }
         return res.status(500).json({ message: "Erro ao atualizar perfil." });
+    }
+});
+
+app.post("/api/user/psn/link", requireAuth, async (req, res) => {
+    try {
+        const npsso = sanitizeText(req.body?.npsso || "", 200);
+        if (!npsso) {
+            return res.status(400).json({ message: "Informe o token NPSSO." });
+        }
+
+        const snapshot = await fetchPsnSnapshot({ npsso });
+        await savePsnSnapshotForUser(req.currentUser.id, snapshot);
+        const psnProfile = await getPsnProfileView(req.currentUser.id);
+        return res.json({
+            message: "Conta PSN vinculada e conquistas sincronizadas.",
+            psnProfile
+        });
+    } catch (error) {
+        console.error("[psn-link]", error);
+        const status = Number(error?.statusCode) || 502;
+        return res.status(status).json({ message: psnProfileMessageFromError(error) });
+    }
+});
+
+app.post("/api/user/psn/unlink", requireAuth, async (req, res) => {
+    try {
+        await clearPsnSnapshotForUser(req.currentUser.id);
+        return res.json({ message: "Conta PSN desvinculada." });
+    } catch (error) {
+        console.error("[psn-unlink]", error);
+        return res.status(500).json({ message: "Erro ao desvincular conta PSN." });
     }
 });
 

@@ -160,7 +160,7 @@ const ACHIEVEMENT_DEFINITIONS = [
         name: "CGNewba",
         criterion: "first_rating",
         imageUrl: "/uploads/trofeus/CGNewba.png",
-        description: "avalie uma indicacao"
+        description: "avalie uma indicação"
     }
 ];
 
@@ -399,6 +399,29 @@ function dbAll(sql, params = []) {
             if (error) return reject(error);
             resolve(rows);
         });
+    });
+}
+
+async function getRoundIdByRecommendationId(recommendationId) {
+    const row = await dbGet(
+        `SELECT round_id
+         FROM recommendations
+         WHERE id = ? LIMIT 1`,
+        [Number(recommendationId) || 0]
+    );
+    const roundId = Number(row?.round_id || 0);
+    return Number.isInteger(roundId) && roundId > 0 ? roundId : 0;
+}
+
+async function emitRoundChangeForRecommendation(reason, recommendationId, payload = {}) {
+    const recommendationIdNum = Number(recommendationId) || 0;
+    if (!recommendationIdNum) return;
+    const roundId = await getRoundIdByRecommendationId(recommendationIdNum);
+    if (!roundId) return;
+    emitRoundChange(reason, {
+        roundId,
+        recommendationId: recommendationIdNum,
+        ...payload
     });
 }
 
@@ -841,20 +864,20 @@ async function getRawgGameDetailsByName(gameName) {
         }
         if (!best || bestScore < 45) return null;
 
-        const genres = (Array.isArray(best?.genres) ? best.genres : [])
+        const genres = (Array.isArray(best.genres) ? best.genres : [])
             .map((genre) => sanitizeText(genre?.name || "", 60))
             .filter(Boolean);
-        const releaseYear = parseYearFromText(sanitizeText(best?.released || "", 20));
-        const image = sanitizeText(best?.background_image || "", 400);
-        let description = await getRawgGameDescriptionById(best?.id);
+        const releaseYear = parseYearFromText(sanitizeText(best.released || "", 20));
+        const image = sanitizeText(best.background_image || "", 400);
+        let description = await getRawgGameDescriptionById(best.id);
         if (!description) {
-            description = sanitizeText(stripHtmlTags(best?.description_raw || best?.description || ""), 600);
+            description = sanitizeText(stripHtmlTags(best.description_raw || best.description || ""), 600);
         }
 
         const details = {
             appId: null,
             source: "rawg",
-            name: sanitizeText(best?.name || cleaned, 120),
+            name: sanitizeText(best.name || cleaned, 120),
             description,
             headerImage: image,
             libraryImage: image,
@@ -1408,14 +1431,14 @@ async function sendEmail({ to, subject, text, html }) {
 async function sendVerificationEmail(email, code) {
     const html = renderEmailShell({
         title: "Confirmacao de email",
-        intro: "Recebemos uma solicitacao para criar sua conta no Clube do Jogo.",
+        intro: "Recebemos uma solicita??o para criar sua conta no Clube do Jogo.",
         bodyHtml: `<p style="margin:0;">Seu codigo de confirmacao:</p>
                    <p style="margin:10px 0 6px;font-size:28px;font-weight:800;letter-spacing:3px;color:#6fd7ff;">${code}</p>
                    <p style="margin:0;color:#b9ccf4;">Este codigo expira em 10 minutos.</p>`
     });
     await sendEmail({
         to: email,
-        subject: `${BRAND_NAME} | Codigo de confirmacao`,
+        subject: `${BRAND_NAME} | Código de confirmação`,
         text: `${BRAND_NAME}\n\nSeu codigo de confirmacao e: ${code}\nValidade: 10 minutos.`,
         html
     });
@@ -1467,7 +1490,7 @@ function requireAuth(req, res, next) {
         .then((user) => {
             if (!user) {
                 req.session.destroy(() => {});
-                return res.status(401).json({ message: "Sessao invalida." });
+                return res.status(401).json({ message: "Sessão inválida." });
             }
             if (Number(user.blocked) === 1) {
                 req.session.destroy(() => {});
@@ -1484,7 +1507,7 @@ function requireAuth(req, res, next) {
         })
         .catch((error) => {
             console.error(error);
-            return res.status(500).json({ message: "Erro ao validar sessao." });
+            return res.status(500).json({ message: "Erro ao validar sessão." });
         });
 }
 
@@ -1554,9 +1577,9 @@ function adminActionDetailLines(actionType, payload = {}) {
     const role = sanitizeText(payload?.role || "", 20);
 
     if (targetUserName) {
-        lines.push(`Usuario alvo: ${targetUserName}`);
+        lines.push(`Usuário alvo: ${targetUserName}`);
     } else if (targetUserId > 0) {
-        lines.push(`Usuario alvo: #${targetUserId}`);
+        lines.push(`Usuário alvo: #${targetUserId}`);
     }
     if (roundId > 0) {
         lines.push(`Rodada alvo: #${roundId}`);
@@ -1565,7 +1588,7 @@ function adminActionDetailLines(actionType, payload = {}) {
         lines.push(`Conquista: ${achievementKey}`);
     }
     if (actionType === "set_role" && role) {
-        lines.push(`Novo cargo: ${role === "moderator" ? "Moderador" : "Usuario"}`);
+        lines.push(`Novo cargo: ${role === "moderator" ? "Moderador" : "Usuário"}`);
     }
     return lines;
 }
@@ -1601,7 +1624,7 @@ async function getPendingAdminActionForRequester(userId) {
 async function createAdminActionRequest(requesterUserId, actionType, payload) {
     const pending = await getPendingAdminActionForRequester(requesterUserId);
     if (pending) {
-        const error = new Error("Ha uma solicitacao pendente. Aguarde o dono permitir ou negar.");
+        const error = new Error("H? uma solicita??o pendente. Aguarde o dono permitir ou negar.");
         error.statusCode = 409;
         throw error;
     }
@@ -1727,7 +1750,7 @@ function validatePairRestrictions(participantIds, blockedPairs = []) {
         );
         if (!receivers.length) {
             throw createBadRequestError(
-                "Cada participante precisa ter pelo menos 1 pessoa possivel para receber sua indicacao."
+                "Cada participante precisa ter pelo menos 1 pessoa possível para receber sua indicação."
             );
         }
         allowedMap.set(giverId, receivers);
@@ -2206,6 +2229,10 @@ async function syncUserAchievements(userId, { markNewAsNotified = false } = {}) 
             userId: Number(userId) || 0,
             count: payload.newlyUnlocked.length
         });
+        emitRoundChange("achievement_unlocked", {
+            userId: Number(userId) || 0,
+            count: payload.newlyUnlocked.length
+        });
     }
 
     return payload;
@@ -2405,7 +2432,7 @@ function findDerangementAssignments(participantIds, allowedMap) {
 }
 async function generateAssignmentsWithRotation(participantIds, blockedPairs = []) {
     if (participantIds.length < 2) {
-        throw new Error("Voce precisa de ao menos 2 participantes para sortear.");
+        throw new Error("Você precisa de ao menos 2 participantes para sortear.");
     }
 
     const blockedPairsSet = toBlockedPairsSet(blockedPairs);
@@ -2583,13 +2610,13 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
     const ensureTargetUser = async () => {
         const targetUserId = Number(payload?.targetUserId || 0);
         if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
-            const error = new Error("Usuario invalido.");
+            const error = new Error("Usuário inválido.");
             error.statusCode = 400;
             throw error;
         }
         const targetUser = await getUserForAdminById(targetUserId);
         if (!targetUser) {
-            const error = new Error("Usuario nao encontrado.");
+            const error = new Error("Usuário não encontrado.");
             error.statusCode = 404;
             throw error;
         }
@@ -2601,12 +2628,12 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
         }
         if (isModeratorOnlyUser(actorUser)) {
             if (targetFlags.isOwner) {
-                const error = new Error("Moderador nao pode modificar a conta do dono.");
+                const error = new Error("Moderador não pode modificar a conta do dono.");
                 error.statusCode = 403;
                 throw error;
             }
             if (targetFlags.isModerator && Number(targetUser.id) !== Number(actorUser.id)) {
-                const error = new Error("Moderador nao pode modificar outro moderador.");
+                const error = new Error("Moderador não pode modificar outro moderador.");
                 error.statusCode = 403;
                 throw error;
             }
@@ -2642,7 +2669,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
             const achievementKey = sanitizeText(payload?.achievementKey || "", 40);
             const validAchievement = ACHIEVEMENT_DEFINITIONS.find((item) => item.key === achievementKey);
             if (!validAchievement) {
-                const error = new Error("Conquista invalida.");
+                const error = new Error("Conquista inv?lida.");
                 error.statusCode = 400;
                 throw error;
             }
@@ -2655,7 +2682,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
                     [Number(targetUser.id), achievementKey]
                 );
                 if (!unlocked) {
-                    const error = new Error("Conquista inesistente.");
+                    const error = new Error("Conquista inexistente.");
                     error.statusCode = 400;
                     throw error;
                 }
@@ -2668,7 +2695,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
     if (actionType === "round_close" || actionType === "round_delete") {
         const roundId = Number(payload?.roundId || 0);
         if (!Number.isInteger(roundId) || roundId <= 0) {
-            const error = new Error("Rodada invalida.");
+            const error = new Error("Rodada inv?lida.");
             error.statusCode = 400;
             throw error;
         }
@@ -2679,7 +2706,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
             [roundId]
         );
         if (!round) {
-            const error = new Error("Rodada nao encontrada.");
+            const error = new Error("Rodada não encontrada.");
             error.statusCode = 404;
             throw error;
         }
@@ -2705,7 +2732,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
         };
     }
 
-    const error = new Error("Acao administrativa invalida.");
+    const error = new Error("A??o administrativa inv?lida.");
     error.statusCode = 400;
     throw error;
 }
@@ -2724,7 +2751,7 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
 
     if (actionType === "user_delete") {
         await deleteUserCascade(Number(preparedPayload.targetUserId));
-        return { message: "Conta excluida." };
+        return { message: "Conta excluída." };
     }
 
     if (actionType === "achievement_grant") {
@@ -2753,7 +2780,7 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
             [Number(preparedPayload.targetUserId), String(preparedPayload.achievementKey || "")]
         );
         if (!row) {
-            const error = new Error("Conquista inesistente.");
+            const error = new Error("Conquista inexistente.");
             error.statusCode = 400;
             throw error;
         }
@@ -2793,7 +2820,7 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
         const roundId = Number(preparedPayload.roundId || 0);
         const round = await dbGet("SELECT id, status, reopened_count FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!round) {
-            const error = new Error("Rodada nao encontrada.");
+            const error = new Error("Rodada não encontrada.");
             error.statusCode = 404;
             throw error;
         }
@@ -2819,6 +2846,11 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
                 "UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?",
                 [nowInSeconds(), roundId]
             );
+            emitRoundChange("round_reopened_finalized", {
+                roundId,
+                status: "closed",
+                actorUserId: Number(actorUserId || 0)
+            });
             return { message: "Rodada reaberta finalizada." };
         }
         await dbRun(
@@ -2826,12 +2858,22 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
             [nowInSeconds(), roundId]
         );
         await syncAchievementsForRoundParticipants(roundId);
+        emitRoundChange("round_closed", {
+            roundId,
+            status: "closed",
+            actorUserId: Number(actorUserId || 0)
+        });
         return { message: "Rodada encerrada." };
     }
 
     if (actionType === "round_delete") {
-        await deleteRoundCascade(Number(preparedPayload.roundId || 0));
-        return { message: "Rodada excluida." };
+        const roundId = Number(preparedPayload.roundId || 0);
+        await deleteRoundCascade(roundId);
+        emitRoundChange("round_deleted", {
+            roundId,
+            actorUserId: Number(actorUserId || 0)
+        });
+        return { message: "Rodada excluída." };
     }
 
     if (actionType === "set_role") {
@@ -2841,11 +2883,11 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
             [isModerator, Number(preparedPayload.targetUserId || 0)]
         );
         return {
-            message: isModerator ? "Usuario promovido a moderador." : "Usuario removido de moderador."
+            message: isModerator ? "Usuário promovido a moderador." : "Usuário removido de moderador."
         };
     }
 
-    const error = new Error("Acao administrativa invalida.");
+    const error = new Error("A??o administrativa inv?lida.");
     error.statusCode = 400;
     throw error;
 }
@@ -2942,7 +2984,7 @@ async function getOwnerSuggestionsList() {
 
 function requireRoundCreator(round, req, res) {
     if (!round) {
-        res.status(404).json({ message: "Rodada nao encontrada." });
+        res.status(404).json({ message: "Rodada não encontrada." });
         return false;
     }
     const canManageDraftStage =
@@ -3040,16 +3082,16 @@ app.use((req, res, next) => {
     const referer = req.get("referer");
 
     if (origin && !isAllowedOrigin(origin, req)) {
-        return res.status(403).json({ message: "Origem da requisicao nao permitida." });
+        return res.status(403).json({ message: "Origem da requisição não permitida." });
     }
 
     if (!origin && referer) {
         const refererOrigin = parseOrigin(referer);
         if (!refererOrigin) {
-            return res.status(403).json({ message: "Referer invalido." });
+            return res.status(403).json({ message: "Referer inv?lido." });
         }
         if (!isAllowedOrigin(refererOrigin, req)) {
-            return res.status(403).json({ message: "Referer da requisicao nao permitido." });
+            return res.status(403).json({ message: "Referer da requisição não permitido." });
         }
     }
 
@@ -3213,10 +3255,10 @@ app.post("/api/auth/register", async (req, res) => {
         const phone = sanitizeText(req.body.phone, 30);
 
         if (!username || username.length < 3) {
-            return res.status(400).json({ message: "Nome de usuario invalido." });
+            return res.status(400).json({ message: "Nome de usu?rio inv?lido." });
         }
         if (!isValidEmail(email)) {
-            return res.status(400).json({ message: "Email invalido." });
+            return res.status(400).json({ message: "Email inv?lido." });
         }
         if (password.length < 8) {
             return res.status(400).json({ message: "A senha precisa ter ao menos 8 caracteres." });
@@ -3227,7 +3269,7 @@ app.post("/api/auth/register", async (req, res) => {
             [email, username]
         );
         if (existingUser) {
-            return res.status(409).json({ message: "Email ou nome de usuario ja cadastrados." });
+            return res.status(409).json({ message: "Email ou nome de usu?rio j? cadastrados." });
         }
 
         await dbRun("DELETE FROM pending_registrations WHERE email = ?", [email]);
@@ -3245,7 +3287,7 @@ app.post("/api/auth/register", async (req, res) => {
         );
 
         await sendVerificationEmail(email, code);
-        return res.json({ message: "Codigo enviado para o email informado." });
+        return res.json({ message: "Código enviado para o email informado." });
     } catch (error) {
         console.error(error);
         if (String(error.message || "").includes("Nickname ja")) {
@@ -3268,16 +3310,16 @@ app.post("/api/auth/verify-email", async (req, res) => {
             [email]
         );
         if (!pending) {
-            return res.status(404).json({ message: "Cadastro pendente nao encontrado." });
+            return res.status(404).json({ message: "Cadastro pendente não encontrado." });
         }
         if (pending.expires_at < nowInSeconds()) {
             await dbRun("DELETE FROM pending_registrations WHERE email = ?", [email]);
-            return res.status(400).json({ message: "Codigo expirado. Faca o cadastro novamente." });
+            return res.status(400).json({ message: "Código expirado. Faça o cadastro novamente." });
         }
 
         const validCode = await bcrypt.compare(code, pending.code_hash);
         if (!validCode) {
-            return res.status(400).json({ message: "Codigo invalido." });
+            return res.status(400).json({ message: "C?digo inv?lido." });
         }
 
         const finalNickname = normalizeNickname(pending.nickname, pending.username);
@@ -3304,7 +3346,7 @@ app.post("/api/auth/verify-email", async (req, res) => {
             return res.status(409).json({ message: error.message });
         }
         if (String(error.message || "").includes("UNIQUE")) {
-            return res.status(409).json({ message: "Conta ja confirmada para este email/usuario." });
+            return res.status(409).json({ message: "Conta j? confirmada para este email/usu?rio." });
         }
         console.error(error);
         return res.status(500).json({ message: "Erro ao confirmar email." });
@@ -3322,10 +3364,10 @@ app.post("/api/auth/login", async (req, res) => {
         );
 
         if (!user) {
-            return res.status(401).json({ message: "Email ou senha invalidos." });
+            return res.status(401).json({ message: "Email ou senha inv?lidos." });
         }
         if (!user.email_verified) {
-            return res.status(403).json({ message: "Email ainda nao confirmado." });
+            return res.status(403).json({ message: "Email ainda não confirmado." });
         }
         if (Number(user.blocked) === 1) {
             return res.status(403).json({ message: "Conta bloqueada. Contate o dono do site." });
@@ -3333,7 +3375,7 @@ app.post("/api/auth/login", async (req, res) => {
 
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
-            return res.status(401).json({ message: "Email ou senha invalidos." });
+            return res.status(401).json({ message: "Email ou senha inv?lidos." });
         }
 
         req.session.userId = user.id;
@@ -3342,7 +3384,7 @@ app.post("/api/auth/login", async (req, res) => {
         return req.session.save((sessionError) => {
             if (sessionError) {
                 console.error(sessionError);
-                return res.status(500).json({ message: "Erro ao criar sessao." });
+                return res.status(500).json({ message: "Erro ao criar sessão." });
             }
             return res.json({ message: "Login efetuado." });
         });
@@ -3366,7 +3408,7 @@ app.get("/api/user/profile", requireAuth, async (req, res) => {
             [req.session.userId]
         );
         if (!user) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
         user.nickname = normalizeNickname(user.nickname, user.username);
         return res.json({
@@ -3386,7 +3428,7 @@ app.get("/api/users/roles-map", requireAuth, async (req, res) => {
         return res.json({ users });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao carregar papeis de usuarios." });
+        return res.status(500).json({ message: "Erro ao carregar pap?is de usu?rios." });
     }
 });
 
@@ -3396,7 +3438,7 @@ app.get("/api/users/roles", requireAuth, async (req, res) => {
         return res.json({ users });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao carregar papeis de usuarios." });
+        return res.status(500).json({ message: "Erro ao carregar pap?is de usu?rios." });
     }
 });
 
@@ -3464,7 +3506,7 @@ app.get("/api/users/:userId/profile-view", requireAuth, async (req, res) => {
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const user = await dbGet(
             `SELECT id, username, email, nickname, avatar_url
@@ -3472,7 +3514,7 @@ app.get("/api/users/:userId/profile-view", requireAuth, async (req, res) => {
             [userId]
         );
         if (!user) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
         user.nickname = normalizeNickname(user.nickname, user.username);
         if (userId !== req.currentUser.id) {
@@ -3500,7 +3542,7 @@ app.get("/api/user/profile-view", requireAuth, async (req, res) => {
             [userId]
         );
         if (!user) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
         user.nickname = normalizeNickname(user.nickname, user.username);
         if (userId !== req.currentUser.id) {
@@ -3527,7 +3569,7 @@ app.get("/api/user/achievements", requireAuth, async (req, res) => {
                 : req.currentUser.id;
         const targetExists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [targetUserId]);
         if (!targetExists) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
 
         const claimRequested =
@@ -3556,7 +3598,7 @@ app.put("/api/user/profile", requireAuth, async (req, res) => {
             [req.session.userId]
         );
         if (!current) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
 
         const nickname = normalizeNickname(req.body.nickname, current.username);
@@ -3583,7 +3625,7 @@ async function handleNicknameAvailabilityRequest(req, res) {
             [req.session.userId]
         );
         if (!current) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
 
         const rawNickname =
@@ -3663,7 +3705,7 @@ app.post("/api/user/password-reset-link", requireAuth, async (req, res) => {
             [req.session.userId]
         );
         if (!user) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
         await createPasswordResetForUser(user.id, user.email, getPublicBaseUrl(req));
         return res.json({ message: "Link de troca de senha enviado para seu email." });
@@ -3680,10 +3722,10 @@ app.get("/api/users/:userId/profile-comments", requireAuth, async (req, res) => 
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
-        if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
+        if (!exists) return res.status(404).json({ message: "Usuário não encontrado." });
         const comments = await getProfileComments(userId, req.currentUser.id);
         return res.json({ comments });
     } catch (error) {
@@ -3697,7 +3739,7 @@ app.get("/api/user/profile-comments", requireAuth, async (req, res) => {
         const rawUserId = req.query.userId !== undefined ? Number(req.query.userId) : req.currentUser.id;
         const userId = Number.isInteger(rawUserId) && rawUserId > 0 ? rawUserId : req.currentUser.id;
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
-        if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
+        if (!exists) return res.status(404).json({ message: "Usuário não encontrado." });
         const comments = await getProfileComments(userId, req.currentUser.id);
         return res.json({ comments });
     } catch (error) {
@@ -3710,15 +3752,15 @@ app.post("/api/users/:userId/profile-comments", requireAuth, async (req, res) =>
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const commentText = sanitizeText(req.body.commentText, 500);
         const parentCommentId = Number(req.body.parentCommentId || 0);
         if (!commentText) {
-            return res.status(400).json({ message: "Comentario vazio." });
+            return res.status(400).json({ message: "Comentário vazio." });
         }
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
-        if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
+        if (!exists) return res.status(404).json({ message: "Usuário não encontrado." });
 
         let parentId = null;
         if (parentCommentId > 0) {
@@ -3729,7 +3771,7 @@ app.post("/api/users/:userId/profile-comments", requireAuth, async (req, res) =>
                 [parentCommentId]
             );
             if (!parent || Number(parent.profile_user_id) !== userId) {
-                return res.status(400).json({ message: "Comentario pai invalido para este perfil." });
+                return res.status(400).json({ message: "Coment?rio pai inv?lido para este perfil." });
             }
             parentId = Number(parent.id);
         }
@@ -3750,7 +3792,7 @@ app.post("/api/users/:userId/profile-comments", requireAuth, async (req, res) =>
              WHERE c.id = ? LIMIT 1`,
             [createdInsert.lastID]
         );
-        return res.json({ message: "Comentario publicado.", comment: created });
+        return res.json({ message: "Comentário publicado.", comment: created });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao comentar no perfil." });
@@ -3764,10 +3806,10 @@ app.post("/api/user/profile-comments", requireAuth, async (req, res) => {
         const commentText = sanitizeText(req.body.commentText, 500);
         const parentCommentId = Number(req.body.parentCommentId || 0);
         if (!commentText) {
-            return res.status(400).json({ message: "Comentario vazio." });
+            return res.status(400).json({ message: "Comentário vazio." });
         }
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
-        if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
+        if (!exists) return res.status(404).json({ message: "Usuário não encontrado." });
 
         let parentId = null;
         if (parentCommentId > 0) {
@@ -3778,7 +3820,7 @@ app.post("/api/user/profile-comments", requireAuth, async (req, res) => {
                 [parentCommentId]
             );
             if (!parent || Number(parent.profile_user_id) !== userId) {
-                return res.status(400).json({ message: "Comentario pai invalido para este perfil." });
+                return res.status(400).json({ message: "Coment?rio pai inv?lido para este perfil." });
             }
             parentId = Number(parent.id);
         }
@@ -3799,7 +3841,7 @@ app.post("/api/user/profile-comments", requireAuth, async (req, res) => {
              WHERE c.id = ? LIMIT 1`,
             [createdInsert.lastID]
         );
-        return res.json({ message: "Comentario publicado.", comment: created });
+        return res.json({ message: "Comentário publicado.", comment: created });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao comentar no perfil." });
@@ -3810,11 +3852,11 @@ app.put("/api/profile-comments/:commentId", requireAuth, async (req, res) => {
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Comentario invalido." });
+            return res.status(400).json({ message: "Coment?rio inv?lido." });
         }
         const commentText = sanitizeText(req.body.commentText, 500);
         if (!commentText) {
-            return res.status(400).json({ message: "Comentario vazio." });
+            return res.status(400).json({ message: "Comentário vazio." });
         }
         const existing = await dbGet(
             `SELECT id, profile_user_id, author_user_id
@@ -3823,10 +3865,10 @@ app.put("/api/profile-comments/:commentId", requireAuth, async (req, res) => {
             [commentId]
         );
         if (!existing) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
         if (Number(existing.author_user_id) !== Number(req.currentUser.id)) {
-            return res.status(403).json({ message: "Voce so pode editar seus proprios comentarios." });
+            return res.status(403).json({ message: "Você só pode editar seus próprios comentários." });
         }
         const updatedAt = nowInSeconds();
         await dbRun(
@@ -3853,7 +3895,7 @@ app.put("/api/profile-comments/:commentId", requireAuth, async (req, res) => {
              WHERE c.id = ? LIMIT 1`,
             [req.currentUser.id, commentId]
         );
-        return res.json({ message: "Comentario atualizado.", comment: updated });
+        return res.json({ message: "Comentário atualizado.", comment: updated });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao atualizar comentario do perfil." });
@@ -3864,7 +3906,7 @@ app.delete("/api/profile-comments/:commentId", requireAuth, async (req, res) => 
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Comentario invalido." });
+            return res.status(400).json({ message: "Coment?rio inv?lido." });
         }
         const existing = await dbGet(
             `SELECT id, profile_user_id, author_user_id
@@ -3873,7 +3915,7 @@ app.delete("/api/profile-comments/:commentId", requireAuth, async (req, res) => 
             [commentId]
         );
         if (!existing) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
         const isOwn = Number(existing.author_user_id) === Number(req.currentUser.id);
         const isProfileOwner = Number(existing.profile_user_id) === Number(req.currentUser.id);
@@ -3893,7 +3935,7 @@ app.delete("/api/profile-comments/:commentId", requireAuth, async (req, res) => 
             [commentId]
         );
         await dbRun("DELETE FROM profile_comments WHERE id = ?", [commentId]);
-        return res.json({ message: "Comentario removido.", commentId });
+        return res.json({ message: "Comentário removido.", commentId });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao excluir comentario do perfil." });
@@ -3904,7 +3946,7 @@ app.post("/api/profile-comments/:commentId/like", requireAuth, async (req, res) 
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Comentario invalido." });
+            return res.status(400).json({ message: "Coment?rio inv?lido." });
         }
         const exists = await dbGet(
             `SELECT id
@@ -3913,7 +3955,7 @@ app.post("/api/profile-comments/:commentId/like", requireAuth, async (req, res) 
             [commentId]
         );
         if (!exists) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
 
         const existingLike = await dbGet(
@@ -3980,7 +4022,7 @@ app.get("/api/profile-comments/:commentId/likes", requireAuth, async (req, res) 
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Comentario invalido." });
+            return res.status(400).json({ message: "Coment?rio inv?lido." });
         }
         const exists = await dbGet(
             `SELECT id
@@ -3989,7 +4031,7 @@ app.get("/api/profile-comments/:commentId/likes", requireAuth, async (req, res) 
             [commentId]
         );
         if (!exists) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
         const likes = await dbAll(
             `SELECT l.user_id, u.username, u.nickname, u.avatar_url, l.created_at
@@ -4010,7 +4052,7 @@ app.post("/api/auth/request-password-reset", async (req, res) => {
     try {
         const email = sanitizeText(req.body.email, 120).toLowerCase();
         if (!isValidEmail(email)) {
-            return res.status(400).json({ message: "Email invalido." });
+            return res.status(400).json({ message: "Email inv?lido." });
         }
 
         const user = await dbGet("SELECT id, email FROM users WHERE email = ? LIMIT 1", [email]);
@@ -4035,7 +4077,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
         const token = sanitizeText(req.body.token, 200);
         const password = String(req.body.password || "");
         if (!token) {
-            return res.status(400).json({ message: "Token invalido." });
+            return res.status(400).json({ message: "Token inválido." });
         }
         if (password.length < 8) {
             return res.status(400).json({ message: "A senha precisa ter ao menos 8 caracteres." });
@@ -4050,7 +4092,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
         );
 
         if (!reset || reset.used || reset.expires_at < nowInSeconds()) {
-            return res.status(400).json({ message: "Token invalido ou expirado." });
+            return res.status(400).json({ message: "Token inválido ou expirado." });
         }
 
         const newPasswordHash = await bcrypt.hash(password, 12);
@@ -4090,7 +4132,7 @@ app.get("/api/users", requireAuth, async (req, res) => {
         return res.json({ users: rows });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao listar usuarios." });
+        return res.status(500).json({ message: "Erro ao listar usuários." });
     }
 });
 
@@ -4151,10 +4193,10 @@ app.post("/api/suggestions", requireAuth, async (req, res) => {
         const suggestionText = sanitizeText(req.body?.suggestionText || "", 1000);
         const allowedTargets = new Set(["home", "profile", "round", "admin"]);
         if (!allowedTargets.has(targetPage)) {
-            return res.status(400).json({ message: "Tela da sugestao invalida." });
+            return res.status(400).json({ message: "Tela da sugest?o inv?lida." });
         }
         if (targetPage === "admin" && !req.currentUser?.isOwner && !req.currentUser?.isModerator) {
-            return res.status(403).json({ message: "Voce nao pode enviar sugestao para essa tela." });
+            return res.status(403).json({ message: "Você não pode enviar sugestão para essa tela." });
         }
         if (suggestionText.length < 5) {
             return res.status(400).json({ message: "Digite ao menos 5 caracteres." });
@@ -4171,7 +4213,7 @@ app.post("/api/suggestions", requireAuth, async (req, res) => {
         return res.json({ message: "Sugestao enviada." });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao enviar sugestao." });
+        return res.status(500).json({ message: "Erro ao enviar sugest?o." });
     }
 });
 
@@ -4179,7 +4221,7 @@ app.delete("/api/admin/suggestions/:suggestionId", requireAuth, requireOwner, as
     try {
         const suggestionId = Number(req.params.suggestionId);
         if (!Number.isInteger(suggestionId) || suggestionId <= 0) {
-            return res.status(400).json({ message: "Sugestao invalida." });
+            return res.status(400).json({ message: "Sugest?o inv?lida." });
         }
         await dbRun("DELETE FROM suggestions WHERE id = ?", [suggestionId]);
         emitAdminChange("suggestion_deleted", {
@@ -4188,7 +4230,7 @@ app.delete("/api/admin/suggestions/:suggestionId", requireAuth, requireOwner, as
         return res.json({ message: "Sugestao excluida." });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao excluir sugestao." });
+        return res.status(500).json({ message: "Erro ao excluir sugest?o." });
     }
 });
 
@@ -4196,7 +4238,7 @@ app.post("/api/admin/users/:userId/achievements", requireAuth, requireAdminAcces
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const action = String(req.body.action || "").trim().toLowerCase();
         let actionType = "";
@@ -4204,7 +4246,7 @@ app.post("/api/admin/users/:userId/achievements", requireAuth, requireAdminAcces
         if (action === "revoke") actionType = "achievement_revoke";
         if (action === "reset_all") actionType = "achievement_reset_all";
         if (!actionType) {
-            return res.status(400).json({ message: "Acao invalida." });
+            return res.status(400).json({ message: "A??o inv?lida." });
         }
         const result = await queueOrExecuteAdminAction(req.currentUser, actionType, {
             targetUserId: userId,
@@ -4214,7 +4256,7 @@ app.post("/api/admin/users/:userId/achievements", requireAuth, requireAdminAcces
     } catch (error) {
         console.error(error);
         const status = Number(error?.statusCode) || 500;
-        return res.status(status).json({ message: error.message || "Erro ao atualizar conquistas do usuario." });
+        return res.status(status).json({ message: error.message || "Erro ao atualizar conquistas do usu?rio." });
     }
 });
 
@@ -4222,7 +4264,7 @@ app.patch("/api/admin/users/:userId/block", requireAuth, requireAdminAccess, asy
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const blocked = Number(req.body.blocked) === 1 ? 1 : 0;
         const result = await queueOrExecuteAdminAction(req.currentUser, "user_block", {
@@ -4241,7 +4283,7 @@ app.delete("/api/admin/users/:userId", requireAuth, requireAdminAccess, async (r
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const result = await queueOrExecuteAdminAction(req.currentUser, "user_delete", {
             targetUserId: userId
@@ -4258,7 +4300,7 @@ app.patch("/api/admin/users/:userId/role", requireAuth, requireAdminAccess, asyn
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const role = String(req.body.role || "").trim().toLowerCase() === "moderator" ? "moderator" : "user";
         const result = await queueOrExecuteAdminAction(req.currentUser, "set_role", {
@@ -4277,7 +4319,7 @@ app.patch("/api/admin/users/:userId/moderator", requireAuth, requireAdminAccess,
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const moderator = Number(req.body.moderator) === 1 || req.body.moderator === true;
         const role = moderator ? "moderator" : "user";
@@ -4297,7 +4339,7 @@ app.post("/api/admin/users/:userId/moderator", requireAuth, requireAdminAccess, 
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
-            return res.status(400).json({ message: "Usuario invalido." });
+            return res.status(400).json({ message: "Usuário inválido." });
         }
         const moderator = Number(req.body.moderator) === 1 || req.body.moderator === true;
         const role = moderator ? "moderator" : "user";
@@ -4317,7 +4359,7 @@ app.post("/api/admin/rounds/:roundId/close", requireAuth, requireAdminAccess, as
     try {
         const roundId = Number(req.params.roundId);
         if (!Number.isInteger(roundId) || roundId <= 0) {
-            return res.status(400).json({ message: "Rodada invalida." });
+            return res.status(400).json({ message: "Rodada inv?lida." });
         }
         const result = await queueOrExecuteAdminAction(req.currentUser, "round_close", { roundId });
         return res.json(result);
@@ -4332,7 +4374,7 @@ app.delete("/api/admin/rounds/:roundId", requireAuth, requireAdminAccess, async 
     try {
         const roundId = Number(req.params.roundId);
         if (!Number.isInteger(roundId) || roundId <= 0) {
-            return res.status(400).json({ message: "Rodada invalida." });
+            return res.status(400).json({ message: "Rodada inv?lida." });
         }
         const result = await queueOrExecuteAdminAction(req.currentUser, "round_delete", { roundId });
         return res.json(result);
@@ -4347,11 +4389,11 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
     try {
         const requestId = Number(req.params.requestId);
         if (!Number.isInteger(requestId) || requestId <= 0) {
-            return res.status(400).json({ message: "Solicitacao invalida." });
+            return res.status(400).json({ message: "Solicita??o inv?lida." });
         }
         const decision = String(req.body?.decision || "").trim().toLowerCase();
         if (!["allow", "deny"].includes(decision)) {
-            return res.status(400).json({ message: "Decisao invalida." });
+            return res.status(400).json({ message: "Decis?o inv?lida." });
         }
         await pruneExpiredAdminActionRequests();
         const row = await dbGet(
@@ -4361,7 +4403,7 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
             [requestId]
         );
         if (!row || row.status !== "pending") {
-            return res.status(404).json({ message: "Solicitacao nao encontrada ou ja processada." });
+            return res.status(404).json({ message: "Solicitação não encontrada ou já processada." });
         }
 
         const now = nowInSeconds();
@@ -4415,11 +4457,11 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
                 decision: "deny"
             });
             const status = Number(executeError?.statusCode) || 400;
-            return res.status(status).json({ message: executeError?.message || "Falha ao executar solicitacao." });
+            return res.status(status).json({ message: executeError?.message || "Falha ao executar solicita??o." });
         }
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao processar solicitacao." });
+        return res.status(500).json({ message: "Erro ao processar solicita??o." });
     }
 });
 
@@ -4474,7 +4516,7 @@ app.get("/api/rounds/:roundId", requireAuth, async (req, res) => {
         const roundId = Number(req.params.roundId);
         const payload = await getRoundPayload(roundId, req.session.userId);
         if (!payload) {
-            return res.status(404).json({ message: "Rodada nao encontrada." });
+            return res.status(404).json({ message: "Rodada não encontrada." });
         }
         return res.json({ round: payload });
     } catch (error) {
@@ -4507,6 +4549,11 @@ app.post("/api/rounds/new", requireAuth, async (req, res) => {
         );
 
         const payload = await getRoundPayload(roundId, req.session.userId);
+        emitRoundChange("round_created", {
+            roundId,
+            status: "draft",
+            actorUserId: Number(req.session.userId) || 0
+        });
         return res.json({ message: "Nova rodada criada.", round: payload });
     } catch (error) {
         console.error(error);
@@ -4525,7 +4572,7 @@ app.post("/api/rounds/:roundId/participants", requireAuth, async (req, res) => {
 
         const user = await getUserBasicById(userId);
         if (!user) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
+            return res.status(404).json({ message: "Usuário não encontrado." });
         }
 
         await dbRun(
@@ -4536,6 +4583,10 @@ app.post("/api/rounds/:roundId/participants", requireAuth, async (req, res) => {
         await cleanupRoundPairExclusions(roundId);
 
         const participants = await getRoundParticipants(roundId);
+        emitRoundChange("round_participants_changed", {
+            roundId,
+            actorUserId: Number(req.session.userId) || 0
+        });
         return res.json({ message: "Participante adicionado.", participants });
     } catch (error) {
         console.error(error);
@@ -4559,6 +4610,10 @@ app.delete("/api/rounds/:roundId/participants/:userId", requireAuth, async (req,
         await dbRun("DELETE FROM round_participants WHERE round_id = ? AND user_id = ?", [roundId, userId]);
         await cleanupRoundPairExclusions(roundId);
         const participants = await getRoundParticipants(roundId);
+        emitRoundChange("round_participants_changed", {
+            roundId,
+            actorUserId: Number(req.session.userId) || 0
+        });
         return res.json({ message: "Participante removido.", participants });
     } catch (error) {
         console.error(error);
@@ -4579,6 +4634,10 @@ app.put("/api/rounds/:roundId/pair-exclusions", requireAuth, async (req, res) =>
         await sanitizeAndSavePairExclusions(roundId, pairs);
 
         const payload = await getRoundPayload(roundId, req.session.userId);
+        emitRoundChange("round_pair_exclusions_changed", {
+            roundId,
+            actorUserId: Number(req.session.userId) || 0
+        });
         return res.json({ message: "Restricoes de pares salvas.", round: payload });
     } catch (error) {
         console.error(error);
@@ -4593,7 +4652,7 @@ app.post("/api/rounds/:roundId/draw", requireAuth, async (req, res) => {
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!requireRoundCreator(round, req, res)) return;
         if (round.status !== "draft") {
-            return res.status(400).json({ message: "Esta rodada nao esta mais na fase de sorteio." });
+            return res.status(400).json({ message: "Esta rodada não está mais na fase de sorteio." });
         }
 
         const participants = await dbAll(
@@ -4615,6 +4674,11 @@ app.post("/api/rounds/:roundId/draw", requireAuth, async (req, res) => {
         ]);
 
         const payload = await getRoundPayload(roundId, req.session.userId);
+        emitRoundChange("round_draw_completed", {
+            roundId,
+            status: "reveal",
+            actorUserId: Number(req.session.userId) || 0
+        });
         return res.json({ message: "Sorteio realizado. Agora revele os pares antes das indicacoes.", round: payload });
     } catch (error) {
         console.error(error);
@@ -4630,7 +4694,7 @@ app.post("/api/rounds/:roundId/reveal/:giverUserId", requireAuth, async (req, re
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!requireRoundCreator(round, req, res)) return;
         if (round.status !== "reveal") {
-            return res.status(400).json({ message: "A rodada nao esta na fase de revelacao." });
+            return res.status(400).json({ message: "A rodada não está na fase de revelação." });
         }
 
         await dbRun(
@@ -4638,6 +4702,10 @@ app.post("/api/rounds/:roundId/reveal/:giverUserId", requireAuth, async (req, re
             [roundId, giverUserId]
         );
         const payload = await getRoundPayload(roundId, req.session.userId);
+        emitRoundChange("round_reveal_progress", {
+            roundId,
+            actorUserId: Number(req.session.userId) || 0
+        });
         return res.json({ message: "Sorteado revelado.", round: payload });
     } catch (error) {
         console.error(error);
@@ -4651,13 +4719,13 @@ app.post("/api/rounds/:roundId/start-indication", requireAuth, async (req, res) 
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!requireRoundCreator(round, req, res)) return;
         if (round.status !== "reveal") {
-            return res.status(400).json({ message: "A rodada nao esta pronta para iniciar indicacoes." });
+            return res.status(400).json({ message: "A rodada não está pronta para iniciar indicações." });
         }
 
         const ratingStartsAtInput = Number(req.body.ratingStartsAt || 0);
         if (!Number.isInteger(ratingStartsAtInput) || ratingStartsAtInput <= nowInSeconds()) {
             return res.status(400).json({
-                message: "Defina uma data futura para abrir a sessao de notas."
+                message: "Defina uma data futura para abrir a sessão de notas."
             });
         }
 
@@ -4666,10 +4734,15 @@ app.post("/api/rounds/:roundId/start-indication", requireAuth, async (req, res) 
             [ratingStartsAtInput, roundId]
         );
         const payload = await getRoundPayload(roundId, req.session.userId);
-        return res.json({ message: "Sessao de indicacoes iniciada.", round: payload });
+        emitRoundChange("round_indication_started", {
+            roundId,
+            status: "indication",
+            actorUserId: Number(req.session.userId) || 0
+        });
+        return res.json({ message: "Sessão de indicações iniciada.", round: payload });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao iniciar sessao de indicacoes." });
+        return res.status(500).json({ message: "Erro ao iniciar sessão de indicações." });
     }
 });
 
@@ -4678,7 +4751,7 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
         const roundId = Number(req.params.roundId);
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!round) {
-            return res.status(404).json({ message: "Rodada nao encontrada." });
+            return res.status(404).json({ message: "Rodada não encontrada." });
         }
         if (round.status === "closed") {
             const canReopenRound =
@@ -4720,6 +4793,11 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
                 nowInSeconds(),
                 roundId
             ]);
+            emitRoundChange("round_reopened_finalized", {
+                roundId,
+                status: "closed",
+                actorUserId: Number(req.currentUser?.id) || 0
+            });
             const payload = await getRoundPayload(roundId, req.currentUser.id);
             return res.json({ message: "Rodada reaberta finalizada.", round: payload });
         }
@@ -4736,6 +4814,11 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
             roundId
         ]);
         await syncAchievementsForRoundParticipants(roundId);
+        emitRoundChange("round_closed", {
+            roundId,
+            status: "closed",
+            actorUserId: Number(req.currentUser?.id) || 0
+        });
         const payload = await getRoundPayload(roundId, req.currentUser.id);
         return res.json({ message: "Rodada encerrada.", round: payload });
     } catch (error) {
@@ -4749,7 +4832,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
         const roundId = Number(req.params.roundId);
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!round) {
-            return res.status(404).json({ message: "Rodada nao encontrada." });
+            return res.status(404).json({ message: "Rodada não encontrada." });
         }
         if (!req.currentUser?.isOwner && !req.currentUser?.isModerator && round.creator_user_id !== req.currentUser.id) {
             return res.status(403).json({ message: "Sem permissao para editar essa rodada." });
@@ -4762,7 +4845,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
             const allowed = new Set(["draft", "reveal", "indication", "reopened", "closed"]);
             const status = String(req.body.status);
             if (!allowed.has(status)) {
-                return res.status(400).json({ message: "Status de rodada invalido." });
+                return res.status(400).json({ message: "Status de rodada inv?lido." });
             }
             updates.push("status = ?");
             params.push(status);
@@ -4771,7 +4854,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
         if (req.body.ratingStartsAt !== undefined) {
             const ts = Number(req.body.ratingStartsAt);
             if (!Number.isInteger(ts) || ts <= 0) {
-                return res.status(400).json({ message: "Data de notas invalida." });
+                return res.status(400).json({ message: "Data de notas inv?lida." });
             }
             updates.push("rating_starts_at = ?");
             params.push(ts);
@@ -4784,6 +4867,10 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
         params.push(roundId);
         await dbRun(`UPDATE rounds SET ${updates.join(", ")} WHERE id = ?`, params);
         const payload = await getRoundPayload(roundId, req.currentUser.id);
+        emitRoundChange("round_updated", {
+            roundId,
+            actorUserId: Number(req.currentUser?.id) || 0
+        });
         return res.json({ message: "Rodada atualizada.", round: payload });
     } catch (error) {
         console.error(error);
@@ -4795,12 +4882,16 @@ app.delete("/api/rounds/:roundId", requireAuth, async (req, res) => {
     try {
         const roundId = Number(req.params.roundId);
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
-        if (!round) return res.status(404).json({ message: "Rodada nao encontrada." });
+        if (!round) return res.status(404).json({ message: "Rodada não encontrada." });
         if (!req.currentUser?.isOwner && round.creator_user_id !== req.currentUser.id) {
             return res.status(403).json({ message: "Sem permissao para excluir essa rodada." });
         }
         await deleteRoundCascade(roundId);
-        return res.json({ message: "Rodada excluida." });
+        emitRoundChange("round_deleted", {
+            roundId,
+            actorUserId: Number(req.currentUser?.id) || 0
+        });
+        return res.json({ message: "Rodada excluída." });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao excluir rodada." });
@@ -4817,13 +4908,13 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
             const roundId = Number(req.params.roundId);
             const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
             if (!round) {
-                return res.status(404).json({ message: "Rodada nao encontrada." });
+                return res.status(404).json({ message: "Rodada não encontrada." });
             }
             if (round.status !== "indication") {
-                return res.status(400).json({ message: "A rodada nao esta na fase de indicacoes." });
+                return res.status(400).json({ message: "A rodada não está na fase de indicações." });
             }
             if (round.rating_starts_at && nowInSeconds() >= round.rating_starts_at) {
-                return res.status(400).json({ message: "A fase de indicacoes encerrou. Agora a rodada esta em notas." });
+                return res.status(400).json({ message: "A fase de indicações encerrou. Agora a rodada está em notas." });
             }
 
             const assignment = await dbGet(
@@ -4831,7 +4922,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 [roundId, req.session.userId]
             );
             if (!assignment) {
-                return res.status(403).json({ message: "Voce nao possui indicacao ativa nesta rodada." });
+                return res.status(403).json({ message: "Você não possui indicação ativa nesta rodada." });
             }
 
             let gameName = sanitizeText(req.body.gameName, 120);
@@ -4889,7 +4980,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 gameCoverUrl = `https://cdn.cloudflare.steamstatic.com/steam/apps/${steamAppId}/header.jpg`;
             }
             if (!gameDescription && steamAppId && gameName) {
-                gameDescription = sanitizeText("Descricao curta indisponivel na Steam.", 500);
+                gameDescription = sanitizeText("Descrição curta indisponível na Steam.", 500);
             }
 
             if (!gameName) {
@@ -4971,10 +5062,14 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
             }
 
             const payload = await getRoundPayload(roundId, req.session.userId);
-            return res.json({ message: "Indicacao salva com sucesso.", round: payload, newlyUnlocked });
+            emitRoundChange("recommendation_saved", {
+                roundId,
+                actorUserId: Number(req.session.userId) || 0
+            });
+            return res.json({ message: "Indicação salva com sucesso.", round: payload, newlyUnlocked });
         } catch (submitError) {
             console.error(submitError);
-            return res.status(500).json({ message: "Erro ao salvar indicacao." });
+            return res.status(500).json({ message: "Erro ao salvar indicação." });
         }
     });
 });
@@ -4997,10 +5092,10 @@ app.post("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
         const roundStatus = String(round?.status || "");
         const canRateInRound = round && (roundStatus === "indication" || roundStatus === "reopened");
         if (!canRateInRound) {
-            return res.status(400).json({ message: "A rodada nao esta na fase de notas." });
+            return res.status(400).json({ message: "A rodada não está na fase de notas." });
         }
         if (roundStatus !== "reopened" && (!round.rating_starts_at || nowInSeconds() < round.rating_starts_at)) {
-            return res.status(400).json({ message: "A sessao de notas ainda nao foi liberada." });
+            return res.status(400).json({ message: "A sessão de notas ainda não foi liberada." });
         }
 
         const recommendation = await dbGet(
@@ -5008,10 +5103,10 @@ app.post("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
             [recommendationId, roundId]
         );
         if (!recommendation) {
-            return res.status(404).json({ message: "Indicacao nao encontrada para esta rodada." });
+            return res.status(404).json({ message: "Indicação não encontrada para esta rodada." });
         }
         if (recommendation.receiver_user_id !== req.session.userId) {
-            return res.status(403).json({ message: "Apenas quem recebeu a indicacao pode dar a nota naval." });
+            return res.status(403).json({ message: "Apenas quem recebeu a indicação pode dar a nota naval." });
         }
 
         const existing = await dbGet(
@@ -5035,7 +5130,7 @@ app.post("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
             );
         }
 
-        // CGNewba: desbloqueio imediato ao avaliar uma indicacao.
+        // CGNewba: desbloqueio imediato ao avaliar uma indicação.
         await dbRun(
             `INSERT OR IGNORE INTO user_achievements (user_id, achievement_key, unlocked_at)
              VALUES (?, 'CGNewba', ?)`,
@@ -5053,6 +5148,11 @@ app.post("/api/rounds/:roundId/ratings", requireAuth, async (req, res) => {
         }
 
         const payload = await getRoundPayload(roundId, req.session.userId);
+        emitRoundChange("round_rating_saved", {
+            roundId,
+            recommendationId,
+            actorUserId: Number(req.session.userId) || 0
+        });
         return res.json({
             message: "Nota naval registrada.",
             round: payload,
@@ -5069,7 +5169,7 @@ app.post("/api/recommendations/:recommendationId/comments", requireAuth, async (
         const commentText = sanitizeText(req.body.commentText, 500);
         const parentCommentId = Number(req.body.parentCommentId || 0);
         if (!commentText) {
-            return res.status(400).json({ message: "Comentario vazio." });
+            return res.status(400).json({ message: "Comentário vazio." });
         }
 
         const recommendation = await dbGet(
@@ -5077,7 +5177,7 @@ app.post("/api/recommendations/:recommendationId/comments", requireAuth, async (
             [recommendationId]
         );
         if (!recommendation) {
-            return res.status(404).json({ message: "Indicacao nao encontrada." });
+            return res.status(404).json({ message: "Indicação não encontrada." });
         }
 
         let parentId = null;
@@ -5089,7 +5189,7 @@ app.post("/api/recommendations/:recommendationId/comments", requireAuth, async (
                 [parentCommentId]
             );
             if (!parent || Number(parent.recommendation_id) !== recommendationId) {
-                return res.status(400).json({ message: "Comentario pai invalido para esta indicacao." });
+                return res.status(400).json({ message: "Comentário pai inválido para esta indicação." });
             }
             parentId = parent.id;
         }
@@ -5112,7 +5212,11 @@ app.post("/api/recommendations/:recommendationId/comments", requireAuth, async (
             [insert.lastID]
         );
 
-        return res.json({ message: "Comentario publicado.", comment: created });
+        await emitRoundChangeForRecommendation("recommendation_comment_changed", recommendationId, {
+            actorUserId: Number(req.session.userId) || 0
+        });
+
+        return res.json({ message: "Comentário publicado.", comment: created });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao comentar." });
@@ -5124,7 +5228,7 @@ app.put("/api/recommendation-comments/:commentId", requireAuth, async (req, res)
         const commentId = Number(req.params.commentId);
         const commentText = sanitizeText(req.body.commentText, 500);
         if (!commentText) {
-            return res.status(400).json({ message: "Comentario vazio." });
+            return res.status(400).json({ message: "Comentário vazio." });
         }
         const existing = await dbGet(
             `SELECT id, user_id
@@ -5133,10 +5237,10 @@ app.put("/api/recommendation-comments/:commentId", requireAuth, async (req, res)
             [commentId]
         );
         if (!existing) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
         if (Number(existing.user_id) !== Number(req.currentUser.id)) {
-            return res.status(403).json({ message: "Voce so pode editar seus proprios comentarios." });
+            return res.status(403).json({ message: "Você só pode editar seus próprios comentários." });
         }
         const now = nowInSeconds();
         await dbRun(
@@ -5163,10 +5267,15 @@ app.put("/api/recommendation-comments/:commentId", requireAuth, async (req, res)
              WHERE c.id = ? LIMIT 1`,
             [req.currentUser.id, commentId]
         );
-        return res.json({ message: "Comentario atualizado.", comment: updated });
+        await emitRoundChangeForRecommendation(
+            "recommendation_comment_changed",
+            Number(updated?.recommendation_id || 0),
+            { actorUserId: Number(req.currentUser?.id) || 0 }
+        );
+        return res.json({ message: "Comentário atualizado.", comment: updated });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao atualizar comentario." });
+        return res.status(500).json({ message: "Erro ao atualizar comentário." });
     }
 });
 
@@ -5174,13 +5283,13 @@ app.delete("/api/recommendation-comments/:commentId", requireAuth, async (req, r
     try {
         const commentId = Number(req.params.commentId);
         const existing = await dbGet(
-            `SELECT id, user_id
+            `SELECT id, user_id, recommendation_id
              FROM recommendation_comments
              WHERE id = ? LIMIT 1`,
             [commentId]
         );
         if (!existing) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
         const isOwnComment = Number(existing.user_id) === Number(req.currentUser.id);
         if (!isOwnComment && !req.currentUser?.isOwner) {
@@ -5198,10 +5307,15 @@ app.delete("/api/recommendation-comments/:commentId", requireAuth, async (req, r
             [commentId]
         );
         await dbRun("DELETE FROM recommendation_comments WHERE id = ?", [commentId]);
-        return res.json({ message: "Comentario removido.", commentId });
+        await emitRoundChangeForRecommendation(
+            "recommendation_comment_changed",
+            Number(existing?.recommendation_id || 0),
+            { actorUserId: Number(req.currentUser?.id) || 0 }
+        );
+        return res.json({ message: "Comentário removido.", commentId });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao excluir comentario." });
+        return res.status(500).json({ message: "Erro ao excluir comentário." });
     }
 });
 
@@ -5209,16 +5323,16 @@ app.post("/api/recommendation-comments/:commentId/like", requireAuth, async (req
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Comentario invalido." });
+            return res.status(400).json({ message: "Coment?rio inv?lido." });
         }
         const commentExists = await dbGet(
-            `SELECT id
+            `SELECT id, recommendation_id
              FROM recommendation_comments
              WHERE id = ? LIMIT 1`,
             [commentId]
         );
         if (!commentExists) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
 
         const existingLike = await dbGet(
@@ -5271,6 +5385,12 @@ app.post("/api/recommendation-comments/:commentId/like", requireAuth, async (req
             [likesCount, req.currentUser.id, commentId]
         );
 
+        await emitRoundChangeForRecommendation(
+            "recommendation_comment_liked",
+            Number(commentExists?.recommendation_id || comment?.recommendation_id || 0),
+            { actorUserId: Number(req.currentUser?.id) || 0 }
+        );
+
         return res.json({
             liked,
             likesCount,
@@ -5278,7 +5398,7 @@ app.post("/api/recommendation-comments/:commentId/like", requireAuth, async (req
         });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao curtir comentario." });
+        return res.status(500).json({ message: "Erro ao curtir comentário." });
     }
 });
 
@@ -5286,7 +5406,7 @@ app.get("/api/recommendation-comments/:commentId/likes", requireAuth, async (req
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Comentario invalido." });
+            return res.status(400).json({ message: "Coment?rio inv?lido." });
         }
         const commentExists = await dbGet(
             `SELECT id
@@ -5295,7 +5415,7 @@ app.get("/api/recommendation-comments/:commentId/likes", requireAuth, async (req
             [commentId]
         );
         if (!commentExists) {
-            return res.status(404).json({ message: "Comentario nao encontrado." });
+            return res.status(404).json({ message: "Comentário não encontrado." });
         }
         const likes = await dbAll(
             `SELECT l.user_id, u.username, u.nickname, u.avatar_url, l.created_at
@@ -5386,7 +5506,7 @@ app.get("/api/steam/app/:appId", requireAuth, async (req, res) => {
     try {
         const details = await getSteamAppDetails(req.params.appId);
         if (!details) {
-            return res.status(404).json({ message: "Jogo nao encontrado na Steam." });
+            return res.status(404).json({ message: "Jogo não encontrado na Steam." });
         }
         return res.json({ item: details });
     } catch (error) {

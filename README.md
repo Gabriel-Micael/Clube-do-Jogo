@@ -1,14 +1,70 @@
 # Clube do Jogo
 
-Clube do Jogo is a web app for game recommendation rounds: users draw pairs, recommend games, and later rate them on a naval chart (A-J + 1-10).
+Plataforma web para rodadas de indicação de jogos, com sorteio entre participantes, fase de indicação, fase de notas navais e histórico social (comentários, curtidas e perfil).
 
-## Project Structure
+Produção atual: `https://clubedojogo.app.br`  
+Servidor da aplicação: Node.js/Express com SQLite (pode rodar localmente na sua máquina e publicar com proxy reverso).
+
+## Stack
+
+- Backend: Node.js + Express (`server.js`)
+- Banco: SQLite (`database.sqlite`)
+- Sessão: `express-session` + `connect-sqlite3`
+- Auth: email/senha + Google OAuth (`passport-google-oauth20`)
+- Uploads: `multer` (avatar/capas)
+- Segurança: `helmet`, `express-rate-limit`
+- E-mail transacional: `nodemailer`
+- Frontend: HTML + CSS + JavaScript puro (`public/`)
+- Realtime: SSE (`EventSource`) para atualização por evento (sem polling periódico no cliente)
+
+## Principais Features
+
+- Cadastro com verificação por código no e-mail.
+- Login por e-mail/senha e login com Google.
+- Redefinição de senha (perfil e “esqueci minha senha”).
+- Perfil com avatar, nickname, conquistas e histórico de atividade.
+- Comentários em recomendações e no perfil com:
+  - responder
+  - editar
+  - excluir
+  - curtir
+  - lista de curtidas
+- Fluxo da rodada:
+  - `draft` (sorteio/participantes/restrições)
+  - `reveal` (revelação dos pares)
+  - `indication` (indicações)
+  - `rating` (notas navais)
+  - `closed` (encerrada)
+  - `reopened` (rodada reaberta para edição/finalização)
+- Plano Naval (grade X/Y com miniaturas e pilha por coordenada).
+- Painel administrativo com dono e moderadores:
+  - gestão de usuários
+  - gestão de rodadas
+  - gestão de conquistas
+  - solicitações pendentes (fluxo de aprovação do dono para ações de moderador)
+  - sugestões enviadas pelos usuários
+- Conquistas por participação e por critérios de gênero/atributos.
+- Metadados de jogos:
+  - Steam (busca e detalhes)
+  - RAWG (fallback/principal para entrada manual por nome)
+  - crédito da RAWG exibido na UI conforme termos.
+
+## Realtime (100% por evento no cliente)
+
+- O frontend não usa `setInterval` para atualizar home/rodada/conquistas.
+- Atualizações chegam por SSE:
+  - `/api/admin/events` para estado do painel administrativo.
+  - `/api/rounds/events` para mudanças de rodada/recomendação/comentários/notas.
+- O backend emite eventos quando há mutação relevante (ex.: reabrir rodada, salvar indicação, comentar, curtir comentário, fechar rodada, etc.).
+
+## Estrutura de Pastas
 
 ```text
-project/
+.
 |-- server.js
 |-- database.sqlite
 |-- package.json
+|-- README.md
 |-- public/
 |   |-- index.html
 |   |-- login.html
@@ -18,126 +74,85 @@ project/
 |   |-- reset-password.html
 |   |-- profile.html
 |   |-- round.html
+|   |-- admin.html
 |   |-- script.js
 |   |-- style.css
 |   `-- demo/
-|       |-- index.html
-|       |-- demo.css
-|       |-- demo.js
-|       |-- demo_looping.mp4
-|       `-- screenshots/
-|           |-- login.jpg
-|           |-- home.jpg
-|           |-- home2.jpg
-|           |-- home3.jpg
-|           |-- sorteio.jpg
-|           |-- sorteio2.jpg
-|           |-- sorteio3.jpg
-|           |-- indicacao1.jpg
-|           |-- indicacao2.jpg
-|           |-- indicacao3.jpg
-|           |-- indicacao4.jpg
-|           |-- indicacao5.jpg
-|           |-- notanaval1.jpg
-|           |-- notanaval2.jpg
-|           `-- perfil.jpg
-|-- screenshots/
-|   |-- login.jpg
-|   |-- home.jpg
-|   |-- home2.jpg
-|   |-- home3.jpg
-|   |-- sorteio.jpg
-|   |-- sorteio2.jpg
-|   |-- sorteio3.jpg
-|   |-- notanaval1.jpg
-|   |-- notanaval2.jpg
-|   `-- perfil.jpg
-|-- .github/
-|   `-- workflows/
-|       `-- deploy-demo-pages.yml
-`-- README.md
+|-- uploads/
+|   |-- avatars/
+|   |-- covers/
+|   `-- trofeus/
+`-- .env.example
 ```
 
-Other operational files also exist in the repository (for local run and deployment), such as `.env`, `.env.example`, `uploads/`, `sessions.sqlite`, `app.db`, and `node_modules/`.
+## Variáveis de Ambiente
 
-## Main Features
+Use `.env.example` como base.
 
-- Session auth with protected pages
-- Email/password signup with verification
-- Password reset by email link
-- Google OAuth login
-- Profile (avatar, nickname, history)
-- Round flow: draw -> indication -> rating -> closed
-- Draw restrictions (who cannot be paired)
-- Steam search for game suggestions
-- Comments with reply/edit/delete
-- Naval chart with round history
+Campos importantes:
 
-## Stack
+- App e domínio:
+  - `PORT`, `HOST`, `NODE_ENV`
+  - `BASE_URL`
+  - `PUBLIC_APP_URL`
+  - `ALLOWED_ORIGINS`
+- Proxy reverso:
+  - `TRUST_PROXY=1` em produção atrás de Caddy/Nginx.
+- Cookies de sessão:
+  - `SESSION_SECRET`
+  - `SESSION_COOKIE_SECURE`
+  - `SESSION_COOKIE_SAMESITE`
+  - `SESSION_COOKIE_DOMAIN`
+- OAuth Google:
+  - `GOOGLE_ENABLED`
+  - `GOOGLE_CLIENT_ID`
+  - `GOOGLE_CLIENT_SECRET`
+  - `GOOGLE_CALLBACK_URL`
+- RAWG:
+  - `RAWG_API_KEY`
+- SMTP:
+  - `SMTP_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`
 
-- Node.js + Express
-- SQLite (`database.sqlite`)
-- `express-session` + `connect-sqlite3`
-- `bcryptjs`, `helmet`, `express-rate-limit`
-- `multer` and `nodemailer`
-- HTML/CSS/Vanilla JS frontend in `public/`
+## Rodando Localmente
 
-## Local Run
-
-1. Install dependencies:
+1. Instalar dependências:
 
 ```bash
 npm install
 ```
 
-2. Create env file:
+2. Criar `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Configure at least:
+3. Ajustar variáveis mínimas (`PORT`, `BASE_URL`, `SESSION_SECRET`).
 
-- `PORT=3000`
-- `BASE_URL=http://localhost:3000`
-- `SESSION_SECRET=<strong-secret>`
-
-4. Start app:
+4. Iniciar:
 
 ```bash
 npm start
 ```
 
-5. Open `http://localhost:3000`.
+5. Abrir:
 
-## Self-Host With Your Own Domain (No Tunnel)
+`http://localhost:3000`
 
-This project is ready to run behind a reverse proxy (for example Caddy) on your own machine.
+## Produção no domínio clubedojogo.app.br (sem tunnel)
 
-1. Create `.env` for production, for example:
+1. Rodar a app localmente (ex.: `127.0.0.1:3000`).
+2. Configurar proxy reverso (Caddy/Nginx) para `clubedojogo.app.br`.
+3. Apontar DNS para seu IP público.
+4. Configurar encaminhamento de portas 80/443 no roteador para a máquina do proxy.
+5. Em produção, usar:
+  - `TRUST_PROXY=1`
+  - `SESSION_COOKIE_SECURE=true`
+  - `SESSION_COOKIE_DOMAIN=clubedojogo.app.br`
 
-```env
-NODE_ENV=production
-HOST=127.0.0.1
-PORT=3000
-BASE_URL=https://clubedojogo.app.br
-PUBLIC_APP_URL=https://clubedojogo.app.br
-ALLOWED_ORIGINS=https://clubedojogo.app.br,https://www.clubedojogo.app.br
-TRUST_PROXY=1
-SESSION_COOKIE_SECURE=true
-SESSION_COOKIE_SAMESITE=lax
-SESSION_COOKIE_DOMAIN=clubedojogo.app.br
-SESSION_SECRET=use-a-long-random-secret
-```
+## Observações Técnicas
 
-2. Run the app:
+- A aplicação normaliza artefatos de codificação no frontend para evitar textos quebrados de legado.
+- Recomendações e conquistas usam sincronização no backend; notificações visuais de desbloqueio são disparadas no cliente.
+- Rodadas reabertas não devem ser tratadas como rodada “nova”; elas entram em fluxo específico de edição/finalização.
 
-```bash
-npm start
-```
-
-3. Configure Caddy using `Caddyfile.example` (copy to your Caddy config path and adjust if needed).
-
-4. Ensure your router forwards ports `80` and `443` to the machine running Caddy.
-
-5. Point DNS `A` records (`@` and optionally `www`) to your public IP.

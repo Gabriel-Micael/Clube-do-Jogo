@@ -4,7 +4,6 @@ const baseAvatar =
 const lockedAchievementImageDataUri =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23101318'/%3E%3Cstop offset='100%25' stop-color='%2305070c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='300' height='400' fill='url(%23g)'/%3E%3Ccircle cx='150' cy='170' r='58' fill='none' stroke='%233b4452' stroke-width='14'/%3E%3Crect x='142' y='140' width='16' height='74' rx='8' fill='%233b4452'/%3E%3Crect x='110' y='226' width='80' height='16' rx='8' fill='%233b4452'/%3E%3Ctext x='150' y='304' text-anchor='middle' fill='%237b879d' font-size='38' font-family='Arial'%3E%3F%3C/text%3E%3C/svg%3E";
 let sessionUserId = 0;
-let sessionUserLoaded = false;
 let sessionProfileLoaded = false;
 let sessionProfile = null;
 let sessionIsOwner = false;
@@ -42,7 +41,6 @@ const achievementKeysOrdered = [
     "CGNewba"
 ];
 let achievementClaimInFlight = false;
-let achievementPollTimer = null;
 let achievementSound = null;
 const achievementAccentColorCache = new Map();
 const recentAchievementToastKeys = new Map();
@@ -53,6 +51,8 @@ let adminLatestResolvedDecisionId = 0;
 let roundRealtimeEventSource = null;
 let roundRealtimeUnloadBound = false;
 let roundRealtimeLastEventSignature = "";
+let homePhaseRefreshTimer = 0;
+let roundPhaseRefreshTimer = 0;
 const appBootOverlayStartedAt = Date.now();
 let appBootOverlayDone = false;
 
@@ -102,31 +102,14 @@ function ensureRawgAttributionLink() {
 
 function normalizeTextArtifacts(value) {
     let text = String(value ?? "");
-    if (!text || !/[ÃƒÃ¢Ã‚]/.test(text)) return text;
-    const replacements = [
-        ["ÃƒÂ¡", "Ã¡"], ["Ãƒ ", "Ã "], ["ÃƒÂ¢", "Ã¢"], ["ÃƒÂ£", "Ã£"], ["ÃƒÂ¤", "Ã¤"],
-        ["ÃƒÂ", "Ã"], ["Ãƒâ‚¬", "Ã€"], ["Ãƒâ€š", "Ã‚"], ["ÃƒÆ’", "Ãƒ"], ["Ãƒâ€ž", "Ã„"],
-        ["ÃƒÂ©", "Ã©"], ["ÃƒÂ¨", "Ã¨"], ["ÃƒÂª", "Ãª"], ["ÃƒÂ«", "Ã«"],
-        ["Ãƒâ€°", "Ã‰"], ["ÃƒË†", "Ãˆ"], ["ÃƒÅ ", "ÃŠ"], ["Ãƒâ€¹", "Ã‹"],
-        ["ÃƒÂ­", "Ã­"], ["ÃƒÂ¬", "Ã¬"], ["ÃƒÂ®", "Ã®"], ["ÃƒÂ¯", "Ã¯"],
-        ["ÃƒÂ", "Ã"], ["ÃƒÅ’", "ÃŒ"], ["ÃƒÅ½", "ÃŽ"], ["ÃƒÂ", "Ã"],
-        ["ÃƒÂ³", "Ã³"], ["ÃƒÂ²", "Ã²"], ["ÃƒÂ´", "Ã´"], ["ÃƒÂµ", "Ãµ"], ["ÃƒÂ¶", "Ã¶"],
-        ["Ãƒâ€œ", "Ã“"], ["Ãƒâ€™", "Ã’"], ["Ãƒâ€", "Ã”"], ["Ãƒâ€¢", "Ã•"], ["Ãƒâ€“", "Ã–"],
-        ["ÃƒÂº", "Ãº"], ["ÃƒÂ¹", "Ã¹"], ["ÃƒÂ»", "Ã»"], ["ÃƒÂ¼", "Ã¼"],
-        ["ÃƒÅ¡", "Ãš"], ["Ãƒâ„¢", "Ã™"], ["Ãƒâ€º", "Ã›"], ["ÃƒÅ“", "Ãœ"],
-        ["ÃƒÂ§", "Ã§"], ["Ãƒâ€¡", "Ã‡"],
-        ["Ã¢â‚¬â„¢", "â€™"], ["Ã¢â‚¬Ëœ", "â€˜"], ["Ã¢â‚¬Å“", "â€œ"], ["Ã¢â‚¬Â", "â€"], ["Ã¢â‚¬Â¦", "â€¦"],
-        ["Ã¢â‚¬â€œ", "â€“"], ["Ã¢â‚¬â€", "â€”"], ["Ã¢â€žÂ¢", "â„¢"],
-        ["Ã¢â„¢Â¥", "â™¥"], ["Ã¢â„¢Â¡", "â™¡"]
-    ];
-    replacements.forEach(([from, to]) => {
-        text = text.replaceAll(from, to);
-    });
-    text = text.replaceAll("Â£o", "");
-    text = text.replaceAll("Â£", "");
-    text = text.replaceAll("ï¿½", "");
-    text = text.replaceAll("Ã‚ ", " ");
-    text = text.replaceAll("Ã‚", "");
+    if (!text || !/[\u00C3\u00C2\u00E2]/.test(text)) return text;
+    try {
+        const repaired = decodeURIComponent(escape(text));
+        if (repaired) text = repaired;
+    } catch {
+        // Mantem texto original quando nao for possivel reparar.
+    }
+    text = text.replaceAll("\uFFFD", "");
     return text;
 }
 
@@ -135,7 +118,7 @@ function looksMostlyEnglishText(value) {
     if (!text.trim()) return false;
     const enHits = (text.match(/\b(the|and|you|your|with|for|from|into|about|game|players|story|world|discover|fight|build|survive)\b/g) || []).length;
     const ptHits = (text.match(/\b(de|do|da|dos|das|um|uma|para|com|sem|sobre|entre|jogo|jogador|historia|voce|nao|que)\b/g) || []).length;
-    const accentHits = /[Ã¡Ã Ã¢Ã£Ã©ÃªÃ­Ã³Ã´ÃµÃºÃ§]/i.test(text) ? 1 : 0;
+    const accentHits = /[\u00E1\u00E0\u00E2\u00E3\u00E9\u00EA\u00ED\u00F3\u00F4\u00F5\u00FA\u00E7]/i.test(text) ? 1 : 0;
     return enHits >= 3 && enHits > (ptHits + accentHits);
 }
 
@@ -393,9 +376,9 @@ function formatRoundDateTime(timestampSeconds) {
 
 function homeRoundPhaseLabel(round) {
     const phase = String(round?.phase || round?.status || "").toLowerCase();
-    if (phase === "reopened") return "Fase de avaliação (reaberta)";
-    if (phase === "rating") return "Fase de avaliaÃ§Ã£o";
-    if (phase === "indication") return "Fase de indicaÃ§Ã£o";
+    if (phase === "reopened") return "Fase de avalia\u00e7\u00e3o (reaberta)";
+    if (phase === "rating") return "Fase de avalia\u00e7\u00e3o";
+    if (phase === "indication") return "Fase de indica\u00e7\u00e3o";
     return String(round?.status || phase || "-");
 }
 
@@ -404,7 +387,7 @@ function suggestionTargetLabel(target) {
     if (normalized === "profile") return "Perfil";
     if (normalized === "round") return "Rodada";
     if (normalized === "admin") return "Administrador";
-    return "InÃ­cio";
+    return "In\u00edcio";
 }
 
 function suggestionTargetsForCurrentUser() {
@@ -472,7 +455,7 @@ function commentLikeActionsHtml(comment, options = {}) {
             data-comment-id="${commentId}"${recommendationAttrs}
             aria-pressed="${likedByMe ? "true" : "false"}"
             title="${likedByMe ? "Descurtir" : "Curtir"}"
-        ><span class="comment-like-icon" aria-hidden="true">${likedByMe ? "â™¥" : "â™¡"}</span></button>
+        ><span class="comment-like-icon" aria-hidden="true">${likedByMe ? "\u2665" : "\u2661"}</span></button>
         ${likesCount > 0
             ? `<button class="comment-action comment-like-count" type="button" data-comment-like-list="${likeScope}" data-comment-id="${commentId}"${recommendationAttrs}>${likesCount}</button>`
             : ""}
@@ -564,7 +547,7 @@ function recommendationCommentIds(comments) {
 function recommendationCommentsHtml(recommendationId, comments, options = {}) {
     const rows = buildCommentDisplayRows(comments);
     if (!rows.length) {
-        return '<div class="comment-item">Sem comentÃ¡rios ainda.</div>';
+        return '<div class="comment-item">Sem comentários ainda.</div>';
     }
     return rows
         .map((row) =>
@@ -703,11 +686,11 @@ function updateCommentFormUi(recommendationId) {
     if (state.mode === "edit") {
         form.dataset.editCommentId = String(state.commentId || 0);
         if (submit) submit.textContent = "Salvar";
-        if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentÃ¡rio";
+        if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentário";
         if (context) {
             context.classList.remove("hidden");
             context.innerHTML = `
-                <span>Editando comentÃ¡rio</span>
+                <span>Editando comentário</span>
                 <button class="comment-action" type="button" data-comment-context-cancel="${id}">Cancelar</button>
             `;
         }
@@ -718,13 +701,13 @@ function updateCommentFormUi(recommendationId) {
     delete form.dataset.editCommentId;
     if (submit) submit.textContent = state.mode === "reply" ? "Responder" : "Comentar";
     if (input instanceof HTMLInputElement) {
-        input.placeholder = state.mode === "reply" ? "Escreva sua resposta" : "Comentar esta avaliaÃ§Ã£o";
+        input.placeholder = state.mode === "reply" ? "Escreva sua resposta" : "Comentar esta avaliação";
     }
     if (context) {
         if (state.mode === "reply" && state.parentCommentId > 0) {
             context.classList.remove("hidden");
             context.innerHTML = `
-                <span>Respondendo ${escapeHtml(state.label || "comentÃ¡rio")}</span>
+                <span>Respondendo ${escapeHtml(state.label || "comentário")}</span>
                 <button class="comment-action" type="button" data-comment-context-cancel="${id}">Cancelar</button>
             `;
         } else {
@@ -775,7 +758,6 @@ async function ensureSessionProfile() {
         sessionIsModerator = false;
     }
     sessionProfileLoaded = true;
-    sessionUserLoaded = true;
     return sessionProfile;
 }
 
@@ -930,16 +912,20 @@ async function handleRoundRealtimeChange(rawPayload) {
         }
     }
     const reason = String(payload?.reason || "").trim().toLowerCase();
-    if (reason !== "round_reopened") return;
+    if (!reason || reason === "connected") return;
 
     const roundId = Number(payload?.roundId || 0);
     const at = Number(payload?.at || 0);
     const actorUserId = Number(payload?.actorUserId || 0);
-    const signature = `${reason}:${roundId}:${at}:${actorUserId}`;
+    const eventUserId = Number(payload?.userId || 0);
+    const signature = `${reason}:${roundId}:${at}:${actorUserId}:${eventUserId}`;
     if (!signature || signature === roundRealtimeLastEventSignature) return;
     roundRealtimeLastEventSignature = signature;
 
-    if (actorUserId > 0 && actorUserId === Number(sessionUserId || 0)) {
+    if (reason === "achievement_unlocked") {
+        if (!eventUserId || eventUserId === Number(sessionUserId || 0)) {
+            await claimAchievementUnlocksAndNotify();
+        }
         return;
     }
 
@@ -961,7 +947,12 @@ async function handleRoundRealtimeChange(rawPayload) {
 
 function startRoundRealtimeStream() {
     stopRoundRealtimeStream();
-    if (page !== "home" && page !== "round") return;
+    const isAuthenticatedUiPage =
+        page === "profile"
+        || page === "home"
+        || page === "round"
+        || page === "admin";
+    if (!isAuthenticatedUiPage) return;
     try {
         const stream = new EventSource("/api/rounds/events");
         stream.addEventListener("round-change", (event) => {
@@ -1042,7 +1033,7 @@ function renderAdminDashboardUsers(users, userAchievementsMap) {
             const isReadOnlyAccount = isOwnerAccount || moderatorTargetLocked;
             const allowAchievementTools = !moderatorTargetLocked && (!isOwnerAccount || ownerSelfAccount);
             const shownEmail = actorIsModeratorOnly ? maskEmailForAdminDisplay(user.email) : String(user.email || "");
-            const roleLabel = isOwnerAccount ? "Dono" : (isModeratorAccount ? "Moderador" : "UsuÃ¡rio");
+            const roleLabel = isOwnerAccount ? "Dono" : (isModeratorAccount ? "Moderador" : "Usuário");
             const roleToggleButton = sessionIsOwner && !isOwnerAccount
                 ? `<button class="btn ${isModeratorAccount ? "btn-success" : "btn-outline"}" data-admin-set-role="${user.id}" data-admin-target-role="${isModeratorAccount ? "user" : "moderator"}" type="button">${isModeratorAccount ? "Remover Moderador" : "Tornar Moderador"}</button>`
                 : "";
@@ -1062,8 +1053,8 @@ function renderAdminDashboardUsers(users, userAchievementsMap) {
                         <div>${escapeHtml(shownEmail)}</div>
                         <div>Cargo: ${roleLabel}</div>
                         <div>Status: ${user.blocked ? "Bloqueado" : "Ativo"}</div>
-                        ${isOwnerAccount ? "<div>Conta protegida para bloqueio, exclusÃ£o e alteraÃ§Ã£o de cargo.</div>" : ""}
-                        ${moderatorTargetLocked ? "<div>Moderador nÃ£o pode modificar outro moderador.</div>" : ""}
+                        ${isOwnerAccount ? "<div>Conta protegida para bloqueio, exclusão e alteração de cargo.</div>" : ""}
+                        ${moderatorTargetLocked ? "<div>Moderador não pode modificar outro moderador.</div>" : ""}
                         <div>Conquistas: ${escapeHtml(formatAchievementKeys(achievementState.keys))}</div>
                     </div>
                     ${adminActions ? `<div class="inline-actions">${adminActions}</div>` : ""}
@@ -1074,7 +1065,7 @@ function renderAdminDashboardUsers(users, userAchievementsMap) {
                             </select>
                             <button class="btn btn-outline" data-admin-grant-achievement="${user.id}" type="button">Dar conquista</button>
                             <button class="btn btn-outline" data-admin-revoke-achievement="${user.id}" type="button">Tirar conquista</button>
-                            <span class="admin-achievement-options-link" data-admin-toggle-achievement-options="${user.id}" data-admin-achievement-options-expanded="0" role="button" tabindex="0">Mais opÃ§Ãµes</span>
+                            <span class="admin-achievement-options-link" data-admin-toggle-achievement-options="${user.id}" data-admin-achievement-options-expanded="0" role="button" tabindex="0">Mais opções</span>
                             <div class="admin-achievement-more-options hidden" data-admin-achievement-more-options="${user.id}">
                                 <button class="btn btn-danger" data-admin-reset-achievements="${user.id}" type="button">Zerar conquistas</button>
                             </div>
@@ -1115,24 +1106,24 @@ function renderAdminDashboardRounds(rounds) {
 function renderAdminOwnerActionRequests(requests) {
     const normalized = Array.isArray(requests) ? requests : [];
     if (!normalized.length) {
-        return `<p class="feedback ok">Sem solicitaÃ§Ãµes pendentes no momento.</p>`;
+        return `<p class="feedback ok">Sem solicitações pendentes no momento.</p>`;
     }
     return normalized
         .map((request) => {
-            const details = Array.isArray(request?.detail_lines) ? request.detail_lines : [];
+            const details = Array.isArray(request.detail_lines) ? request.detail_lines : [];
             return `
-                <div class="search-item admin-owner-request-item" data-admin-owner-request-id="${Number(request?.id) || 0}">
+                <div class="search-item admin-owner-request-item" data-admin-owner-request-id="${Number(request.id) || 0}">
                     <div>
-                        <strong>SolicitaÃ§Ã£o #${Number(request?.id) || 0}</strong>
-                        <div>Solicitante: ${escapeHtml(String(request?.requester_name || "-"))}</div>
-                        <div>AÃ§Ã£o: ${escapeHtml(String(request?.action_label || "-"))}</div>
-                        ${Number(request?.created_at) > 0 ? `<div>Criada em: ${escapeHtml(formatRoundDateTime(request.created_at))}</div>` : ""}
-                        ${Number(request?.expires_at) > 0 ? `<div>Expira em: ${escapeHtml(formatRoundDateTime(request.expires_at))}</div>` : ""}
+                        <strong>Solicitação #${Number(request.id) || 0}</strong>
+                        <div>Solicitante: ${escapeHtml(String(request.requester_name || "-"))}</div>
+                        <div>Ação: ${escapeHtml(String(request.action_label || "-"))}</div>
+                        ${Number(request.created_at) > 0 ? `<div>Criada em: ${escapeHtml(formatRoundDateTime(request.created_at))}</div>` : ""}
+                        ${Number(request.expires_at) > 0 ? `<div>Expira em: ${escapeHtml(formatRoundDateTime(request.expires_at))}</div>` : ""}
                         ${details.length ? `<div class="admin-owner-request-details">${details.map((line) => `<div>${escapeHtml(String(line || ""))}</div>`).join("")}</div>` : ""}
                     </div>
                     <div class="inline-actions">
-                        <button class="btn btn-success" type="button" data-admin-owner-request-decision="allow" data-admin-owner-request-id="${Number(request?.id) || 0}">Permitir</button>
-                        <button class="btn btn-danger" type="button" data-admin-owner-request-decision="deny" data-admin-owner-request-id="${Number(request?.id) || 0}">Negar</button>
+                        <button class="btn btn-success" type="button" data-admin-owner-request-decision="allow" data-admin-owner-request-id="${Number(request.id) || 0}">Permitir</button>
+                        <button class="btn btn-danger" type="button" data-admin-owner-request-decision="deny" data-admin-owner-request-id="${Number(request.id) || 0}">Negar</button>
                     </div>
                 </div>
             `;
@@ -1261,7 +1252,7 @@ async function showCommentLikesPopup(likeScope, commentId, anchorElement) {
 function renderAdminSuggestions(suggestions) {
     const normalized = Array.isArray(suggestions) ? suggestions : [];
     if (!normalized.length) {
-        return `<p class="feedback ok">Sem sugestÃµes no momento.</p>`;
+        return `<p class="feedback ok">Sem sugestões no momento.</p>`;
     }
     return normalized
         .map((suggestion) => {
@@ -1277,14 +1268,14 @@ function renderAdminSuggestions(suggestions) {
             return `
                 <div class="search-item admin-suggestion-item" data-admin-suggestion-id="${id}">
                     <div>
-                        <strong>SugestÃ£o #${id}</strong>
-                        <div>UsuÃ¡rio: ${author}</div>
+                        <strong>Sugestão #${id}</strong>
+                        <div>Usuário: ${author}</div>
                         <div>Tela: ${escapeHtml(targetLabel)}</div>
                         ${createdAt > 0 ? `<div>Criada em: ${escapeHtml(formatRoundDateTime(createdAt))}</div>` : ""}
                         <div class="admin-suggestion-text">${escapeHtml(text)}</div>
                     </div>
                     <div class="inline-actions admin-suggestion-actions">
-                        <button class="btn btn-danger" type="button" data-admin-delete-suggestion="${id}">Excluir sugestÃ£o</button>
+                        <button class="btn btn-danger" type="button" data-admin-delete-suggestion="${id}">Excluir sugestão</button>
                     </div>
                 </div>
             `;
@@ -1388,7 +1379,7 @@ async function handleAdminPage() {
         modal.className = "modal hidden";
         modal.innerHTML = `
             <div class="modal-card admin-decision-modal-card">
-                <h2 id="adminDecisionTitle">SolicitaÃ§Ã£o processada</h2>
+                <h2 id="adminDecisionTitle">Solicitação processada</h2>
                 <p id="adminDecisionSummary" class="feedback warn"></p>
                 <div id="adminDecisionDetails" class="admin-decision-details"></div>
                 <div class="inline-actions">
@@ -1429,16 +1420,16 @@ async function handleAdminPage() {
         const title = byId("adminDecisionTitle");
         const summary = byId("adminDecisionSummary");
         const details = byId("adminDecisionDetails");
-        if (title) title.textContent = `SolicitaÃ§Ã£o ${String(decision.status_label || "processada")}`;
+        if (title) title.textContent = `Solicitação ${String(decision.status_label || "processada")}`;
         if (summary) {
             const summaryText = decision.result_message
-                || `${String(decision.action_label || "AÃ§Ã£o administrativa")} foi ${String(decision.status_label || "processada").toLowerCase()}.`;
+                || `${String(decision.action_label || "Ação administrativa")} foi ${String(decision.status_label || "processada").toLowerCase()}.`;
             summary.textContent = summaryText;
             summary.className = `feedback ${String(decision.status || "").toLowerCase() === "approved" ? "ok" : "warn"}`;
         }
         if (details) {
             const items = [];
-            items.push(`<li><strong>AÃ§Ã£o:</strong> ${escapeHtml(String(decision.action_label || "-"))}</li>`);
+            items.push(`<li><strong>Ação:</strong> ${escapeHtml(String(decision.action_label || "-"))}</li>`);
             items.push(`<li><strong>Status:</strong> ${escapeHtml(String(decision.status_label || "-"))}</li>`);
             if (Number(decision.created_at) > 0) {
                 items.push(`<li><strong>Criada em:</strong> ${escapeHtml(formatRoundDateTime(decision.created_at))}</li>`);
@@ -1495,7 +1486,7 @@ async function handleAdminPage() {
                 adminOwnerRequestsCard.classList.toggle("hidden", ownerRequests.length === 0);
                 setAdminNotificationDotVisible(ownerRequests.length > 0);
                 if (ownerRequests.length > 0) {
-                    setFeedback("adminFeedback", "VocÃª tem solicitaÃ§Ãµes pendentes para permitir ou negar.", "warn");
+                    setFeedback("adminFeedback", "Você tem solicitações pendentes para permitir ou negar.", "warn");
                 }
             } else {
                 adminOwnerRequestsList.innerHTML = "";
@@ -1516,7 +1507,7 @@ async function handleAdminPage() {
         clearAllAdminUserFeedback();
         adminActionPendingLocked = Boolean(data?.pendingAdminAction) && sessionIsModerator && !sessionIsOwner;
         if (adminActionPendingLocked) {
-            setFeedback("adminFeedback", "VocÃª tem uma solicitaÃ§Ã£o pendente. Aguarde aprovaÃ§Ã£o do dono para continuar.", "warn");
+            setFeedback("adminFeedback", "Você tem uma solicitação pendente. Aguarde aprovação do dono para continuar.", "warn");
         }
         syncModeratorDecisionNotice(data?.latestResolvedAdminAction);
         syncAdminHeader();
@@ -1524,13 +1515,13 @@ async function handleAdminPage() {
 
     const ensureNotLocked = () => {
         if (adminActionPendingLocked && sessionIsModerator && !sessionIsOwner) {
-            throw new Error("HÃ¡ uma solicitaÃ§Ã£o pendente. Aguarde o dono permitir ou negar.");
+            throw new Error("Há uma solicitação pendente. Aguarde o dono permitir ou negar.");
         }
     };
 
     const handleAdminResult = async (result, options = {}) => {
         const pending = Boolean(result?.pendingApproval);
-        const message = result?.message || (pending ? "SolicitaÃ§Ã£o enviada." : "AÃ§Ã£o realizada.");
+        const message = result?.message || (pending ? "Solicitação enviada." : "Ação realizada.");
         const type = pending ? "warn" : "ok";
         setFeedback(
             "adminFeedback",
@@ -1559,7 +1550,7 @@ async function handleAdminPage() {
         const expanded = String(toggleBtn.dataset.adminAchievementOptionsExpanded || "0") === "1";
         const nextExpanded = !expanded;
         toggleBtn.dataset.adminAchievementOptionsExpanded = nextExpanded ? "1" : "0";
-        toggleBtn.textContent = nextExpanded ? "Menos opÃ§Ãµes" : "Mais opÃ§Ãµes";
+        toggleBtn.textContent = nextExpanded ? "Menos opções" : "Mais opções";
         optionsWrap.classList.toggle("hidden", !nextExpanded);
     };
 
@@ -1595,7 +1586,7 @@ async function handleAdminPage() {
                 const requestId = Number(ownerDecisionBtn.dataset.adminOwnerRequestId || 0);
                 const decision = String(ownerDecisionBtn.dataset.adminOwnerRequestDecision || "").trim().toLowerCase();
                 if (!requestId || !["allow", "deny"].includes(decision)) {
-                    throw new Error("SolicitaÃ§Ã£o invÃ¡lida.");
+                    throw new Error("Solicitação inválida.");
                 }
                 const result = await withButtonLoading(
                     ownerDecisionBtn,
@@ -1603,7 +1594,7 @@ async function handleAdminPage() {
                     () => sendJson(`/api/admin/action-requests/${requestId}/decision`, "POST", { decision })
                 );
                 await handleAdminResult(result, {
-                    globalMessage: result?.message || "SolicitaÃ§Ã£o processada.",
+                    globalMessage: result?.message || "Solicitação processada.",
                     globalMessageType: decision === "allow" ? "ok" : "warn"
                 });
                 return;
@@ -1626,7 +1617,7 @@ async function handleAdminPage() {
                 clearAdminUserFeedback(userId);
                 ensureNotLocked();
                 const accountName = String(deleteUserBtn.dataset.adminDeleteUserName || "conta sem nome").trim();
-                const confirmed = window.confirm(`Confirmar a exclusao da conta (${accountName})?`);
+                const confirmed = window.confirm(`Confirmar a exclusão da conta (${accountName})?`);
                 if (!confirmed) return;
                 const result = await withButtonLoading(deleteUserBtn, "Excluindo...", () =>
                     sendJson(`/api/admin/users/${userId}`, "DELETE")
@@ -1647,7 +1638,7 @@ async function handleAdminPage() {
                 ensureNotLocked();
                 const roundId = Number(deleteRoundBtn.dataset.adminDeleteRound);
                 const roundLabel = String(deleteRoundBtn.dataset.adminDeleteRoundLabel || `Rodada #${roundId}`).trim();
-                const confirmed = window.confirm(`Confirmar exclusÃ£o da ${roundLabel}?`);
+                const confirmed = window.confirm(`Confirmar exclusão da ${roundLabel}?`);
                 if (!confirmed) return;
                 const result = await withButtonLoading(deleteRoundBtn, "Excluindo...", () =>
                     sendJson(`/api/admin/rounds/${roundId}`, "DELETE")
@@ -1682,7 +1673,7 @@ async function handleAdminPage() {
                 if (!achievementKey) throw new Error("Selecione uma conquista.");
                 const ownedAchievements = adminAchievementKeysByUserId.get(userId) || [];
                 if (!ownedAchievements.includes(achievementKey)) {
-                    throw new Error("Conquista inesistente.");
+                    throw new Error("Conquista inexistente.");
                 }
                 const result = await withButtonLoading(revokeAchievementBtn, "Enviando...", () =>
                     sendJson(`/api/admin/users/${userId}/achievements`, "POST", {
@@ -1739,12 +1730,12 @@ async function handleAdminPage() {
             if (deleteSuggestionBtn) {
                 if (!sessionIsOwner) return;
                 const suggestionId = Number(deleteSuggestionBtn.dataset.adminDeleteSuggestion || 0);
-                if (!suggestionId) throw new Error("SugestÃ£o invÃ¡lida.");
+                if (!suggestionId) throw new Error("Sugestão inválida.");
                 const result = await withButtonLoading(deleteSuggestionBtn, "Excluindo...", () =>
                     sendJson(`/api/admin/suggestions/${suggestionId}`, "DELETE")
                 );
                 await refreshAdmin();
-                setFeedback("adminFeedback", result?.message || "SugestÃ£o excluÃ­da.", "ok");
+                setFeedback("adminFeedback", result?.message || "Sugestão excluída.", "ok");
             }
         } catch (error) {
             if (feedbackUserId > 0) {
@@ -1899,7 +1890,7 @@ async function handleRecommendationCommentAction(event, scope, feedbackTarget) {
                 credentials: "include"
             }).then(async (response) => {
                 const data = await response.json().catch(() => ({}));
-                if (!response.ok) throw new Error(data.message || "Erro ao excluir comentÃ¡rio.");
+                if (!response.ok) throw new Error(data.message || "Erro ao excluir comentário.");
             });
             const updatedRecommendation = removeRecommendationComment(scope, recommendationId, commentId);
             syncRecommendationCommentList(updatedRecommendation, scope, true);
@@ -1997,18 +1988,18 @@ function mapRegisterErrorToField(message) {
     const lower = String(message || "").toLowerCase();
     if (!lower) return "";
     if (lower.includes("nickname")) return "nickname";
-    if (lower.includes("confirmaÃ§Ã£o de senha") || lower.includes("confirme a senha")) return "confirmPassword";
+    if (lower.includes("confirmação de senha") || lower.includes("confirme a senha")) return "confirmPassword";
     if (lower.includes("senha precisa")) return "password";
-    if (lower.includes("email invÃ¡lido")) return "email";
-    if (lower.includes("nome de usuÃ¡rio invÃ¡lido")) return "username";
-    if (lower.includes("email ou nome de usuÃ¡rio")) return "email_or_username";
+    if (lower.includes("email inválido")) return "email";
+    if (lower.includes("nome de usuário inválido")) return "username";
+    if (lower.includes("email ou nome de usuário")) return "email_or_username";
     return "";
 }
 
 function mapResetPasswordErrorToField(message) {
     const lower = String(message || "").toLowerCase();
     if (!lower) return "";
-    if (lower.includes("confirmaÃ§Ã£o de senha") || lower.includes("confirme a senha")) return "confirmPassword";
+    if (lower.includes("confirmação de senha") || lower.includes("confirme a senha")) return "confirmPassword";
     if (lower.includes("senha precisa")) return "password";
     return "";
 }
@@ -2131,13 +2122,6 @@ async function claimAchievementUnlocksAndNotify() {
     }
 }
 
-function startAchievementPolling() {
-    if (achievementPollTimer) clearInterval(achievementPollTimer);
-    achievementPollTimer = setInterval(() => {
-        claimAchievementUnlocksAndNotify();
-    }, 25000);
-}
-
 function setButtonLoading(button, isLoading, loadingText = "Carregando...") {
     if (!button) return;
     if (isLoading) {
@@ -2190,7 +2174,7 @@ async function sendJson(url, method = "GET", payload) {
     const rawData = await response.json().catch(() => ({}));
     const data = normalizePayloadTextArtifacts(rawData);
     if (!response.ok) {
-        const error = new Error(normalizeTextArtifacts(data.message || "Erro na requisiÃ§Ã£o."));
+        const error = new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
         error.statusCode = response.status;
         error.responseData = data;
         throw error;
@@ -2210,7 +2194,7 @@ async function sendJsonWithFallback(requests) {
         }
     }
     if (lastError) throw lastError;
-    throw new Error("Nenhuma requisiÃ§Ã£o foi informada.");
+    throw new Error("Nenhuma requisição foi informada.");
 }
 
 async function sendForm(url, formData) {
@@ -2222,7 +2206,7 @@ async function sendForm(url, formData) {
     const rawData = await response.json().catch(() => ({}));
     const data = normalizePayloadTextArtifacts(rawData);
     if (!response.ok) {
-        throw new Error(normalizeTextArtifacts(data.message || "Erro na requisiÃ§Ã£o."));
+        throw new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
     }
     return data;
 }
@@ -2239,12 +2223,12 @@ function showOAuthFeedbackFromQuery() {
     const error = getQueryParam("error");
     if (!error) return;
     const messages = {
-        google_not_configured: "Login Google ainda nÃ£o foi configurado no servidor.",
+        google_not_configured: "Login Google ainda não foi configurado no servidor.",
         google_auth_failed: "Falha ao autenticar com Google.",
-        google_email_unavailable: "Sua conta Google nÃ£o retornou um email vÃ¡lido.",
+        google_email_unavailable: "Sua conta Google não retornou um email válido.",
         account_blocked: "Conta Bloqueada"
     };
-    setFeedback("feedback", messages[error] || "Erro de autenticaÃ§Ã£o.");
+    setFeedback("feedback", messages[error] || "Erro de autenticação.");
 }
 
 function recommendationCardTemplate(rec, options = {}) {
@@ -2259,7 +2243,7 @@ function recommendationCardTemplate(rec, options = {}) {
     const reasonHtml = hasReason
         ? `
             <div class="recommendation-reason-wrap">
-                <p class="recommendation-section-label">MotivaÃ§Ã£o</p>
+                <p class="recommendation-section-label">Motivação</p>
                 <p class="recommendation-reason">${escapeHtml(rec.reason)}</p>
             </div>
         `
@@ -2282,17 +2266,17 @@ function recommendationCardTemplate(rec, options = {}) {
                         </div>
                         <div class="desc-grade-row">
                             ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
-                            <span class="recommendation-section-label">DescriÃ§Ã£o</span>
+                            <span class="recommendation-section-label">Descrição</span>
                             <p>${escapeHtml(rec.game_description)}</p>
                         </div>
                         ${reasonHtml}
                     </div>
                     <div class="recommendation-comments-shell">
-                        <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentÃ¡rios ainda.</div>'}</div>
+                        <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentários ainda.</div>'}</div>
                         <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
                         <form class="comment-form" data-comment-form="${rec.id}">
                             <input type="hidden" name="parentCommentId" value="">
-                            <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliaÃ§Ã£o">
+                            <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliação">
                             <button class="btn btn-outline" type="submit">Comentar</button>
                         </form>
                     </div>
@@ -2315,15 +2299,15 @@ function recommendationCardTemplate(rec, options = {}) {
             </div>
             <div class="desc-grade-row">
                 ${showInlineGrade && grade ? `<span class="grade-inline">${escapeHtml(grade)}</span>` : ""}
-                <span class="recommendation-section-label">DescriÃ§Ã£o</span>
+                <span class="recommendation-section-label">Descrição</span>
                 <p>${escapeHtml(rec.game_description)}</p>
             </div>
             ${reasonHtml}
-            <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentÃ¡rios ainda.</div>'}</div>
+            <div class="comment-list" id="comment-list-${rec.id}">${commentsHtml || '<div class="comment-item">Sem comentários ainda.</div>'}</div>
             <div class="comment-context hidden" id="comment-context-${rec.id}"></div>
             <form class="comment-form" data-comment-form="${rec.id}">
                 <input type="hidden" name="parentCommentId" value="">
-                <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliaÃ§Ã£o">
+                <input type="text" name="commentText" maxlength="500" placeholder="Comentar esta avaliação">
                 <button class="btn btn-outline" type="submit">Comentar</button>
             </form>
         </article>
@@ -2368,15 +2352,15 @@ async function handleRegister() {
         clearAllFieldFeedback(form);
         const payload = Object.fromEntries(new FormData(form).entries());
         if (String(payload.password || "") !== String(payload.confirmPassword || "")) {
-            setFieldFeedback(form, "confirmPassword", "A confirmaÃ§Ã£o de senha nÃ£o confere.", "error");
+            setFieldFeedback(form, "confirmPassword", "A confirmação de senha não confere.", "error");
             return;
         }
         const submitBtn = event.submitter || form.querySelector("button[type='submit']");
         try {
-            await withButtonLoading(submitBtn, "Enviando cÃ³digo...", async () => {
+            await withButtonLoading(submitBtn, "Enviando código...", async () => {
                 await sendJson("/api/auth/register", "POST", payload);
             });
-            setFeedback("feedback", "CÃ³digo enviado. Confira seu email e confirme seu cadastro.", "ok");
+            setFeedback("feedback", "Código enviado. Confira seu email e confirme seu cadastro.", "ok");
             setTimeout(() => {
                 window.location.href = `/verify-email.html?email=${encodeURIComponent(payload.email)}`;
             }, 900);
@@ -2442,7 +2426,7 @@ async function handleForgotPassword() {
 async function handleResetPassword() {
     const token = getResetTokenFromQuery();
     if (!token) {
-        setFeedback("feedback", "Token de troca de senha nÃ£o encontrado.", "error");
+        setFeedback("feedback", "Token de troca de senha não encontrado.", "error");
         return;
     }
 
@@ -2454,7 +2438,7 @@ async function handleResetPassword() {
         clearAllFieldFeedback(form);
         const payload = Object.fromEntries(new FormData(form).entries());
         if (String(payload.password || "") !== String(payload.confirmPassword || "")) {
-            setFieldFeedback(form, "confirmPassword", "A confirmaÃ§Ã£o de senha nÃ£o confere.", "error");
+            setFieldFeedback(form, "confirmPassword", "A confirmação de senha não confere.", "error");
             return;
         }
         payload.token = token;
@@ -2529,7 +2513,7 @@ async function loadProfile() {
         parentCommentId: 0,
         label: ""
     };
-    const defaultEmailLabel = "Email (nÃ£o editÃ¡vel)";
+    const defaultEmailLabel = "Email (não editável)";
 
     function setupAchievementImageProtection() {
         if (!achievementsGrid || achievementsGrid.dataset.achievementImageProtectionBound === "1") return;
@@ -2567,7 +2551,7 @@ async function loadProfile() {
                 imageEl.src = finalSrc;
             }
             const unlockedName = String(achievement?.name || "").trim();
-            imageEl.alt = unlockedName ? `TrofÃ©u ${unlockedName}` : "TrofÃ©u desbloqueado";
+            imageEl.alt = unlockedName ? `Troféu ${unlockedName}` : "Troféu desbloqueado";
             imageEl.removeAttribute("title");
             return;
         }
@@ -2576,7 +2560,7 @@ async function loadProfile() {
         if (currentSrc !== lockedAchievementImageDataUri) {
             imageEl.src = lockedAchievementImageDataUri;
         }
-        imageEl.alt = "TrofÃ©u bloqueado";
+        imageEl.alt = "Troféu bloqueado";
         imageEl.removeAttribute("title");
     }
 
@@ -2659,11 +2643,11 @@ async function loadProfile() {
                 nickname: candidate,
                 available: true,
                 sameAsCurrent: true,
-                message: "Esse jÃ¡ Ã© o seu nickname atual."
+                message: "Esse já é o seu nickname atual."
             };
         }
 
-        // VerificaÃ§Ã£o por busca de usuÃ¡rios (evita 404 quando o endpoint dedicado nÃ£o existe no servidor em execuÃ§Ã£o).
+        // Verificação por busca de usuários (evita 404 quando o endpoint dedicado não existe no servidor em execução).
         const usersPayload = await sendJson(`/api/users?term=${encodeURIComponent(candidate)}`);
         const users = Array.isArray(usersPayload?.users) ? usersPayload.users : [];
         const normalizedCandidate = candidate.toLowerCase();
@@ -2678,7 +2662,7 @@ async function loadProfile() {
             nickname: candidate,
             available: !inUse,
             sameAsCurrent: false,
-            message: inUse ? "Nickname jÃ¡ estÃ¡ em uso." : "Nickname disponÃ­vel."
+            message: inUse ? "Nickname já está em uso." : "Nickname disponível."
         };
     }
 
@@ -2694,7 +2678,7 @@ async function loadProfile() {
         const reasonHtml = item.reason
             ? `
                 <div class="recommendation-reason-wrap">
-                    <p class="recommendation-section-label">MotivaÃ§Ã£o</p>
+                    <p class="recommendation-section-label">Motivação</p>
                     <p class="recommendation-reason">${escapeHtml(item.reason)}</p>
                 </div>
             `
@@ -2715,7 +2699,7 @@ async function loadProfile() {
                         </div>
                         <div class="desc-grade-row">
                             <span class="${gradeClass}">${escapeHtml(grade)}</span>
-                            <span class="recommendation-section-label">DescriÃ§Ã£o</span>
+                            <span class="recommendation-section-label">Descrição</span>
                             <p>${escapeHtml(item.game_description || "")}</p>
                         </div>
                         ${reasonHtml}
@@ -2735,14 +2719,14 @@ async function loadProfile() {
         const cards = pageItems.length
             ? pageItems.map((item) => activityCardHtml(item, mode)).join("")
             : mode === "given"
-                ? "<p>Nenhuma indicaÃ§Ã£o feita ainda.</p>"
-                : "<p>Nenhuma indicaÃ§Ã£o recebida ainda.</p>";
+                ? "<p>Nenhuma indicação feita ainda.</p>"
+                : "<p>Nenhuma indicação recebida ainda.</p>";
         const pagination = items.length > profilePageSize
             ? `
                 <div class="pagination-controls">
                     <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="prev" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
-                    <span>PÃ¡gina ${currentPage} de ${totalPages}</span>
-                    <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="next" ${currentPage >= totalPages ? "disabled" : ""}>PrÃ³xima</button>
+                    <span>Página ${currentPage} de ${totalPages}</span>
+                    <button class="btn btn-outline" type="button" data-profile-page-mode="${mode}" data-profile-page-action="next" ${currentPage >= totalPages ? "disabled" : ""}>Próxima</button>
                 </div>
               `
             : "";
@@ -2822,11 +2806,11 @@ async function loadProfile() {
         if (state.mode === "edit" && state.commentId > 0) {
             profileCommentForm.dataset.editCommentId = String(state.commentId);
             if (submit) submit.textContent = "Salvar";
-            if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentÃ¡rio";
+            if (input instanceof HTMLInputElement) input.placeholder = "Edite seu comentário";
             if (profileCommentContext) {
                 profileCommentContext.classList.remove("hidden");
                 profileCommentContext.innerHTML = `
-                    <span>Editando comentÃ¡rio</span>
+                    <span>Editando comentário</span>
                     <button class="comment-action" type="button" data-profile-comment-context-cancel="1">Cancelar</button>
                 `;
             }
@@ -2838,13 +2822,13 @@ async function loadProfile() {
         if (input instanceof HTMLInputElement) {
             input.placeholder = state.mode === "reply"
                 ? "Escreva sua resposta"
-                : "Escreva um comentÃ¡rio neste perfil";
+                : "Escreva um comentário neste perfil";
         }
         if (profileCommentContext) {
             if (state.mode === "reply" && state.parentCommentId > 0) {
                 profileCommentContext.classList.remove("hidden");
                 profileCommentContext.innerHTML = `
-                    <span>Respondendo ${escapeHtml(state.label || "comentÃ¡rio")}</span>
+                    <span>Respondendo ${escapeHtml(state.label || "comentário")}</span>
                     <button class="comment-action" type="button" data-profile-comment-context-cancel="1">Cancelar</button>
                 `;
             } else {
@@ -2893,7 +2877,7 @@ async function loadProfile() {
         profileCommentsCache.sort((a, b) => commentSortValue(a) - commentSortValue(b));
         const rows = buildCommentDisplayRows(profileCommentsCache);
         if (!rows.length) {
-            profileCommentsList.innerHTML = '<div class="comment-item">Sem comentÃ¡rios ainda.</div>';
+            profileCommentsList.innerHTML = '<div class="comment-item">Sem comentários ainda.</div>';
             return;
         }
         profileCommentsList.innerHTML = rows
@@ -2946,7 +2930,6 @@ async function loadProfile() {
         ownUserId = Number.isInteger(parsedOwnUserId) && parsedOwnUserId > 0 ? parsedOwnUserId : 0;
         if (ownUserId > 0) {
             sessionUserId = ownUserId;
-            sessionUserLoaded = true;
         }
         const targetUserId = viewedUserId > 0 ? viewedUserId : ownUserId;
         currentProfileUserId = targetUserId || ownUserId;
@@ -3128,7 +3111,7 @@ async function loadProfile() {
             return;
         }
         if (isSameNicknameAsCurrent(nicknameCandidate)) {
-            setFeedback(nicknameCheckFeedback, "Esse jÃ¡ Ã© o seu nickname atual.", "warn");
+            setFeedback(nicknameCheckFeedback, "Esse já é o seu nickname atual.", "warn");
             syncNicknameCheckButtonState();
             return;
         }
@@ -3149,7 +3132,7 @@ async function loadProfile() {
             };
             setFeedback(
                 nicknameCheckFeedback,
-                result?.message || (result?.available ? "Nickname disponÃ­vel." : "Nickname indisponÃ­vel."),
+                result?.message || (result?.available ? "Nickname disponível." : "Nickname indisponível."),
                 result?.available ? "ok" : "error"
             );
         } catch (error) {
@@ -3229,7 +3212,7 @@ async function loadProfile() {
                         resolve(true);
                     };
                     probe.onerror = () => {
-                        // MantÃ©m o preview local visÃ­vel se a URL final falhar momentaneamente.
+                        // Mantém o preview local visível se a URL final falhar momentaneamente.
                         resolve(false);
                     };
                     probe.src = finalAvatarUrl;
@@ -3313,7 +3296,7 @@ async function loadProfile() {
             resetProfileCommentFormState();
             setFeedback(
                 "profileCommentFeedback",
-                editCommentId > 0 ? "ComentÃ¡rio atualizado." : "ComentÃ¡rio publicado.",
+                editCommentId > 0 ? "Comentário atualizado." : "Comentário publicado.",
                 "ok"
             );
 
@@ -3407,7 +3390,7 @@ async function loadProfile() {
 
         if (action === "delete") {
             if (!canDeleteProfileComment(comment)) return;
-            const confirmed = window.confirm("Excluir este comentÃ¡rio?");
+            const confirmed = window.confirm("Excluir este comentário?");
             if (!confirmed) return;
             try {
                 await withButtonLoading(actionBtn, "Excluindo...", () =>
@@ -3422,7 +3405,7 @@ async function loadProfile() {
                     profileCommentForm?.reset();
                     resetProfileCommentFormState();
                 }
-                setFeedback("profileCommentFeedback", "ComentÃ¡rio excluÃ­do.", "ok");
+                setFeedback("profileCommentFeedback", "Comentário excluído.", "ok");
             } catch (error) {
                 setFeedback("profileCommentFeedback", error.message, "error");
             }
@@ -3451,8 +3434,6 @@ async function loadProfile() {
 
 let homeActiveRound = null;
 let homeRoundsMap = new Map();
-let homeActivePollTimer = null;
-let homeFeedPollTimer = null;
 let homeRoundFeedPageMap = new Map();
 let homeCommentFormAlignRaf = 0;
 const HOME_FEED_RECOMMENDATION_PAGE_SIZE = 6;
@@ -3580,7 +3561,7 @@ function renderFeed(rounds) {
     recommendationCommentIdsCaches.home.clear();
 
     if (!rounds.length) {
-        container.innerHTML = '<p>Nenhuma indicaÃ§Ã£o publicada ainda.</p>';
+        container.innerHTML = '<p>Nenhuma indicação publicada ainda.</p>';
         clearStaleCommentSignatures("home", []);
         return;
     }
@@ -3615,8 +3596,8 @@ function renderFeed(rounds) {
                     ? `
                         <div class="pagination-controls">
                             <button class="btn btn-outline" type="button" data-feed-page-action="prev" data-feed-round-id="${round.id}" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
-                            <span>PÃ¡gina ${currentPage} de ${totalPages}</span>
-                            <button class="btn btn-outline" type="button" data-feed-page-action="next" data-feed-round-id="${round.id}" ${currentPage >= totalPages ? "disabled" : ""}>PrÃ³xima</button>
+                            <span>Página ${currentPage} de ${totalPages}</span>
+                            <button class="btn btn-outline" type="button" data-feed-page-action="next" data-feed-round-id="${round.id}" ${currentPage >= totalPages ? "disabled" : ""}>Próxima</button>
                         </div>
                       `
                     : "";
@@ -3675,7 +3656,7 @@ function updateHomeRoundStatus(activeRound) {
     if (!activeRound) {
         if (textEl) {
             textEl.textContent = canStartRound
-                ? "Nenhuma rodada ativa. Crie uma nova rodada para comecar."
+                ? "Nenhuma rodada ativa. Crie uma nova rodada para começar."
                 : "Nenhuma rodada ativa no momento.";
         }
         if (newBtn) {
@@ -3697,7 +3678,7 @@ function updateHomeRoundStatus(activeRound) {
 
     if (activePhase === "draft") {
         if (activeRound.isCreator) {
-            textEl.textContent = `Sua rodada de ${formatRoundDateTime(activeRound.created_at)} estÃ¡ em preparaÃ§Ã£o.`;
+            textEl.textContent = `Sua rodada de ${formatRoundDateTime(activeRound.created_at)} está em preparação.`;
             newBtn.disabled = false;
             newBtn.textContent = "Gerenciar Rodada";
             newBtn.classList.add("btn-success");
@@ -3710,19 +3691,19 @@ function updateHomeRoundStatus(activeRound) {
             newBtn.classList.remove("btn-disabled");
         }
     } else if (activePhase === "reveal") {
-        textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled}) - fase de revelaÃ§Ã£o.`;
+        textEl.innerHTML = `Espectar Nova Rodada (${creatorNameStyled}) - fase de revelação.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
         newBtn.classList.remove("btn-disabled");
     } else if (activePhase === "rating") {
-        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em fase de avaliaÃ§Ã£o.`;
+        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em fase de avaliação.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
         newBtn.classList.remove("btn-disabled");
     } else {
-        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em Fase de indicaÃ§Ã£o.`;
+        textEl.textContent = `Rodada de ${formatRoundDateTime(activeRound.created_at)} em Fase de indicação.`;
         newBtn.disabled = false;
         newBtn.textContent = activeRound.isCreator ? "Gerenciar Rodada" : "Ver Rodada em Andamento";
         newBtn.classList.add("btn-success");
@@ -3730,33 +3711,33 @@ function updateHomeRoundStatus(activeRound) {
     }
 }
 
+function scheduleHomePhaseRefresh(activeRound) {
+    if (homePhaseRefreshTimer) {
+        clearTimeout(homePhaseRefreshTimer);
+        homePhaseRefreshTimer = 0;
+    }
+    const ts = Number(activeRound?.rating_starts_at || 0);
+    const status = String(activeRound?.status || "");
+    if (!ts || status !== "indication") return;
+    const now = Math.floor(Date.now() / 1000);
+    const delayMs = Math.max(0, (ts - now) * 1000 + 120);
+    homePhaseRefreshTimer = window.setTimeout(() => {
+        Promise.all([refreshHomeActive(), refreshHomeFeed()]).catch(() => {
+            // sem acao
+        });
+    }, delayMs);
+}
+
 async function refreshHomeActive() {
     const active = await sendJson("/api/rounds/active");
     homeActiveRound = active.activeRound;
     updateHomeRoundStatus(homeActiveRound);
+    scheduleHomePhaseRefresh(homeActiveRound);
 }
 
 async function refreshHomeFeed() {
     const feed = await sendJson("/api/feed/rounds?limit=8");
     renderFeed(feed.rounds || []);
-}
-
-async function refreshHomeFeedCommentsOnly() {
-    const feed = await sendJson("/api/feed/rounds?limit=8");
-    homeRoundsMap = new Map((feed.rounds || []).map((round) => [Number(round.id), round]));
-    const container = byId("roundCarousels");
-    if (!container) return;
-
-    const visibleRecommendationIds = [];
-    container.querySelectorAll("article[data-recommendation-id]").forEach((card) => {
-        const recommendationId = Number(card.dataset.recommendationId || 0);
-        if (!recommendationId) return;
-        visibleRecommendationIds.push(recommendationId);
-        const recommendation = findHomeRecommendationById(recommendationId);
-        syncRecommendationCommentList(recommendation, "home");
-    });
-    clearStaleCommentSignatures("home", visibleRecommendationIds);
-    scheduleHomeCommentFormAlignment();
 }
 async function handleHome() {
     await ensureSessionUserId();
@@ -3812,7 +3793,7 @@ async function handleHome() {
         const targetPage = String(suggestionTargetPage.value || "").trim().toLowerCase();
         const suggestionContent = String(suggestionText.value || "").trim();
         if (!targetPage) {
-            setFeedback("suggestionFormFeedback", "Selecione a tela da sugestÃ£o.", "error");
+            setFeedback("suggestionFormFeedback", "Selecione a tela da sugestão.", "error");
             return;
         }
         if (suggestionContent.length < 5) {
@@ -3827,7 +3808,7 @@ async function handleHome() {
                 })
             );
             closeSuggestionModal();
-            setFeedback("homeFeedback", result?.message || "SugestÃ£o enviada com sucesso.", "ok");
+            setFeedback("homeFeedback", result?.message || "Sugestão enviada com sucesso.", "ok");
         } catch (error) {
             setFeedback("suggestionFormFeedback", error.message, "error");
         }
@@ -3852,7 +3833,7 @@ async function handleHome() {
             const created = await sendJson("/api/rounds/new", "POST", {});
             homeActiveRound = created.round;
             updateHomeRoundStatus(homeActiveRound);
-            setFeedback("homeFeedback", "Nova rodada criada. VocÃª jÃ¡ pode abrir e gerenciar.", "ok");
+            setFeedback("homeFeedback", "Nova rodada criada. Você já pode abrir e gerenciar.", "ok");
         } catch (error) {
             setFeedback("homeFeedback", error.message, "error");
             if (String(error.message || "").includes("rodada ativa")) {
@@ -3945,32 +3926,11 @@ async function handleHome() {
     });
 
     window.addEventListener("resize", scheduleHomeCommentFormAlignment);
-
-    if (homeActivePollTimer) clearInterval(homeActivePollTimer);
-    homeActivePollTimer = setInterval(async () => {
-        try {
-            await refreshHomeActive();
-        } catch {
-            // polling silencioso
-        }
-    }, 1700);
-
-    if (homeFeedPollTimer) clearInterval(homeFeedPollTimer);
-    homeFeedPollTimer = setInterval(async () => {
-        try {
-            await refreshHomeFeedCommentsOnly();
-        } catch {
-            // polling silencioso
-        }
-    }, 2200);
-
 }
 
 let currentRound = null;
 let roundUsers = [];
-let roundPollTimer = null;
 let roundRecommendationsStructureSignature = "";
-let roundLastPhase = "";
 let pairExclusionAutosaveToken = 0;
 let pairExclusionsRenderSignature = "";
 
@@ -4051,7 +4011,7 @@ function validatePairExclusionsConfig(participants, pairs, options = {}) {
             const giverName = namesById.get(giverId) || "Participante";
             return {
                 ok: false,
-                message: `${giverName} precisa ter pelo menos 1 pessoa disponÃ­vel para sortear.`,
+                message: `${giverName} precisa ter pelo menos 1 pessoa disponível para sortear.`,
                 invalidGiverId: giverId
             };
         }
@@ -4078,7 +4038,7 @@ function validatePairExclusionsConfig(participants, pairs, options = {}) {
         const fallbackGiverId = Number(options.changedGiverUserId || 0);
         return {
             ok: false,
-            message: "RestriÃ§Ãµes inconsistentes: ajuste os bloqueios para permitir um sorteio vÃ¡lido para todos.",
+            message: "Restrições inconsistentes: ajuste os bloqueios para permitir um sorteio válido para todos.",
             invalidGiverId: Number.isInteger(fallbackGiverId) && fallbackGiverId > 0 ? fallbackGiverId : 0
         };
     }
@@ -4116,7 +4076,7 @@ function renderPairExclusionsEditor(round) {
     pairExclusionsRenderSignature = renderSignature;
 
     if (participants.length < 2) {
-        list.innerHTML = "<p>Adicione ao menos 2 participantes para configurar restriÃ§Ãµes.</p>";
+        list.innerHTML = "<p>Adicione ao menos 2 participantes para configurar restrições.</p>";
         return;
     }
 
@@ -4144,7 +4104,7 @@ function renderPairExclusionsEditor(round) {
                 <div class="pair-exclusion-row" data-pair-giver-row="${giver.id}">
                     <div class="pair-exclusion-row-feedback" data-pair-error-for="${giver.id}"></div>
                     <div class="pair-exclusion-giver">${displayNameStyledHtml(giver)}</div>
-                    <div class="pair-exclusion-options" role="group" aria-label="RestriÃ§Ãµes de ${escapeHtml(displayName(giver))}">
+                    <div class="pair-exclusion-options" role="group" aria-label="Restrições de ${escapeHtml(displayName(giver))}">
                         ${options}
                     </div>
                 </div>
@@ -4204,11 +4164,11 @@ async function persistPairExclusionsForCurrentRound() {
 async function autosavePairExclusionsForCurrentRound() {
     if (!canManageDraftRound(currentRound)) return;
     const token = ++pairExclusionAutosaveToken;
-    setFeedback("roundFeedback", "Salvando restriÃ§Ãµes...", "");
+    setFeedback("roundFeedback", "Salvando restrições...", "");
     try {
         await persistPairExclusionsForCurrentRound();
         if (token !== pairExclusionAutosaveToken) return;
-        setFeedback("roundFeedback", "RestriÃ§Ãµes atualizadas.", "ok");
+        setFeedback("roundFeedback", "Restrições atualizadas.", "ok");
     } catch (error) {
         if (token !== pairExclusionAutosaveToken) return;
         setFeedback("roundFeedback", error.message, "error");
@@ -4225,7 +4185,7 @@ function renderRoundRecommendations(round) {
         .join("|");
 
     if (!recommendations.length) {
-        container.innerHTML = "<p>Ainda nÃ£o hÃ¡ indicaÃ§Ãµes enviadas nesta rodada.</p>";
+        container.innerHTML = "<p>Ainda não há indicações enviadas nesta rodada.</p>";
         recommendationCommentSignatureCaches.round.clear();
         recommendationCommentIdsCaches.round.clear();
         clearStaleCommentSignatures("round", []);
@@ -4454,7 +4414,7 @@ function renderNavalChart(round) {
 
     const rated = (round.recommendations || []).filter((rec) => rec.rating_letter && rec.interest_score);
     if (!rated.length) {
-        chart.innerHTML = "<p style='padding:12px;color:#9fb3e0;'>Ainda nÃ£o hÃ¡ notas nesta rodada.</p>";
+        chart.innerHTML = "<p style='padding:12px;color:#9fb3e0;'>Ainda não há notas nesta rodada.</p>";
         return;
     }
 
@@ -4518,7 +4478,7 @@ function renderRevealList(round) {
     if (!listEl) return;
     const assignments = round.assignments || [];
     if (!assignments.length) {
-        listEl.innerHTML = "<p>O sorteio ainda nÃ£o foi gerado.</p>";
+        listEl.innerHTML = "<p>O sorteio ainda não foi gerado.</p>";
         return;
     }
 
@@ -4561,11 +4521,11 @@ function renderRoundState(round) {
         round.phase === "draft"
             ? "Fase de sorteio e montagem de participantes."
             : round.phase === "reveal"
-              ? "Sorteio concluido. Revele os pareamentos."
+              ? "Sorteio concluído. Revele os pareamentos."
               : round.phase === "indication"
-                ? "SessÃ£o de indicaÃ§Ãµes aberta."
+                ? "Sessão de indicações aberta."
                 : round.phase === "rating"
-                  ? "SessÃ£o de notas navais aberta."
+                  ? "Sessão de notas navais aberta."
               : "Rodada encerrada.";
 
     renderRoundRecommendations(round);
@@ -4674,8 +4634,8 @@ function renderRoundState(round) {
             const assignmentText = byId("assignmentText");
             if (assignmentText) {
                 assignmentText.innerHTML = canIndicate
-                    ? `Sua indicaÃ§Ã£o desta rodada vai para: ${displayNameStyledHtml(targetUser)}`
-                    : `IndicaÃ§Ãµes encerradas. VocÃª indicou para: ${displayNameStyledHtml(targetUser)}`;
+                    ? `Sua indicação desta rodada vai para: ${displayNameStyledHtml(targetUser)}`
+                    : `Indicações encerradas. Você indicou para: ${displayNameStyledHtml(targetUser)}`;
             }
             if (canIndicate) byId("recommendationForm")?.classList.remove("hidden");
             else byId("recommendationForm")?.classList.add("hidden");
@@ -4683,10 +4643,10 @@ function renderRoundState(round) {
             if (canIndicate) {
                 const form = byId("recommendationForm");
                 const submitBtn = form?.querySelector("button[type='submit']");
-                if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar IndicaÃ§Ã£o" : "Salvar IndicaÃ§Ã£o";
+                if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar Indicação" : "Salvar Indicação";
             }
         } else {
-            byId("assignmentText").textContent = "VocÃª estÃ¡ espectando esta rodada.";
+            byId("assignmentText").textContent = "Você está espectando esta rodada.";
             byId("recommendationForm")?.classList.add("hidden");
         }
 
@@ -4721,19 +4681,19 @@ function renderRoundState(round) {
         } else if (round.ratingOpen) {
             const items = round.ratingsToDo || [];
             if (items.length) {
-                ratingText.textContent = "A sessÃ£o de notas foi liberada. Avalie os jogos que vocÃª recebeu.";
+                ratingText.textContent = "A sessão de notas foi liberada. Avalie os jogos que você recebeu.";
                 ratingForm?.classList.remove("hidden");
                 ratingSelect.innerHTML = items
                     .map((rec) => `<option value="${rec.id}">${escapeHtml(rec.game_name)} (de ${escapeHtml(displayName({ id: rec.giver_user_id, nickname: rec.giver_nickname, username: rec.giver_username }))})</option>`)
                     .join("");
             } else {
-                ratingText.textContent = "VocÃª nÃ£o recebeu jogos para avaliar nesta rodada.";
+                ratingText.textContent = "Você não recebeu jogos para avaliar nesta rodada.";
                 ratingForm?.classList.add("hidden");
             }
         } else {
             const dateText = round.rating_starts_at
                 ? new Date(round.rating_starts_at * 1000).toLocaleString("pt-BR")
-                : "data nÃ£o definida";
+                : "data não definida";
             ratingText.textContent = `Notas navais liberam em: ${dateText}.`;
             ratingForm?.classList.add("hidden");
         }
@@ -4766,7 +4726,7 @@ function renderUserSearchResults() {
     const existingIds = new Set((currentRound.participants || []).map((item) => item.id));
     const filtered = roundUsers.filter((user) => !existingIds.has(user.id));
     if (!filtered.length) {
-        container.innerHTML = "<p>Nenhum usuÃ¡rio disponÃ­vel para adicionar.</p>";
+        container.innerHTML = "<p>Nenhum usuário disponível para adicionar.</p>";
         return;
     }
 
@@ -4802,10 +4762,13 @@ async function refreshRoundData(forceRoundId, options = {}) {
             roundRecommendationsStructureSignature = "";
             recommendationCommentSignatureCaches.round.clear();
             recommendationCommentIdsCaches.round.clear();
-            roundLastPhase = "";
             pairExclusionsRenderSignature = "";
+        if (roundPhaseRefreshTimer) {
+            clearTimeout(roundPhaseRefreshTimer);
+            roundPhaseRefreshTimer = 0;
+        }
         byId("roundHeading").textContent = "Sem rodada ativa";
-        byId("roundStatusText").textContent = "Crie uma nova rodada na pÃ¡gina inicial.";
+        byId("roundStatusText").textContent = "Crie uma nova rodada na página inicial.";
         resetRoundSections();
         byId("roundRecommendations").innerHTML = "";
         return;
@@ -4824,7 +4787,24 @@ async function refreshRoundData(forceRoundId, options = {}) {
     if (previousPhase && previousPhase !== "closed" && currentRound.phase === "closed") {
         await claimAchievementUnlocksAndNotify();
     }
-    roundLastPhase = currentRound.phase;
+    if (roundPhaseRefreshTimer) {
+        clearTimeout(roundPhaseRefreshTimer);
+        roundPhaseRefreshTimer = 0;
+    }
+    const ratingStartsAt = Number(currentRound?.rating_starts_at || 0);
+    const roundStatus = String(currentRound?.status || "");
+    if (roundStatus === "indication" && ratingStartsAt > 0) {
+        const now = Math.floor(Date.now() / 1000);
+        const delayMs = Math.max(0, (ratingStartsAt - now) * 1000 + 120);
+        roundPhaseRefreshTimer = window.setTimeout(() => {
+            if (!currentRound?.id) return;
+            refreshRoundData(currentRound.id, {
+                skipUserSearchReload: canManageDraftRound(currentRound)
+            }).catch(() => {
+                // sem acao
+            });
+        }, delayMs);
+    }
     if (canManageDraftRound(currentRound) && !skipUserSearchReload) {
         await loadUsersForRound(byId("participantSearch")?.value || "");
     }
@@ -5001,7 +4981,7 @@ async function handleRoundPage() {
         try {
             const raw = byId("ratingStartsAtInput")?.value || "";
             const ts = Math.floor(new Date(raw).getTime() / 1000);
-            await withButtonLoading(btn, "Abrindo sessÃ£o...", async () => {
+            await withButtonLoading(btn, "Abrindo sessão...", async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}/start-indication`, "POST", {
                     ratingStartsAt: ts
                 });
@@ -5029,7 +5009,7 @@ async function handleRoundPage() {
             const raw = byId("ratingStartsAtEditInput")?.value || "";
             const ts = Math.floor(new Date(raw).getTime() / 1000);
             if (!Number.isInteger(ts) || ts <= 0) {
-                throw new Error("Defina uma data vÃ¡lida para as notas navais.");
+                throw new Error("Defina uma data válida para as notas navais.");
             }
             await withButtonLoading(btn, "Atualizando...", async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}`, "PUT", {
@@ -5037,7 +5017,7 @@ async function handleRoundPage() {
                 });
                 currentRound = result.round;
                 renderRoundState(currentRound);
-                setFeedback("roundFeedback", "Data da sessÃ£o de notas atualizada.", "ok");
+                setFeedback("roundFeedback", "Data da sessão de notas atualizada.", "ok");
             });
         } catch (error) {
             setFeedback("roundFeedback", error.message, "error");
@@ -5072,7 +5052,7 @@ async function handleRoundPage() {
             try {
                 await requestSteamSuggestions(byId("steamTerm")?.value || "");
             } catch {
-                // sugestao silenciosa
+                // sugestão silenciosa
             }
         }, 240);
     });
@@ -5200,7 +5180,7 @@ async function handleRoundPage() {
             const result = await sendForm(`/api/rounds/${currentRound.id}/recommendations`, data);
             currentRound = result.round;
             renderRoundState(currentRound);
-            setFeedback("roundFeedback", "IndicaÃ§Ã£o salva sem precisar atualizar a pÃ¡gina.", "ok");
+            setFeedback("roundFeedback", "Indicação salva sem precisar atualizar a página.", "ok");
             showAchievementUnlockNotifications(result.newlyUnlocked || []);
             claimAchievementUnlocksAndNotify();
         } catch (error) {
@@ -5238,18 +5218,6 @@ async function handleRoundPage() {
         event.preventDefault();
         await submitRecommendationCommentForm(form, "round", "roundFeedback");
     });
-
-    if (roundPollTimer) clearInterval(roundPollTimer);
-    roundPollTimer = setInterval(async () => {
-        if (!currentRound) return;
-        try {
-            await refreshRoundData(currentRound.id, {
-                skipUserSearchReload: canManageDraftRound(currentRound)
-            });
-        } catch {
-            // polling silencioso
-        }
-    }, 1500);
 }
 async function init() {
     ensureRawgAttributionLink();
@@ -5267,7 +5235,6 @@ async function init() {
             // sem mapa de cargos, segue com nomes basicos
         }
         claimAchievementUnlocksAndNotify();
-        startAchievementPolling();
         startRoundRealtimeStream();
     }
 

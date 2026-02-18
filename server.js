@@ -316,6 +316,29 @@ const coverDir = path.join(uploadRoot, "covers");
 fs.mkdirSync(avatarDir, { recursive: true });
 fs.mkdirSync(coverDir, { recursive: true });
 
+const adminEventClients = new Map();
+let adminEventClientSeq = 0;
+
+function emitAdminChange(reason = "updated", payload = {}) {
+    const data = JSON.stringify({
+        reason: sanitizeText(reason, 80) || "updated",
+        at: nowInSeconds(),
+        ...payload
+    });
+    for (const [clientId, client] of adminEventClients.entries()) {
+        try {
+            client.res.write(`event: admin-change\ndata: ${data}\n\n`);
+        } catch {
+            try {
+                client.res.end();
+            } catch {
+                // sem acao
+            }
+            adminEventClients.delete(clientId);
+        }
+    }
+}
+
 const publicHtmlRoutes = new Set([
     "/login.html",
     "/register.html",
@@ -797,6 +820,7 @@ async function initDb() {
     await ensureColumn("users", "avatar_url TEXT");
     await ensureColumn("users", "phone TEXT");
     await ensureColumn("users", "blocked INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("users", "is_moderator INTEGER NOT NULL DEFAULT 0");
 
     await dbRun(`
         CREATE TABLE IF NOT EXISTS pending_registrations (
@@ -840,6 +864,7 @@ async function initDb() {
         )
     `);
     await ensureColumn("rounds", "rating_starts_at INTEGER");
+    await ensureColumn("rounds", "reopened_count INTEGER NOT NULL DEFAULT 0");
 
     await dbRun(`
         CREATE TABLE IF NOT EXISTS round_participants (
@@ -945,6 +970,8 @@ async function initDb() {
             FOREIGN KEY (author_user_id) REFERENCES users(id)
         )
     `);
+    await ensureColumn("profile_comments", "updated_at INTEGER");
+    await ensureColumn("profile_comments", "parent_comment_id INTEGER");
 
     await dbRun(`
         CREATE TABLE IF NOT EXISTS recommendation_comment_likes (
@@ -993,6 +1020,54 @@ async function initDb() {
         )
     `);
     await ensureColumn("user_achievements", "notified_at INTEGER");
+
+    await dbRun(`
+        CREATE TABLE IF NOT EXISTS user_achievement_gates (
+            user_id INTEGER NOT NULL,
+            achievement_key TEXT NOT NULL,
+            gated_after INTEGER NOT NULL,
+            PRIMARY KEY (user_id, achievement_key),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    await dbRun(`
+        CREATE TABLE IF NOT EXISTS suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            target_page TEXT NOT NULL,
+            suggestion_text TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    await dbRun(`
+        CREATE TABLE IF NOT EXISTS admin_action_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_user_id INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            result_message TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            decided_at INTEGER,
+            decided_by_user_id INTEGER,
+            FOREIGN KEY (requester_user_id) REFERENCES users(id),
+            FOREIGN KEY (decided_by_user_id) REFERENCES users(id)
+        )
+    `);
+    await ensureColumn("admin_action_requests", "action_type TEXT");
+    await ensureColumn("admin_action_requests", "action_key TEXT");
+    await ensureColumn("admin_action_requests", "token_hash TEXT");
+    await ensureColumn("admin_action_requests", "payload_json TEXT");
+    await ensureColumn("admin_action_requests", "status TEXT NOT NULL DEFAULT 'pending'");
+    await ensureColumn("admin_action_requests", "result_message TEXT");
+    await ensureColumn("admin_action_requests", "created_at INTEGER");
+    await ensureColumn("admin_action_requests", "expires_at INTEGER");
+    await ensureColumn("admin_action_requests", "decided_at INTEGER");
+    await ensureColumn("admin_action_requests", "decided_by_user_id INTEGER");
 }
 
 function buildMailer() {
@@ -1176,7 +1251,7 @@ function requireAuth(req, res, next) {
         return res.status(401).json({ message: "Nao autenticado." });
     }
     dbGet(
-        "SELECT id, username, email, blocked FROM users WHERE id = ? LIMIT 1",
+        "SELECT id, username, email, blocked, is_moderator FROM users WHERE id = ? LIMIT 1",
         [req.session.userId]
     )
         .then((user) => {
@@ -1192,7 +1267,8 @@ function requireAuth(req, res, next) {
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                isOwner: isOwnerEmail(user.email)
+                isOwner: isOwnerEmail(user.email),
+                isModerator: !isOwnerEmail(user.email) && Number(user.is_moderator) === 1
             };
             return next();
         })
@@ -1209,19 +1285,152 @@ function requireOwner(req, res, next) {
     return next();
 }
 
+function requireAdminAccess(req, res, next) {
+    if (req.currentUser?.isOwner || req.currentUser?.isModerator) {
+        return next();
+    }
+    return res.status(403).json({ message: "Acesso permitido apenas para dono e moderadores." });
+}
+
+const ADMIN_ACTION_TTL_SECONDS = 60 * 60 * 24;
+
+function buildRoleFlags(userLike) {
+    const isOwner = isOwnerEmail(userLike?.email || "");
+    const isModerator = !isOwner && Number(userLike?.is_moderator) === 1;
+    return {
+        isOwner,
+        isModerator,
+        role: isOwner ? "owner" : (isModerator ? "moderator" : "user")
+    };
+}
+
+function parseJsonSafely(rawText, fallback = {}) {
+    try {
+        const parsed = JSON.parse(String(rawText || ""));
+        if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+        // sem acao
+    }
+    return fallback;
+}
+
+function actionStatusLabel(status) {
+    if (status === "approved") return "Aprovada";
+    if (status === "denied") return "Negada";
+    if (status === "pending") return "Pendente";
+    return "Processada";
+}
+
+function adminActionLabel(actionType, payload = {}) {
+    if (actionType === "user_block") {
+        return Number(payload?.blocked) === 1 ? "Bloquear conta" : "Desbloquear conta";
+    }
+    if (actionType === "user_delete") return "Excluir conta";
+    if (actionType === "achievement_grant") return "Dar conquista";
+    if (actionType === "achievement_revoke") return "Tirar conquista";
+    if (actionType === "achievement_reset_all") return "Zerar conquistas";
+    if (actionType === "round_close") return "Fechar/Reabrir rodada";
+    if (actionType === "round_delete") return "Excluir rodada";
+    if (actionType === "set_role") return "Alterar cargo";
+    return "Acao administrativa";
+}
+
+function adminActionDetailLines(actionType, payload = {}) {
+    const lines = [];
+    const targetUserName = sanitizeText(payload?.targetUserName || "", 120);
+    const targetUserId = Number(payload?.targetUserId || 0);
+    const roundId = Number(payload?.roundId || 0);
+    const achievementKey = sanitizeText(payload?.achievementKey || "", 40);
+    const role = sanitizeText(payload?.role || "", 20);
+
+    if (targetUserName) {
+        lines.push(`Usuario alvo: ${targetUserName}`);
+    } else if (targetUserId > 0) {
+        lines.push(`Usuario alvo: #${targetUserId}`);
+    }
+    if (roundId > 0) {
+        lines.push(`Rodada alvo: #${roundId}`);
+    }
+    if ((actionType === "achievement_grant" || actionType === "achievement_revoke") && achievementKey) {
+        lines.push(`Conquista: ${achievementKey}`);
+    }
+    if (actionType === "set_role" && role) {
+        lines.push(`Novo cargo: ${role === "moderator" ? "Moderador" : "Usuario"}`);
+    }
+    return lines;
+}
+
+async function pruneExpiredAdminActionRequests() {
+    const now = nowInSeconds();
+    await dbRun(
+        `UPDATE admin_action_requests
+         SET status = 'denied',
+             result_message = COALESCE(result_message, 'Solicitacao expirada.'),
+             decided_at = ?,
+             decided_by_user_id = NULL
+         WHERE status = 'pending'
+           AND expires_at < ?`,
+        [now, now]
+    );
+}
+
+async function getPendingAdminActionForRequester(userId) {
+    await pruneExpiredAdminActionRequests();
+    return dbGet(
+        `SELECT id
+         FROM admin_action_requests
+         WHERE requester_user_id = ?
+           AND status = 'pending'
+           AND expires_at >= ?
+         ORDER BY id DESC
+         LIMIT 1`,
+        [userId, nowInSeconds()]
+    );
+}
+
+async function createAdminActionRequest(requesterUserId, actionType, payload) {
+    const pending = await getPendingAdminActionForRequester(requesterUserId);
+    if (pending) {
+        const error = new Error("Ha uma solicitacao pendente. Aguarde o dono permitir ou negar.");
+        error.statusCode = 409;
+        throw error;
+    }
+    const now = nowInSeconds();
+    const expiresAt = now + ADMIN_ACTION_TTL_SECONDS;
+    const tokenHash = sha256(createToken());
+    await dbRun(
+        `INSERT INTO admin_action_requests
+            (requester_user_id, action_type, action_key, payload_json, status, token_hash, created_at, expires_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        [
+            requesterUserId,
+            actionType,
+            actionType,
+            JSON.stringify(payload || {}),
+            tokenHash,
+            now,
+            expiresAt
+        ]
+    );
+    emitAdminChange("admin_action_request_created", {
+        requesterUserId: Number(requesterUserId) || 0,
+        actionType: sanitizeText(actionType, 80)
+    });
+}
+
 async function listUserRolesForClient() {
     const users = await dbAll(
-        `SELECT id, email
+        `SELECT id, email, is_moderator
          FROM users
          ORDER BY id ASC`
     );
     return users.map((user) => {
-        const isOwner = isOwnerEmail(user.email);
+        const flags = buildRoleFlags(user);
         return {
             id: Number(user.id),
-            role: isOwner ? "owner" : "user",
-            is_owner: isOwner,
-            is_moderator: false
+            role: flags.role,
+            is_owner: flags.isOwner,
+            is_moderator: flags.isModerator
         };
     });
 }
@@ -1492,11 +1701,14 @@ async function getUserProfileActivity(userId) {
     return { given, received };
 }
 
-async function countCompletedRoundsForUser(userId) {
+async function countCompletedRoundsForUser(userId, gatedAfter = 0) {
+    const gate = Number(gatedAfter || 0);
     const row = await dbGet(
         `SELECT COUNT(*) AS total
          FROM rounds r
          WHERE r.status = 'closed'
+           AND COALESCE(r.reopened_count, 0) = 0
+           AND COALESCE(r.closed_at, r.created_at, 0) > ?
            AND EXISTS (
                 SELECT 1
                 FROM recommendations rec
@@ -1511,23 +1723,26 @@ async function countCompletedRoundsForUser(userId) {
                   AND rec2.receiver_user_id = ?
                   AND rr.rater_user_id = ?
            )`,
-        [userId, userId, userId]
+        [gate, userId, userId, userId]
     );
     return Number(row?.total || 0);
 }
 
-async function hydrateRecommendationMetadataForAchievements(userId) {
+async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter = 0) {
+    const gate = Number(gatedAfter || 0);
     const missing = await dbAll(
         `SELECT rec.id, rec.steam_app_id
          FROM recommendations rec
          JOIN rounds r ON r.id = rec.round_id
          WHERE rec.giver_user_id = ?
            AND r.status = 'closed'
+           AND COALESCE(r.reopened_count, 0) = 0
+           AND COALESCE(r.closed_at, r.created_at, 0) > ?
            AND COALESCE(rec.steam_app_id, '') <> ''
            AND (rec.game_release_year IS NULL OR rec.game_release_year <= 0 OR COALESCE(rec.game_genres, '') = '')
          ORDER BY rec.id DESC
          LIMIT 24`,
-        [userId]
+        [userId, gate]
     );
     for (const row of missing) {
         const appId = sanitizeText(row?.steam_app_id || "", 20);
@@ -1569,6 +1784,13 @@ function detectRecommendationSignals(recommendation) {
 
     return {
         action: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.action),
+        adventure: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.adventure),
+        drama: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.drama),
+        narrative: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.narrative),
+        rpg: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.rpg),
+        platform: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.platform),
+        racing: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.racing),
+        open_world: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.open_world),
         shooter: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.shooter),
         horror: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.horror),
         soulslike: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.soulslike),
@@ -1577,19 +1799,28 @@ function detectRecommendationSignals(recommendation) {
     };
 }
 
-async function getRecommendationAchievementSignals(userId) {
-    await hydrateRecommendationMetadataForAchievements(userId);
+async function getRecommendationAchievementSignals(userId, gatedAfter = 0) {
+    const gate = Number(gatedAfter || 0);
+    await hydrateRecommendationMetadataForAchievements(userId, gate);
     const rows = await dbAll(
         `SELECT rec.game_name, rec.game_description, rec.reason, rec.game_genres, rec.game_release_year
          FROM recommendations rec
          JOIN rounds r ON r.id = rec.round_id
          WHERE rec.giver_user_id = ?
-           AND r.status = 'closed'`,
-        [userId]
+           AND COALESCE(r.reopened_count, 0) = 0
+           AND COALESCE(r.closed_at, r.created_at, 0) > ?`,
+        [userId, gate]
     );
 
     const aggregate = {
         action: false,
+        adventure: false,
+        drama: false,
+        narrative: false,
+        rpg: false,
+        platform: false,
+        racing: false,
+        open_world: false,
         shooter: false,
         horror: false,
         soulslike: false,
@@ -1600,6 +1831,13 @@ async function getRecommendationAchievementSignals(userId) {
     for (const row of rows) {
         const detected = detectRecommendationSignals(row);
         aggregate.action = aggregate.action || detected.action;
+        aggregate.adventure = aggregate.adventure || detected.adventure;
+        aggregate.drama = aggregate.drama || detected.drama;
+        aggregate.narrative = aggregate.narrative || detected.narrative;
+        aggregate.rpg = aggregate.rpg || detected.rpg;
+        aggregate.platform = aggregate.platform || detected.platform;
+        aggregate.racing = aggregate.racing || detected.racing;
+        aggregate.open_world = aggregate.open_world || detected.open_world;
         aggregate.shooter = aggregate.shooter || detected.shooter;
         aggregate.horror = aggregate.horror || detected.horror;
         aggregate.soulslike = aggregate.soulslike || detected.soulslike;
@@ -1610,12 +1848,14 @@ async function getRecommendationAchievementSignals(userId) {
     return aggregate;
 }
 
-async function countRatedRecommendationsForUser(userId) {
+async function countRatedRecommendationsForUser(userId, gatedAfter = 0) {
+    const gate = Number(gatedAfter || 0);
     const row = await dbGet(
         `SELECT COUNT(*) AS total
          FROM recommendation_ratings
-         WHERE rater_user_id = ?`,
-        [userId]
+         WHERE rater_user_id = ?
+           AND COALESCE(updated_at, created_at, 0) > ?`,
+        [userId, gate]
     );
     return Number(row?.total || 0);
 }
@@ -1625,6 +1865,13 @@ function shouldUnlockAchievement(definition, completedRounds, recommendationSign
         return completedRounds >= definition.requiredRounds;
     }
     if (definition.criterion === "action") return Boolean(recommendationSignals.action);
+    if (definition.criterion === "adventure") return Boolean(recommendationSignals.adventure);
+    if (definition.criterion === "drama") return Boolean(recommendationSignals.drama);
+    if (definition.criterion === "narrative") return Boolean(recommendationSignals.narrative);
+    if (definition.criterion === "rpg") return Boolean(recommendationSignals.rpg);
+    if (definition.criterion === "platform") return Boolean(recommendationSignals.platform);
+    if (definition.criterion === "racing") return Boolean(recommendationSignals.racing);
+    if (definition.criterion === "open_world") return Boolean(recommendationSignals.open_world);
     if (definition.criterion === "shooter") return Boolean(recommendationSignals.shooter);
     if (definition.criterion === "horror") return Boolean(recommendationSignals.horror);
     if (definition.criterion === "soulslike") return Boolean(recommendationSignals.soulslike);
@@ -1662,15 +1909,48 @@ function buildAchievementsPayload(completedRounds, achievementRows) {
 }
 
 async function syncUserAchievements(userId, { markNewAsNotified = false } = {}) {
-    const completedRounds = await countCompletedRoundsForUser(userId);
-    const recommendationSignals = await getRecommendationAchievementSignals(userId);
-    const ratedRecommendations = await countRatedRecommendationsForUser(userId);
+    const totalCompletedRounds = await countCompletedRoundsForUser(userId, 0);
+    const gateRows = await dbAll(
+        `SELECT achievement_key, gated_after
+         FROM user_achievement_gates
+         WHERE user_id = ?`,
+        [userId]
+    );
+    const gateByKey = new Map(
+        gateRows.map((row) => [String(row.achievement_key || ""), Number(row.gated_after || 0)])
+    );
+    const roundsByGate = new Map();
+    const signalsByGate = new Map();
+    const ratingsByGate = new Map();
+    const getCompletedRoundsForGate = async (gate) => {
+        if (!roundsByGate.has(gate)) {
+            roundsByGate.set(gate, await countCompletedRoundsForUser(userId, gate));
+        }
+        return roundsByGate.get(gate);
+    };
+    const getSignalsForGate = async (gate) => {
+        if (!signalsByGate.has(gate)) {
+            signalsByGate.set(gate, await getRecommendationAchievementSignals(userId, gate));
+        }
+        return signalsByGate.get(gate);
+    };
+    const getRatingsForGate = async (gate) => {
+        if (!ratingsByGate.has(gate)) {
+            ratingsByGate.set(gate, await countRatedRecommendationsForUser(userId, gate));
+        }
+        return ratingsByGate.get(gate);
+    };
     const now = nowInSeconds();
-    const shouldBeUnlocked = ACHIEVEMENT_DEFINITIONS
-        .filter((definition) =>
-            shouldUnlockAchievement(definition, completedRounds, recommendationSignals, ratedRecommendations)
-        )
-        .map((definition) => definition.key);
+    const shouldBeUnlocked = [];
+    for (const definition of ACHIEVEMENT_DEFINITIONS) {
+        const gate = Number(gateByKey.get(definition.key) || 0);
+        const completedRounds = await getCompletedRoundsForGate(gate);
+        const recommendationSignals = await getSignalsForGate(gate);
+        const ratedRecommendations = await getRatingsForGate(gate);
+        if (shouldUnlockAchievement(definition, completedRounds, recommendationSignals, ratedRecommendations)) {
+            shouldBeUnlocked.push(definition.key);
+        }
+    }
 
     for (const achievementKey of shouldBeUnlocked) {
         await dbRun(
@@ -1686,7 +1966,7 @@ async function syncUserAchievements(userId, { markNewAsNotified = false } = {}) 
          WHERE user_id = ?`,
         [userId]
     );
-    let payload = buildAchievementsPayload(completedRounds, rows);
+    let payload = buildAchievementsPayload(totalCompletedRounds, rows);
 
     if (markNewAsNotified && payload.newlyUnlocked.length) {
         const keys = payload.newlyUnlocked.map((item) => item.key);
@@ -1705,10 +1985,17 @@ async function syncUserAchievements(userId, { markNewAsNotified = false } = {}) 
              WHERE user_id = ?`,
             [userId]
         );
-        payload = buildAchievementsPayload(completedRounds, rows);
+        payload = buildAchievementsPayload(totalCompletedRounds, rows);
         payload.newlyUnlocked = payload.achievements.filter((achievement) =>
             keys.includes(achievement.key)
         );
+    }
+
+    if (Array.isArray(payload?.newlyUnlocked) && payload.newlyUnlocked.length) {
+        emitAdminChange("achievement_unlocked", {
+            userId: Number(userId) || 0,
+            count: payload.newlyUnlocked.length
+        });
     }
 
     return payload;
@@ -1718,7 +2005,7 @@ async function getProfileComments(profileUserId, currentUserId = 0) {
     const viewerIdRaw = Number(currentUserId);
     const viewerId = Number.isInteger(viewerIdRaw) && viewerIdRaw > 0 ? viewerIdRaw : 0;
     return dbAll(
-        `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
+        `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
                 u.id AS user_id, u.username, u.nickname, u.avatar_url,
                 (SELECT COUNT(*) FROM profile_comment_likes l WHERE l.comment_id = c.id) AS likes_count,
                 CASE
@@ -1733,10 +2020,28 @@ async function getProfileComments(profileUserId, currentUserId = 0) {
          FROM profile_comments c
          JOIN users u ON u.id = c.author_user_id
          WHERE c.profile_user_id = ?
-         ORDER BY c.created_at DESC
+         ORDER BY COALESCE(c.updated_at, c.created_at) ASC, c.id ASC
          LIMIT 150`,
         [viewerId, viewerId, profileUserId]
     );
+}
+
+async function syncAchievementsForRoundParticipants(roundId) {
+    const participantRows = await dbAll(
+        `SELECT DISTINCT user_id
+         FROM round_participants
+         WHERE round_id = ?`,
+        [roundId]
+    );
+    for (const row of participantRows) {
+        const userId = Number(row?.user_id || 0);
+        if (!Number.isInteger(userId) || userId <= 0) continue;
+        try {
+            await syncUserAchievements(userId, { markNewAsNotified: false });
+        } catch (error) {
+            console.error("[round-achievement-sync]", { roundId, userId, error: error?.message || error });
+        }
+    }
 }
 
 async function getRoundPayload(roundId, currentUserId) {
@@ -1753,7 +2058,9 @@ async function getRoundPayload(roundId, currentUserId) {
     const participants = await getRoundParticipants(roundId);
     const assignmentsRaw = await getRoundAssignments(roundId);
     const pairExclusions = await getRoundPairExclusions(roundId);
+    const shouldMaskAssignmentReceiver = round.status === "reveal";
     const assignments = assignmentsRaw.map((item) => {
+        if (!shouldMaskAssignmentReceiver) return item;
         if (item.revealed) return item;
         return {
             ...item,
@@ -1943,6 +2250,19 @@ async function deleteRoundCascade(roundId) {
     const recIds = recRows.map((row) => row.id);
     if (recIds.length) {
         const placeholders = recIds.map(() => "?").join(", ");
+        const commentRows = await dbAll(
+            `SELECT id FROM recommendation_comments WHERE recommendation_id IN (${placeholders})`,
+            recIds
+        );
+        const commentIds = commentRows.map((row) => row.id);
+        if (commentIds.length) {
+            const commentPlaceholders = commentIds.map(() => "?").join(", ");
+            await dbRun(
+                `DELETE FROM recommendation_comment_likes
+                 WHERE comment_id IN (${commentPlaceholders})`,
+                commentIds
+            );
+        }
         await dbRun(`DELETE FROM recommendation_comments WHERE recommendation_id IN (${placeholders})`, recIds);
         await dbRun(`DELETE FROM recommendation_ratings WHERE recommendation_id IN (${placeholders})`, recIds);
     }
@@ -1966,20 +2286,431 @@ async function deleteUserCascade(userId) {
     const recIds = recRows.map((row) => row.id);
     if (recIds.length) {
         const placeholders = recIds.map(() => "?").join(", ");
+        const commentRows = await dbAll(
+            `SELECT id FROM recommendation_comments WHERE recommendation_id IN (${placeholders})`,
+            recIds
+        );
+        const commentIds = commentRows.map((row) => row.id);
+        if (commentIds.length) {
+            const commentPlaceholders = commentIds.map(() => "?").join(", ");
+            await dbRun(
+                `DELETE FROM recommendation_comment_likes
+                 WHERE comment_id IN (${commentPlaceholders})`,
+                commentIds
+            );
+        }
         await dbRun(`DELETE FROM recommendation_comments WHERE recommendation_id IN (${placeholders})`, recIds);
         await dbRun(`DELETE FROM recommendation_ratings WHERE recommendation_id IN (${placeholders})`, recIds);
         await dbRun(`DELETE FROM recommendations WHERE id IN (${placeholders})`, recIds);
     }
 
+    const ownRecCommentRows = await dbAll("SELECT id FROM recommendation_comments WHERE user_id = ?", [userId]);
+    const ownRecCommentIds = ownRecCommentRows.map((row) => row.id);
+    if (ownRecCommentIds.length) {
+        const placeholders = ownRecCommentIds.map(() => "?").join(", ");
+        await dbRun(
+            `DELETE FROM recommendation_comment_likes
+             WHERE comment_id IN (${placeholders})`,
+            ownRecCommentIds
+        );
+    }
     await dbRun("DELETE FROM recommendation_comments WHERE user_id = ?", [userId]);
+    await dbRun("DELETE FROM recommendation_comment_likes WHERE user_id = ?", [userId]);
     await dbRun("DELETE FROM recommendation_ratings WHERE rater_user_id = ?", [userId]);
+    const profileCommentRows = await dbAll(
+        "SELECT id FROM profile_comments WHERE profile_user_id = ? OR author_user_id = ?",
+        [userId, userId]
+    );
+    const profileCommentIds = profileCommentRows.map((row) => row.id);
+    if (profileCommentIds.length) {
+        const placeholders = profileCommentIds.map(() => "?").join(", ");
+        await dbRun(
+            `DELETE FROM profile_comment_likes
+             WHERE comment_id IN (${placeholders})`,
+            profileCommentIds
+        );
+    }
+    await dbRun("DELETE FROM profile_comment_likes WHERE user_id = ?", [userId]);
     await dbRun("DELETE FROM profile_comments WHERE profile_user_id = ? OR author_user_id = ?", [userId, userId]);
     await dbRun("DELETE FROM round_assignments WHERE giver_user_id = ? OR receiver_user_id = ?", [userId, userId]);
     await dbRun("DELETE FROM round_pair_exclusions WHERE giver_user_id = ? OR receiver_user_id = ?", [userId, userId]);
     await dbRun("DELETE FROM round_participants WHERE user_id = ?", [userId]);
     await dbRun("DELETE FROM pair_history WHERE giver_user_id = ? OR receiver_user_id = ?", [userId, userId]);
     await dbRun("DELETE FROM password_resets WHERE user_id = ?", [userId]);
+    await dbRun("DELETE FROM suggestions WHERE user_id = ?", [userId]);
+    await dbRun("DELETE FROM user_achievement_gates WHERE user_id = ?", [userId]);
+    await dbRun(
+        "DELETE FROM admin_action_requests WHERE requester_user_id = ? OR decided_by_user_id = ?",
+        [userId, userId]
+    );
     await dbRun("DELETE FROM users WHERE id = ?", [userId]);
+}
+
+function isModeratorOnlyUser(userLike) {
+    return Boolean(userLike?.isModerator) && !Boolean(userLike?.isOwner);
+}
+
+function buildAdminUserDisplayName(userRow) {
+    return normalizeNickname(userRow?.nickname, userRow?.username);
+}
+
+async function getUserForAdminById(userId) {
+    return dbGet(
+        `SELECT id, username, nickname, email, blocked, is_moderator
+         FROM users
+         WHERE id = ? LIMIT 1`,
+        [userId]
+    );
+}
+
+async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
+    const payload = rawPayload && typeof rawPayload === "object" ? rawPayload : {};
+    const ensureTargetUser = async () => {
+        const targetUserId = Number(payload?.targetUserId || 0);
+        if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+            const error = new Error("Usuario invalido.");
+            error.statusCode = 400;
+            throw error;
+        }
+        const targetUser = await getUserForAdminById(targetUserId);
+        if (!targetUser) {
+            const error = new Error("Usuario nao encontrado.");
+            error.statusCode = 404;
+            throw error;
+        }
+        const targetFlags = buildRoleFlags(targetUser);
+        if (targetFlags.isOwner && ["user_block", "user_delete", "set_role"].includes(actionType)) {
+            const error = new Error("Nao e permitido modificar a conta dona.");
+            error.statusCode = 400;
+            throw error;
+        }
+        if (isModeratorOnlyUser(actorUser)) {
+            if (targetFlags.isOwner) {
+                const error = new Error("Moderador nao pode modificar a conta do dono.");
+                error.statusCode = 403;
+                throw error;
+            }
+            if (targetFlags.isModerator && Number(targetUser.id) !== Number(actorUser.id)) {
+                const error = new Error("Moderador nao pode modificar outro moderador.");
+                error.statusCode = 403;
+                throw error;
+            }
+        }
+        return { targetUser, targetFlags };
+    };
+
+    if (actionType === "user_block") {
+        const { targetUser } = await ensureTargetUser();
+        const blocked = Number(payload?.blocked) === 1 ? 1 : 0;
+        return {
+            targetUserId: Number(targetUser.id),
+            targetUserName: buildAdminUserDisplayName(targetUser),
+            blocked
+        };
+    }
+
+    if (actionType === "user_delete") {
+        const { targetUser } = await ensureTargetUser();
+        return {
+            targetUserId: Number(targetUser.id),
+            targetUserName: buildAdminUserDisplayName(targetUser)
+        };
+    }
+
+    if (actionType === "achievement_grant" || actionType === "achievement_revoke" || actionType === "achievement_reset_all") {
+        const { targetUser } = await ensureTargetUser();
+        const normalized = {
+            targetUserId: Number(targetUser.id),
+            targetUserName: buildAdminUserDisplayName(targetUser)
+        };
+        if (actionType !== "achievement_reset_all") {
+            const achievementKey = sanitizeText(payload?.achievementKey || "", 40);
+            const validAchievement = ACHIEVEMENT_DEFINITIONS.find((item) => item.key === achievementKey);
+            if (!validAchievement) {
+                const error = new Error("Conquista invalida.");
+                error.statusCode = 400;
+                throw error;
+            }
+            if (actionType === "achievement_revoke") {
+                const unlocked = await dbGet(
+                    `SELECT user_id
+                     FROM user_achievements
+                     WHERE user_id = ? AND achievement_key = ?
+                     LIMIT 1`,
+                    [Number(targetUser.id), achievementKey]
+                );
+                if (!unlocked) {
+                    const error = new Error("Conquista inesistente.");
+                    error.statusCode = 400;
+                    throw error;
+                }
+            }
+            normalized.achievementKey = achievementKey;
+        }
+        return normalized;
+    }
+
+    if (actionType === "round_close" || actionType === "round_delete") {
+        const roundId = Number(payload?.roundId || 0);
+        if (!Number.isInteger(roundId) || roundId <= 0) {
+            const error = new Error("Rodada invalida.");
+            error.statusCode = 400;
+            throw error;
+        }
+        const round = await dbGet(
+            `SELECT id, status, creator_user_id
+             FROM rounds
+             WHERE id = ? LIMIT 1`,
+            [roundId]
+        );
+        if (!round) {
+            const error = new Error("Rodada nao encontrada.");
+            error.statusCode = 404;
+            throw error;
+        }
+        return {
+            roundId: Number(round.id),
+            roundStatus: String(round.status || ""),
+            creatorUserId: Number(round.creator_user_id || 0)
+        };
+    }
+
+    if (actionType === "set_role") {
+        if (!actorUser?.isOwner) {
+            const error = new Error("Apenas o dono pode alterar cargos.");
+            error.statusCode = 403;
+            throw error;
+        }
+        const { targetUser } = await ensureTargetUser();
+        const role = String(payload?.role || "").trim().toLowerCase() === "moderator" ? "moderator" : "user";
+        return {
+            targetUserId: Number(targetUser.id),
+            targetUserName: buildAdminUserDisplayName(targetUser),
+            role
+        };
+    }
+
+    const error = new Error("Acao administrativa invalida.");
+    error.statusCode = 400;
+    throw error;
+}
+
+async function executePreparedAdminAction(actionType, preparedPayload) {
+    if (actionType === "user_block") {
+        const blocked = Number(preparedPayload.blocked) === 1 ? 1 : 0;
+        await dbRun(
+            "UPDATE users SET blocked = ? WHERE id = ?",
+            [blocked, Number(preparedPayload.targetUserId)]
+        );
+        return {
+            message: blocked ? "Conta bloqueada." : "Conta desbloqueada."
+        };
+    }
+
+    if (actionType === "user_delete") {
+        await deleteUserCascade(Number(preparedPayload.targetUserId));
+        return { message: "Conta excluida." };
+    }
+
+    if (actionType === "achievement_grant") {
+        const now = nowInSeconds();
+        await dbRun(
+            `INSERT INTO user_achievements (user_id, achievement_key, unlocked_at, notified_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id, achievement_key) DO UPDATE SET unlocked_at = excluded.unlocked_at`,
+            [
+                Number(preparedPayload.targetUserId),
+                String(preparedPayload.achievementKey || ""),
+                now,
+                now
+            ]
+        );
+        return { message: `Conquista ${String(preparedPayload.achievementKey || "")} concedida.` };
+    }
+
+    if (actionType === "achievement_revoke") {
+        const now = nowInSeconds();
+        const row = await dbGet(
+            `SELECT user_id
+             FROM user_achievements
+             WHERE user_id = ? AND achievement_key = ?
+             LIMIT 1`,
+            [Number(preparedPayload.targetUserId), String(preparedPayload.achievementKey || "")]
+        );
+        if (!row) {
+            const error = new Error("Conquista inesistente.");
+            error.statusCode = 400;
+            throw error;
+        }
+        await dbRun(
+            `DELETE FROM user_achievements
+             WHERE user_id = ? AND achievement_key = ?`,
+            [Number(preparedPayload.targetUserId), String(preparedPayload.achievementKey || "")]
+        );
+        await dbRun(
+            `INSERT INTO user_achievement_gates (user_id, achievement_key, gated_after)
+             VALUES (?, ?, ?)
+             ON CONFLICT(user_id, achievement_key) DO UPDATE SET gated_after = excluded.gated_after`,
+            [Number(preparedPayload.targetUserId), String(preparedPayload.achievementKey || ""), now]
+        );
+        return { message: `Conquista ${String(preparedPayload.achievementKey || "")} removida.` };
+    }
+
+    if (actionType === "achievement_reset_all") {
+        const userId = Number(preparedPayload.targetUserId);
+        const now = nowInSeconds();
+        await dbRun(
+            "DELETE FROM user_achievements WHERE user_id = ?",
+            [userId]
+        );
+        for (const definition of ACHIEVEMENT_DEFINITIONS) {
+            await dbRun(
+                `INSERT INTO user_achievement_gates (user_id, achievement_key, gated_after)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(user_id, achievement_key) DO UPDATE SET gated_after = excluded.gated_after`,
+                [userId, String(definition.key || ""), now]
+            );
+        }
+        return { message: "Conquistas zeradas." };
+    }
+
+    if (actionType === "round_close") {
+        const roundId = Number(preparedPayload.roundId || 0);
+        const round = await dbGet("SELECT id, status, reopened_count FROM rounds WHERE id = ? LIMIT 1", [roundId]);
+        if (!round) {
+            const error = new Error("Rodada nao encontrada.");
+            error.statusCode = 404;
+            throw error;
+        }
+        if (String(round.status || "") === "closed") {
+            await dbRun(
+                `UPDATE rounds
+                 SET status = 'indication',
+                     rating_starts_at = ?,
+                     closed_at = NULL,
+                     reopened_count = COALESCE(reopened_count, 0) + 1
+                 WHERE id = ?`,
+                [nowInSeconds(), roundId]
+            );
+            return { message: "Rodada reaberta." };
+        }
+        await dbRun(
+            "UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?",
+            [nowInSeconds(), roundId]
+        );
+        await syncAchievementsForRoundParticipants(roundId);
+        return { message: "Rodada encerrada." };
+    }
+
+    if (actionType === "round_delete") {
+        await deleteRoundCascade(Number(preparedPayload.roundId || 0));
+        return { message: "Rodada excluida." };
+    }
+
+    if (actionType === "set_role") {
+        const isModerator = String(preparedPayload.role || "").trim().toLowerCase() === "moderator" ? 1 : 0;
+        await dbRun(
+            "UPDATE users SET is_moderator = ? WHERE id = ?",
+            [isModerator, Number(preparedPayload.targetUserId || 0)]
+        );
+        return {
+            message: isModerator ? "Usuario promovido a moderador." : "Usuario removido de moderador."
+        };
+    }
+
+    const error = new Error("Acao administrativa invalida.");
+    error.statusCode = 400;
+    throw error;
+}
+
+function buildAdminActionRequestResponse(row) {
+    const payload = parseJsonSafely(row?.payload_json, {});
+    const actionType = String(row?.action_type || row?.action_key || "").trim();
+    const status = String(row?.status || "").trim();
+    return {
+        id: Number(row?.id || 0),
+        action_type: actionType,
+        status,
+        status_label: actionStatusLabel(status),
+        action_label: adminActionLabel(actionType, payload),
+        detail_lines: adminActionDetailLines(actionType, payload),
+        requester_user_id: Number(row?.requester_user_id || 0),
+        requester_name: sanitizeText(row?.requester_name || "", 120),
+        created_at: Number(row?.created_at || 0),
+        expires_at: Number(row?.expires_at || 0),
+        decided_at: Number(row?.decided_at || 0),
+        result_message: sanitizeText(row?.result_message || "", 400)
+    };
+}
+
+async function queueOrExecuteAdminAction(actorUser, actionType, rawPayload) {
+    const preparedPayload = await prepareAdminActionPayload(actionType, rawPayload, actorUser);
+    if (isModeratorOnlyUser(actorUser)) {
+        await createAdminActionRequest(Number(actorUser.id), actionType, preparedPayload);
+        return {
+            pendingApproval: true,
+            message: "Solicitacao enviada ao dono para aprovacao."
+        };
+    }
+    const result = await executePreparedAdminAction(actionType, preparedPayload);
+    emitAdminChange("admin_action_executed", {
+        actorUserId: Number(actorUser?.id) || 0,
+        actionType: sanitizeText(actionType, 80)
+    });
+    return {
+        pendingApproval: false,
+        ...result
+    };
+}
+
+async function getPendingOwnerActionRequests() {
+    await pruneExpiredAdminActionRequests();
+    const rows = await dbAll(
+        `SELECT ar.*,
+                COALESCE(u.nickname, u.username) AS requester_name
+         FROM admin_action_requests ar
+         JOIN users u ON u.id = ar.requester_user_id
+         WHERE ar.status = 'pending'
+           AND ar.expires_at >= ?
+         ORDER BY ar.created_at DESC, ar.id DESC`,
+        [nowInSeconds()]
+    );
+    return rows.map((row) => buildAdminActionRequestResponse(row));
+}
+
+async function getLatestResolvedAdminActionForRequester(userId) {
+    const row = await dbGet(
+        `SELECT ar.*,
+                COALESCE(u.nickname, u.username) AS requester_name
+         FROM admin_action_requests ar
+         JOIN users u ON u.id = ar.requester_user_id
+         WHERE ar.requester_user_id = ?
+           AND ar.status IN ('approved', 'denied')
+         ORDER BY COALESCE(ar.decided_at, ar.created_at) DESC, ar.id DESC
+         LIMIT 1`,
+        [userId]
+    );
+    return row ? buildAdminActionRequestResponse(row) : null;
+}
+
+async function getOwnerSuggestionsList() {
+    const rows = await dbAll(
+        `SELECT s.id, s.user_id, s.target_page, s.suggestion_text, s.created_at,
+                u.username AS author_username, u.nickname AS author_nickname
+         FROM suggestions s
+         JOIN users u ON u.id = s.user_id
+         ORDER BY s.created_at DESC, s.id DESC
+         LIMIT 200`
+    );
+    return rows.map((row) => ({
+        id: Number(row.id),
+        user_id: Number(row.user_id),
+        target_page: sanitizeText(row.target_page, 20),
+        suggestion_text: sanitizeText(row.suggestion_text, 1000),
+        created_at: Number(row.created_at || 0),
+        author_username: sanitizeText(row.author_username, 120),
+        author_nickname: sanitizeText(row.author_nickname, 120)
+    }));
 }
 
 function requireRoundCreator(round, req, res) {
@@ -1987,8 +2718,12 @@ function requireRoundCreator(round, req, res) {
         res.status(404).json({ message: "Rodada nao encontrada." });
         return false;
     }
-    if (!req.currentUser?.isOwner && round.creator_user_id !== req.session.userId) {
-        res.status(403).json({ message: "Apenas o criador da rodada pode fazer isso." });
+    const canManageDraftStage =
+        Boolean(req.currentUser?.isOwner)
+        || Boolean(req.currentUser?.isModerator)
+        || Number(round.creator_user_id) === Number(req.session.userId);
+    if (!canManageDraftStage) {
+        res.status(403).json({ message: "Apenas o criador, dono ou adm pode fazer isso." });
         return false;
     }
     return true;
@@ -2140,6 +2875,14 @@ app.use((req, res, next) => {
 
 app.get("/", (req, res) => {
     res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.get("/favicon.ico", (req, res) => {
+    const faviconPath = path.join(uploadRoot, "site-logo-min.png");
+    if (fs.existsSync(faviconPath)) {
+        return res.sendFile(faviconPath);
+    }
+    return res.status(204).end();
 });
 
 app.use(express.static(publicDir, { index: false }));
@@ -2402,7 +3145,7 @@ app.get("/api/user/profile", requireAuth, async (req, res) => {
         return res.json({
             profile: user,
             isOwner: Boolean(req.currentUser?.isOwner),
-            isModerator: false
+            isModerator: Boolean(req.currentUser?.isModerator)
         });
     } catch (error) {
         console.error(error);
@@ -2432,22 +3175,62 @@ app.get("/api/users/roles", requireAuth, async (req, res) => {
 
 app.get("/api/admin/notification-state", requireAuth, async (req, res) => {
     try {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        if (!req.currentUser?.isOwner && !req.currentUser?.isModerator) {
+            return res.status(403).json({ message: "Acesso permitido apenas para dono e moderadores." });
+        }
         if (req.currentUser?.isOwner) {
+            const pendingOwnerActionRequests = await getPendingOwnerActionRequests();
             return res.json({
-                pendingOwnerActionCount: 0,
-                pendingOwnerActionRequests: [],
+                pendingOwnerActionCount: pendingOwnerActionRequests.length,
+                pendingOwnerActionRequests,
                 latestResolvedAdminAction: null
             });
         }
+        const latestResolvedAdminAction = await getLatestResolvedAdminActionForRequester(req.currentUser.id);
         return res.json({
             pendingOwnerActionCount: 0,
             pendingOwnerActionRequests: [],
-            latestResolvedAdminAction: null
+            latestResolvedAdminAction
         });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao carregar estado de notificacoes." });
     }
+});
+
+app.get("/api/admin/events", requireAuth, requireAdminAccess, (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof res.flushHeaders === "function") {
+        res.flushHeaders();
+    }
+
+    const clientId = ++adminEventClientSeq;
+    const keepAliveTimer = setInterval(() => {
+        try {
+            res.write(": keepalive\n\n");
+        } catch {
+            clearInterval(keepAliveTimer);
+            adminEventClients.delete(clientId);
+        }
+    }, 25000);
+
+    adminEventClients.set(clientId, {
+        res,
+        userId: Number(req.currentUser?.id) || 0
+    });
+    res.write(": connected\n\n");
+    res.write(`event: admin-change\ndata: ${JSON.stringify({ reason: "connected", at: nowInSeconds() })}\n\n`);
+
+    req.on("close", () => {
+        clearInterval(keepAliveTimer);
+        adminEventClients.delete(clientId);
+    });
 });
 
 app.get("/api/users/:userId/profile-view", requireAuth, async (req, res) => {
@@ -2703,19 +3486,35 @@ app.post("/api/users/:userId/profile-comments", requireAuth, async (req, res) =>
             return res.status(400).json({ message: "Usuario invalido." });
         }
         const commentText = sanitizeText(req.body.commentText, 500);
+        const parentCommentId = Number(req.body.parentCommentId || 0);
         if (!commentText) {
             return res.status(400).json({ message: "Comentario vazio." });
         }
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
         if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
+
+        let parentId = null;
+        if (parentCommentId > 0) {
+            const parent = await dbGet(
+                `SELECT id, profile_user_id
+                 FROM profile_comments
+                 WHERE id = ? LIMIT 1`,
+                [parentCommentId]
+            );
+            if (!parent || Number(parent.profile_user_id) !== userId) {
+                return res.status(400).json({ message: "Comentario pai invalido para este perfil." });
+            }
+            parentId = Number(parent.id);
+        }
         const createdAt = nowInSeconds();
         const createdInsert = await dbRun(
-            `INSERT INTO profile_comments (profile_user_id, author_user_id, comment_text, created_at)
-             VALUES (?, ?, ?, ?)`,
-            [userId, req.currentUser.id, commentText, createdAt]
+            `INSERT INTO profile_comments
+                (profile_user_id, author_user_id, comment_text, created_at, updated_at, parent_comment_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [userId, req.currentUser.id, commentText, createdAt, createdAt, parentId]
         );
         const created = await dbGet(
-            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
+            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
                     u.id AS user_id, u.username, u.nickname, u.avatar_url,
                     0 AS likes_count,
                     0 AS liked_by_me
@@ -2736,19 +3535,35 @@ app.post("/api/user/profile-comments", requireAuth, async (req, res) => {
         const rawUserId = req.query.userId !== undefined ? Number(req.query.userId) : req.currentUser.id;
         const userId = Number.isInteger(rawUserId) && rawUserId > 0 ? rawUserId : req.currentUser.id;
         const commentText = sanitizeText(req.body.commentText, 500);
+        const parentCommentId = Number(req.body.parentCommentId || 0);
         if (!commentText) {
             return res.status(400).json({ message: "Comentario vazio." });
         }
         const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
         if (!exists) return res.status(404).json({ message: "Usuario nao encontrado." });
+
+        let parentId = null;
+        if (parentCommentId > 0) {
+            const parent = await dbGet(
+                `SELECT id, profile_user_id
+                 FROM profile_comments
+                 WHERE id = ? LIMIT 1`,
+                [parentCommentId]
+            );
+            if (!parent || Number(parent.profile_user_id) !== userId) {
+                return res.status(400).json({ message: "Comentario pai invalido para este perfil." });
+            }
+            parentId = Number(parent.id);
+        }
         const createdAt = nowInSeconds();
         const createdInsert = await dbRun(
-            `INSERT INTO profile_comments (profile_user_id, author_user_id, comment_text, created_at)
-             VALUES (?, ?, ?, ?)`,
-            [userId, req.currentUser.id, commentText, createdAt]
+            `INSERT INTO profile_comments
+                (profile_user_id, author_user_id, comment_text, created_at, updated_at, parent_comment_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [userId, req.currentUser.id, commentText, createdAt, createdAt, parentId]
         );
         const created = await dbGet(
-            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
+            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
                     u.id AS user_id, u.username, u.nickname, u.avatar_url,
                     0 AS likes_count,
                     0 AS liked_by_me
@@ -2761,6 +3576,100 @@ app.post("/api/user/profile-comments", requireAuth, async (req, res) => {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao comentar no perfil." });
+    }
+});
+
+app.put("/api/profile-comments/:commentId", requireAuth, async (req, res) => {
+    try {
+        const commentId = Number(req.params.commentId);
+        if (!Number.isInteger(commentId) || commentId <= 0) {
+            return res.status(400).json({ message: "Comentario invalido." });
+        }
+        const commentText = sanitizeText(req.body.commentText, 500);
+        if (!commentText) {
+            return res.status(400).json({ message: "Comentario vazio." });
+        }
+        const existing = await dbGet(
+            `SELECT id, profile_user_id, author_user_id
+             FROM profile_comments
+             WHERE id = ? LIMIT 1`,
+            [commentId]
+        );
+        if (!existing) {
+            return res.status(404).json({ message: "Comentario nao encontrado." });
+        }
+        if (Number(existing.author_user_id) !== Number(req.currentUser.id)) {
+            return res.status(403).json({ message: "Voce so pode editar seus proprios comentarios." });
+        }
+        const updatedAt = nowInSeconds();
+        await dbRun(
+            `UPDATE profile_comments
+             SET comment_text = ?, updated_at = ?
+             WHERE id = ?`,
+            [commentText, updatedAt, commentId]
+        );
+        const updated = await dbGet(
+            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
+                    u.id AS user_id, u.username, u.nickname, u.avatar_url,
+                    (SELECT COUNT(*) FROM profile_comment_likes l WHERE l.comment_id = c.id) AS likes_count,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM profile_comment_likes l2
+                            WHERE l2.comment_id = c.id
+                              AND l2.user_id = ?
+                        ) THEN 1
+                        ELSE 0
+                    END AS liked_by_me
+             FROM profile_comments c
+             JOIN users u ON u.id = c.author_user_id
+             WHERE c.id = ? LIMIT 1`,
+            [req.currentUser.id, commentId]
+        );
+        return res.json({ message: "Comentario atualizado.", comment: updated });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao atualizar comentario do perfil." });
+    }
+});
+
+app.delete("/api/profile-comments/:commentId", requireAuth, async (req, res) => {
+    try {
+        const commentId = Number(req.params.commentId);
+        if (!Number.isInteger(commentId) || commentId <= 0) {
+            return res.status(400).json({ message: "Comentario invalido." });
+        }
+        const existing = await dbGet(
+            `SELECT id, profile_user_id, author_user_id
+             FROM profile_comments
+             WHERE id = ? LIMIT 1`,
+            [commentId]
+        );
+        if (!existing) {
+            return res.status(404).json({ message: "Comentario nao encontrado." });
+        }
+        const isOwn = Number(existing.author_user_id) === Number(req.currentUser.id);
+        const isProfileOwner = Number(existing.profile_user_id) === Number(req.currentUser.id);
+        if (!isOwn && !isProfileOwner) {
+            return res.status(403).json({ message: "Sem permissao para excluir este comentario." });
+        }
+
+        await dbRun(
+            `UPDATE profile_comments
+             SET parent_comment_id = NULL
+             WHERE parent_comment_id = ?`,
+            [commentId]
+        );
+        await dbRun(
+            `DELETE FROM profile_comment_likes
+             WHERE comment_id = ?`,
+            [commentId]
+        );
+        await dbRun("DELETE FROM profile_comments WHERE id = ?", [commentId]);
+        return res.json({ message: "Comentario removido.", commentId });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao excluir comentario do perfil." });
     }
 });
 
@@ -2811,7 +3720,7 @@ app.post("/api/profile-comments/:commentId/like", requireAuth, async (req, res) 
         );
         const likesCount = Number(countRow?.total || 0);
         const comment = await dbGet(
-            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at,
+            `SELECT c.id, c.profile_user_id, c.comment_text, c.created_at, c.updated_at, c.parent_comment_id,
                     u.id AS user_id, u.username, u.nickname, u.avatar_url,
                     ? AS likes_count,
                     CASE
@@ -2958,14 +3867,25 @@ app.get("/api/users", requireAuth, async (req, res) => {
     }
 });
 
-app.get("/api/admin/dashboard", requireAuth, requireOwner, async (req, res) => {
+app.get("/api/admin/dashboard", requireAuth, requireAdminAccess, async (req, res) => {
     try {
-        const users = await dbAll(
-            `SELECT id, username, nickname, email, blocked, created_at
+        await pruneExpiredAdminActionRequests();
+        const usersRows = await dbAll(
+            `SELECT id, username, nickname, email, blocked, created_at, is_moderator
              FROM users
              ORDER BY id DESC
              LIMIT 200`
         );
+        const users = usersRows.map((user) => {
+            const flags = buildRoleFlags(user);
+            return {
+                ...user,
+                role: flags.role,
+                is_owner: flags.isOwner,
+                is_moderator: flags.isModerator,
+                is_self: Number(user.id) === Number(req.currentUser.id)
+            };
+        });
         const rounds = await dbAll(
             `SELECT r.id, r.status, r.created_at, r.started_at, r.rating_starts_at, r.closed_at,
                     r.creator_user_id, u.username AS creator_username, u.nickname AS creator_nickname
@@ -2981,84 +3901,298 @@ app.get("/api/admin/dashboard", requireAuth, requireOwner, async (req, res) => {
              FROM user_achievements
              GROUP BY user_id`
         );
-        return res.json({ users, rounds, userAchievements });
+
+        const payload = { users, rounds, userAchievements };
+        if (req.currentUser?.isOwner) {
+            payload.pendingOwnerActionRequests = await getPendingOwnerActionRequests();
+            payload.pendingOwnerActionCount = payload.pendingOwnerActionRequests.length;
+            payload.ownerSuggestions = await getOwnerSuggestionsList();
+        } else {
+            payload.pendingAdminAction = Boolean(await getPendingAdminActionForRequester(req.currentUser.id));
+            payload.latestResolvedAdminAction = await getLatestResolvedAdminActionForRequester(req.currentUser.id);
+        }
+        return res.json(payload);
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao carregar painel admin." });
     }
 });
 
-app.post("/api/admin/users/:userId/achievements", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/suggestions", requireAuth, async (req, res) => {
+    try {
+        const targetPage = sanitizeText(req.body?.targetPage || "", 20).toLowerCase();
+        const suggestionText = sanitizeText(req.body?.suggestionText || "", 1000);
+        const allowedTargets = new Set(["home", "profile", "round", "admin"]);
+        if (!allowedTargets.has(targetPage)) {
+            return res.status(400).json({ message: "Tela da sugestao invalida." });
+        }
+        if (targetPage === "admin" && !req.currentUser?.isOwner && !req.currentUser?.isModerator) {
+            return res.status(403).json({ message: "Voce nao pode enviar sugestao para essa tela." });
+        }
+        if (suggestionText.length < 5) {
+            return res.status(400).json({ message: "Digite ao menos 5 caracteres." });
+        }
+        await dbRun(
+            `INSERT INTO suggestions (user_id, target_page, suggestion_text, created_at)
+             VALUES (?, ?, ?, ?)`,
+            [req.currentUser.id, targetPage, suggestionText, nowInSeconds()]
+        );
+        emitAdminChange("suggestion_created", {
+            userId: Number(req.currentUser.id) || 0,
+            targetPage
+        });
+        return res.json({ message: "Sugestao enviada." });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao enviar sugestao." });
+    }
+});
+
+app.delete("/api/admin/suggestions/:suggestionId", requireAuth, requireOwner, async (req, res) => {
+    try {
+        const suggestionId = Number(req.params.suggestionId);
+        if (!Number.isInteger(suggestionId) || suggestionId <= 0) {
+            return res.status(400).json({ message: "Sugestao invalida." });
+        }
+        await dbRun("DELETE FROM suggestions WHERE id = ?", [suggestionId]);
+        emitAdminChange("suggestion_deleted", {
+            suggestionId
+        });
+        return res.json({ message: "Sugestao excluida." });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao excluir sugestao." });
+    }
+});
+
+app.post("/api/admin/users/:userId/achievements", requireAuth, requireAdminAccess, async (req, res) => {
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
             return res.status(400).json({ message: "Usuario invalido." });
         }
-        const exists = await dbGet("SELECT id FROM users WHERE id = ? LIMIT 1", [userId]);
-        if (!exists) {
-            return res.status(404).json({ message: "Usuario nao encontrado." });
-        }
-
         const action = String(req.body.action || "").trim().toLowerCase();
-        const achievementKey = String(req.body.achievementKey || "").trim();
-        const validAchievement = ACHIEVEMENT_DEFINITIONS.find((item) => item.key === achievementKey);
-        const now = nowInSeconds();
-
-        if (action === "grant") {
-            if (!validAchievement) {
-                return res.status(400).json({ message: "Conquista invalida." });
-            }
-            await dbRun(
-                `INSERT INTO user_achievements (user_id, achievement_key, unlocked_at, notified_at)
-                 VALUES (?, ?, ?, ?)
-                 ON CONFLICT(user_id, achievement_key) DO UPDATE SET unlocked_at = excluded.unlocked_at`,
-                [userId, achievementKey, now, now]
-            );
-            return res.json({ message: `Conquista ${achievementKey} concedida.` });
+        let actionType = "";
+        if (action === "grant") actionType = "achievement_grant";
+        if (action === "revoke") actionType = "achievement_revoke";
+        if (action === "reset_all") actionType = "achievement_reset_all";
+        if (!actionType) {
+            return res.status(400).json({ message: "Acao invalida." });
         }
-
-        if (action === "reset_all") {
-            await dbRun("DELETE FROM user_achievements WHERE user_id = ?", [userId]);
-            return res.json({ message: "Conquistas zeradas." });
-        }
-
-        return res.status(400).json({ message: "Acao invalida." });
+        const result = await queueOrExecuteAdminAction(req.currentUser, actionType, {
+            targetUserId: userId,
+            achievementKey: sanitizeText(req.body.achievementKey || "", 40)
+        });
+        return res.json(result);
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao atualizar conquistas do usuario." });
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao atualizar conquistas do usuario." });
     }
 });
 
-app.patch("/api/admin/users/:userId/block", requireAuth, requireOwner, async (req, res) => {
+app.patch("/api/admin/users/:userId/block", requireAuth, requireAdminAccess, async (req, res) => {
     try {
         const userId = Number(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: "Usuario invalido." });
+        }
         const blocked = Number(req.body.blocked) === 1 ? 1 : 0;
-        const user = await dbGet("SELECT id, email FROM users WHERE id = ? LIMIT 1", [userId]);
-        if (!user) return res.status(404).json({ message: "Usuario nao encontrado." });
-        if (isOwnerEmail(user.email)) {
-            return res.status(400).json({ message: "Nao e permitido bloquear a conta dona." });
-        }
-        await dbRun("UPDATE users SET blocked = ? WHERE id = ?", [blocked, userId]);
-        return res.json({ message: blocked ? "Conta bloqueada." : "Conta desbloqueada." });
+        const result = await queueOrExecuteAdminAction(req.currentUser, "user_block", {
+            targetUserId: userId,
+            blocked
+        });
+        return res.json(result);
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao alterar bloqueio da conta." });
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao alterar bloqueio da conta." });
     }
 });
 
-app.delete("/api/admin/users/:userId", requireAuth, requireOwner, async (req, res) => {
+app.delete("/api/admin/users/:userId", requireAuth, requireAdminAccess, async (req, res) => {
     try {
         const userId = Number(req.params.userId);
-        const user = await dbGet("SELECT id, email FROM users WHERE id = ? LIMIT 1", [userId]);
-        if (!user) return res.status(404).json({ message: "Usuario nao encontrado." });
-        if (isOwnerEmail(user.email)) {
-            return res.status(400).json({ message: "Nao e permitido excluir a conta dona." });
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: "Usuario invalido." });
         }
-        await deleteUserCascade(userId);
-        return res.json({ message: "Conta excluida." });
+        const result = await queueOrExecuteAdminAction(req.currentUser, "user_delete", {
+            targetUserId: userId
+        });
+        return res.json(result);
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao excluir conta." });
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao excluir conta." });
+    }
+});
+
+app.patch("/api/admin/users/:userId/role", requireAuth, requireAdminAccess, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: "Usuario invalido." });
+        }
+        const role = String(req.body.role || "").trim().toLowerCase() === "moderator" ? "moderator" : "user";
+        const result = await queueOrExecuteAdminAction(req.currentUser, "set_role", {
+            targetUserId: userId,
+            role
+        });
+        return res.json(result);
+    } catch (error) {
+        console.error(error);
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao alterar cargo." });
+    }
+});
+
+app.patch("/api/admin/users/:userId/moderator", requireAuth, requireAdminAccess, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: "Usuario invalido." });
+        }
+        const moderator = Number(req.body.moderator) === 1 || req.body.moderator === true;
+        const role = moderator ? "moderator" : "user";
+        const result = await queueOrExecuteAdminAction(req.currentUser, "set_role", {
+            targetUserId: userId,
+            role
+        });
+        return res.json(result);
+    } catch (error) {
+        console.error(error);
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao alterar cargo." });
+    }
+});
+
+app.post("/api/admin/users/:userId/moderator", requireAuth, requireAdminAccess, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: "Usuario invalido." });
+        }
+        const moderator = Number(req.body.moderator) === 1 || req.body.moderator === true;
+        const role = moderator ? "moderator" : "user";
+        const result = await queueOrExecuteAdminAction(req.currentUser, "set_role", {
+            targetUserId: userId,
+            role
+        });
+        return res.json(result);
+    } catch (error) {
+        console.error(error);
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao alterar cargo." });
+    }
+});
+
+app.post("/api/admin/rounds/:roundId/close", requireAuth, requireAdminAccess, async (req, res) => {
+    try {
+        const roundId = Number(req.params.roundId);
+        if (!Number.isInteger(roundId) || roundId <= 0) {
+            return res.status(400).json({ message: "Rodada invalida." });
+        }
+        const result = await queueOrExecuteAdminAction(req.currentUser, "round_close", { roundId });
+        return res.json(result);
+    } catch (error) {
+        console.error(error);
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao fechar rodada." });
+    }
+});
+
+app.delete("/api/admin/rounds/:roundId", requireAuth, requireAdminAccess, async (req, res) => {
+    try {
+        const roundId = Number(req.params.roundId);
+        if (!Number.isInteger(roundId) || roundId <= 0) {
+            return res.status(400).json({ message: "Rodada invalida." });
+        }
+        const result = await queueOrExecuteAdminAction(req.currentUser, "round_delete", { roundId });
+        return res.json(result);
+    } catch (error) {
+        console.error(error);
+        const status = Number(error?.statusCode) || 500;
+        return res.status(status).json({ message: error.message || "Erro ao excluir rodada." });
+    }
+});
+
+app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireOwner, async (req, res) => {
+    try {
+        const requestId = Number(req.params.requestId);
+        if (!Number.isInteger(requestId) || requestId <= 0) {
+            return res.status(400).json({ message: "Solicitacao invalida." });
+        }
+        const decision = String(req.body?.decision || "").trim().toLowerCase();
+        if (!["allow", "deny"].includes(decision)) {
+            return res.status(400).json({ message: "Decisao invalida." });
+        }
+        await pruneExpiredAdminActionRequests();
+        const row = await dbGet(
+            `SELECT *
+             FROM admin_action_requests
+             WHERE id = ? LIMIT 1`,
+            [requestId]
+        );
+        if (!row || row.status !== "pending") {
+            return res.status(404).json({ message: "Solicitacao nao encontrada ou ja processada." });
+        }
+
+        const now = nowInSeconds();
+        if (decision === "deny") {
+            await dbRun(
+                `UPDATE admin_action_requests
+                 SET status = 'denied',
+                     result_message = 'Solicitacao negada pelo dono.',
+                     decided_at = ?,
+                     decided_by_user_id = ?
+                 WHERE id = ?`,
+                [now, req.currentUser.id, requestId]
+            );
+            emitAdminChange("admin_action_request_decided", {
+                requestId,
+                decision: "deny"
+            });
+            return res.json({ message: "Solicitacao negada." });
+        }
+
+        const payload = parseJsonSafely(row.payload_json, {});
+        try {
+            const actionType = String(row.action_type || row.action_key || "");
+            const result = await executePreparedAdminAction(actionType, payload);
+            await dbRun(
+                `UPDATE admin_action_requests
+                 SET status = 'approved',
+                     result_message = ?,
+                     decided_at = ?,
+                     decided_by_user_id = ?
+                 WHERE id = ?`,
+                [sanitizeText(result?.message || "Solicitacao aprovada.", 400), now, req.currentUser.id, requestId]
+            );
+            emitAdminChange("admin_action_request_decided", {
+                requestId,
+                decision: "allow"
+            });
+            return res.json({ message: result?.message || "Solicitacao aprovada." });
+        } catch (executeError) {
+            await dbRun(
+                `UPDATE admin_action_requests
+                 SET status = 'denied',
+                     result_message = ?,
+                     decided_at = ?,
+                     decided_by_user_id = ?
+                 WHERE id = ?`,
+                [sanitizeText(executeError?.message || "Solicitacao negada por erro na execucao.", 400), now, req.currentUser.id, requestId]
+            );
+            emitAdminChange("admin_action_request_decided", {
+                requestId,
+                decision: "deny"
+            });
+            const status = Number(executeError?.statusCode) || 400;
+            return res.status(status).json({ message: executeError?.message || "Falha ao executar solicitacao." });
+        }
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Erro ao processar solicitacao." });
     }
 });
 
@@ -3295,7 +4429,12 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
         if (round.status === "closed") {
             const reopenAt = nowInSeconds();
             await dbRun(
-                "UPDATE rounds SET status = 'indication', rating_starts_at = ?, closed_at = NULL WHERE id = ?",
+                `UPDATE rounds
+                 SET status = 'indication',
+                     rating_starts_at = ?,
+                     closed_at = NULL,
+                     reopened_count = COALESCE(reopened_count, 0) + 1
+                 WHERE id = ?`,
                 [reopenAt, roundId]
             );
             const payload = await getRoundPayload(roundId, req.currentUser.id);
@@ -3309,6 +4448,7 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
             nowInSeconds(),
             roundId
         ]);
+        await syncAchievementsForRoundParticipants(roundId);
         const payload = await getRoundPayload(roundId, req.currentUser.id);
         return res.json({ message: "Rodada encerrada.", round: payload });
     } catch (error) {
@@ -3518,8 +4658,18 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 );
             }
 
+            let newlyUnlocked = [];
+            try {
+                const achievementPayload = await syncUserAchievements(req.session.userId, {
+                    markNewAsNotified: false
+                });
+                newlyUnlocked = achievementPayload?.newlyUnlocked || [];
+            } catch (achievementError) {
+                console.error("[achievement-sync-on-recommendation]", achievementError);
+            }
+
             const payload = await getRoundPayload(roundId, req.session.userId);
-            return res.json({ message: "Indicacao salva com sucesso.", round: payload });
+            return res.json({ message: "Indicacao salva com sucesso.", round: payload, newlyUnlocked });
         } catch (submitError) {
             console.error(submitError);
             return res.status(500).json({ message: "Erro ao salvar indicacao." });

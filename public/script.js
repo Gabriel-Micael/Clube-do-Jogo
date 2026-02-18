@@ -45,7 +45,9 @@ let achievementClaimInFlight = false;
 let achievementPollTimer = null;
 let achievementSound = null;
 const achievementAccentColorCache = new Map();
-let adminNotificationPollTimer = null;
+let adminNotificationEventSource = null;
+let adminNotificationUnloadBound = false;
+let adminNotificationSyncBound = false;
 let adminLatestResolvedDecisionId = 0;
 const appBootOverlayStartedAt = Date.now();
 let appBootOverlayDone = false;
@@ -226,7 +228,7 @@ function normalizeRole(value) {
 }
 
 function resolveUserId(userLike) {
-    const id = Number(userLike?.id || userLike?.user_id || 0);
+    const id = Number(userLike?.user_id || userLike?.id || 0);
     return Number.isInteger(id) && id > 0 ? id : 0;
 }
 
@@ -822,25 +824,71 @@ async function syncAdminNotificationState() {
     }
 }
 
-function startAdminNotificationPolling() {
-    if (adminNotificationPollTimer) {
-        clearInterval(adminNotificationPollTimer);
-        adminNotificationPollTimer = null;
+function stopAdminNotificationStream() {
+    if (adminNotificationEventSource) {
+        try {
+            adminNotificationEventSource.close();
+        } catch {
+            // sem acao
+        }
+        adminNotificationEventSource = null;
     }
+}
+
+function startAdminNotificationStream() {
+    stopAdminNotificationStream();
     if (!sessionIsModerator && !sessionIsOwner) {
         setAdminNotificationDotVisible(false);
         return;
     }
     syncAdminNotificationState();
-    adminNotificationPollTimer = setInterval(() => {
-        syncAdminNotificationState();
-    }, 5000);
+    try {
+        const stream = new EventSource("/api/admin/events");
+        stream.onopen = () => {
+            syncAdminNotificationState();
+        };
+        stream.addEventListener("admin-change", () => {
+            syncAdminNotificationState();
+            window.dispatchEvent(new CustomEvent("clubedojogo:admin-change"));
+        });
+        stream.onerror = () => {
+            // reconexao automatica do EventSource
+        };
+        adminNotificationEventSource = stream;
+        if (!adminNotificationUnloadBound) {
+            adminNotificationUnloadBound = true;
+            window.addEventListener("beforeunload", () => {
+                stopAdminNotificationStream();
+            }, { once: true });
+        }
+        if (!adminNotificationSyncBound) {
+            adminNotificationSyncBound = true;
+            const syncOnVisibility = () => {
+                if (document.visibilityState === "visible") {
+                    syncAdminNotificationState();
+                }
+            };
+            const syncOnFocus = () => {
+                syncAdminNotificationState();
+            };
+            window.addEventListener("focus", syncOnFocus);
+            document.addEventListener("visibilitychange", syncOnVisibility);
+            window.addEventListener("pageshow", syncOnFocus);
+            window.addEventListener("beforeunload", () => {
+                window.removeEventListener("focus", syncOnFocus);
+                document.removeEventListener("visibilitychange", syncOnVisibility);
+                window.removeEventListener("pageshow", syncOnFocus);
+            }, { once: true });
+        }
+    } catch {
+        // EventSource indisponivel no navegador.
+    }
 }
 
 async function setupOwnerNavLink() {
     await ensureSessionProfile();
     syncOwnerNavLinkVisibility();
-    startAdminNotificationPolling();
+    startAdminNotificationStream();
 }
 
 function achievementSelectOptionsHtml() {
@@ -1457,10 +1505,10 @@ async function handleAdminPage() {
                 return;
             }
             if (toggleBtn) {
-                ensureNotLocked();
                 const userId = Number(toggleBtn.dataset.adminToggleBlock);
                 feedbackUserId = userId;
                 clearAdminUserFeedback(userId);
+                ensureNotLocked();
                 const blocked = Number(toggleBtn.dataset.adminBlocked) === 1 ? 0 : 1;
                 const result = await withButtonLoading(toggleBtn, "Salvando...", () =>
                     sendJson(`/api/admin/users/${userId}/block`, "PATCH", { blocked })
@@ -1469,10 +1517,10 @@ async function handleAdminPage() {
                 return;
             }
             if (deleteUserBtn) {
-                ensureNotLocked();
                 const userId = Number(deleteUserBtn.dataset.adminDeleteUser);
                 feedbackUserId = userId;
                 clearAdminUserFeedback(userId);
+                ensureNotLocked();
                 const accountName = String(deleteUserBtn.dataset.adminDeleteUserName || "conta sem nome").trim();
                 const confirmed = window.confirm(`Confirmar a exclusao da conta (${accountName})?`);
                 if (!confirmed) return;
@@ -1501,10 +1549,10 @@ async function handleAdminPage() {
                 return;
             }
             if (grantAchievementBtn) {
-                ensureNotLocked();
                 const userId = Number(grantAchievementBtn.dataset.adminGrantAchievement);
                 feedbackUserId = userId;
                 clearAdminUserFeedback(userId);
+                ensureNotLocked();
                 const select = adminPanel.querySelector(`select[data-admin-achievement-key='${userId}']`);
                 const achievementKey = String(select?.value || "").trim();
                 if (!achievementKey) throw new Error("Selecione uma conquista.");
@@ -1518,10 +1566,10 @@ async function handleAdminPage() {
                 return;
             }
             if (revokeAchievementBtn) {
-                ensureNotLocked();
                 const userId = Number(revokeAchievementBtn.dataset.adminRevokeAchievement);
                 feedbackUserId = userId;
                 clearAdminUserFeedback(userId);
+                ensureNotLocked();
                 const select = adminPanel.querySelector(`select[data-admin-achievement-key='${userId}']`);
                 const achievementKey = String(select?.value || "").trim();
                 if (!achievementKey) throw new Error("Selecione uma conquista.");
@@ -1539,10 +1587,10 @@ async function handleAdminPage() {
                 return;
             }
             if (resetAchievementsBtn) {
-                ensureNotLocked();
                 const userId = Number(resetAchievementsBtn.dataset.adminResetAchievements);
                 feedbackUserId = userId;
                 clearAdminUserFeedback(userId);
+                ensureNotLocked();
                 const confirmed = window.confirm("Tem certeza que deseja zerar todas as conquistas desta conta?");
                 if (!confirmed) return;
                 const result = await withButtonLoading(resetAchievementsBtn, "Enviando...", () =>
@@ -1554,10 +1602,10 @@ async function handleAdminPage() {
                 return;
             }
             if (roleBtn) {
-                ensureNotLocked();
                 const userId = Number(roleBtn.dataset.adminSetRole);
                 feedbackUserId = userId;
                 clearAdminUserFeedback(userId);
+                ensureNotLocked();
                 const role = normalizeRole(roleBtn.dataset.adminTargetRole);
                 const result = await withButtonLoading(roleBtn, "Salvando...", () =>
                     sendJsonWithFallback([
@@ -1609,19 +1657,23 @@ async function handleAdminPage() {
         toggleAchievementMoreOptions(userId);
     });
 
-    if (sessionIsModerator && !sessionIsOwner) {
-        const refreshIntervalMs = 7000;
-        const timerId = window.setInterval(async () => {
+    let adminEventRefreshQueued = false;
+    const handleAdminChangeEvent = () => {
+        if (adminEventRefreshQueued) return;
+        adminEventRefreshQueued = true;
+        window.setTimeout(async () => {
+            adminEventRefreshQueued = false;
             try {
                 await refreshAdmin();
             } catch {
-                // polling silencioso
+                // atualizacao por evento falhou; proxima mudanca tenta novamente
             }
-        }, refreshIntervalMs);
-        window.addEventListener("beforeunload", () => {
-            window.clearInterval(timerId);
-        }, { once: true });
-    }
+        }, 80);
+    };
+    window.addEventListener("clubedojogo:admin-change", handleAdminChangeEvent);
+    window.addEventListener("beforeunload", () => {
+        window.removeEventListener("clubedojogo:admin-change", handleAdminChangeEvent);
+    }, { once: true });
 }
 
 async function submitRecommendationCommentForm(form, scope, feedbackTarget) {

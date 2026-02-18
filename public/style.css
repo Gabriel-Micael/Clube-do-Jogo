@@ -603,6 +603,12 @@ body[data-page="admin"] .admin-decision-modal-card {
     width: min(560px, 95vw);
 }
 
+body[data-page="admin"] .admin-decision-modal-card .inline-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: center;
+}
+
 body[data-page="admin"] .admin-decision-details ul {
     margin: 0.2rem 0 0.6rem 1rem;
     padding: 0;

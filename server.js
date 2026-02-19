@@ -1146,6 +1146,8 @@ async function initDb() {
     await ensureColumn("users", "psn_trophies_platinum INTEGER NOT NULL DEFAULT 0");
     await ensureColumn("users", "psn_linked_at INTEGER");
     await ensureColumn("users", "psn_updated_at INTEGER");
+    await ensureColumn("users", "psn_refresh_token TEXT");
+    await ensureColumn("users", "psn_refresh_expires_at INTEGER");
 
     await dbRun(`
         CREATE TABLE IF NOT EXISTS pending_registrations (
@@ -1498,7 +1500,7 @@ function renderEmailShell({ title, intro, bodyHtml, ctaLabel, ctaUrl, outro }) {
           <tr>
             <td style="padding:18px 20px;background:linear-gradient(120deg,#173069,#0d1a3a);border-bottom:1px solid #2b4f8a;">
               <div style="font-size:20px;font-weight:800;letter-spacing:0.4px;color:#fff;">${BRAND_NAME}</div>
-              <div style="font-size:12px;color:#b5c8f2;margin-top:2px;">Comunicacao oficial</div>
+              <div style="font-size:12px;color:#b5c8f2;margin-top:2px;">Comunicação oficial</div>
             </td>
           </tr>
           <tr>
@@ -1507,7 +1509,7 @@ function renderEmailShell({ title, intro, bodyHtml, ctaLabel, ctaUrl, outro }) {
               <p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#c5d5f7;">${intro}</p>
               <div style="margin:0 0 8px;font-size:15px;line-height:1.55;color:#eaf1ff;">${bodyHtml}</div>
               ${cta}
-              <p style="margin:16px 0 0;font-size:13px;line-height:1.5;color:#9bb5e6;">${outro || "Se voce nao reconhece esta acao, ignore este email."}</p>
+              <p style="margin:16px 0 0;font-size:13px;line-height:1.5;color:#9bb5e6;">${outro || "Se você não reconhece esta ação, ignore este email."}</p>
             </td>
           </tr>
           <tr>
@@ -1547,16 +1549,16 @@ async function sendEmail({ to, subject, text, html }) {
 
 async function sendVerificationEmail(email, code) {
     const html = renderEmailShell({
-        title: "Confirmacao de email",
-        intro: "Recebemos uma solicita??o para criar sua conta no Clube do Jogo.",
-        bodyHtml: `<p style="margin:0;">Seu codigo de confirmacao:</p>
+        title: "Confirmação de email",
+        intro: "Recebemos uma solicitação para criar sua conta no Clube do Jogo.",
+        bodyHtml: `<p style="margin:0;">Seu código de confirmação:</p>
                    <p style="margin:10px 0 6px;font-size:28px;font-weight:800;letter-spacing:3px;color:#6fd7ff;">${code}</p>
-                   <p style="margin:0;color:#b9ccf4;">Este codigo expira em 10 minutos.</p>`
+                   <p style="margin:0;color:#b9ccf4;">Este código expira em 10 minutos.</p>`
     });
     await sendEmail({
         to: email,
         subject: `${BRAND_NAME} | Código de confirmação`,
-        text: `${BRAND_NAME}\n\nSeu codigo de confirmacao e: ${code}\nValidade: 10 minutos.`,
+        text: `${BRAND_NAME}\n\nSeu código de confirmação é: ${code}\nValidade: 10 minutos.`,
         html
     });
 }
@@ -1565,7 +1567,7 @@ async function sendPasswordResetEmail(email, token, linkBaseUrl) {
     const safeBase = parseOrigin(linkBaseUrl) || parseOrigin(baseUrl) || `http://localhost:${port}`;
     const link = `${safeBase}/reset-password.html?token=${encodeURIComponent(token)}`;
     const html = renderEmailShell({
-        title: "Alteracao de senha",
+        title: "Alteração de senha",
         intro: "Recebemos um pedido para alterar a senha da sua conta.",
         bodyHtml: `<p style="margin:0;">Use o botao abaixo para continuar.</p>
                    <p style="margin:10px 0;color:#b9ccf4;">Se preferir, copie e cole o link no navegador:</p>
@@ -1598,7 +1600,7 @@ async function createPasswordResetForUser(userId, email, linkBaseUrl) {
 
 function requireAuth(req, res, next) {
     if (!req.session.userId) {
-        return res.status(401).json({ message: "Nao autenticado." });
+        return res.status(401).json({ message: "Não autenticado." });
     }
     dbGet(
         "SELECT id, username, email, blocked, is_moderator FROM users WHERE id = ? LIMIT 1",
@@ -1741,7 +1743,7 @@ async function getPendingAdminActionForRequester(userId) {
 async function createAdminActionRequest(requesterUserId, actionType, payload) {
     const pending = await getPendingAdminActionForRequester(requesterUserId);
     if (pending) {
-        const error = new Error("H? uma solicita??o pendente. Aguarde o dono permitir ou negar.");
+        const error = new Error("Há uma solicitação pendente. Aguarde o dono permitir ou negar.");
         error.statusCode = 409;
         throw error;
     }
@@ -2022,6 +2024,7 @@ async function getRoundRecommendations(roundId, currentUserId = 0) {
 async function getUserProfileActivity(userId) {
     const given = await dbAll(
         `SELECT rec.id, rec.round_id, rec.game_name, rec.game_cover_url, rec.game_description, rec.reason,
+                rec.steam_app_id,
                 rec.created_at, rec.updated_at,
                 rr.rating_letter, rr.interest_score, rr.updated_at AS rating_updated_at,
                 recv.id AS receiver_id, recv.username AS receiver_username, recv.nickname AS receiver_nickname,
@@ -2037,6 +2040,7 @@ async function getUserProfileActivity(userId) {
     );
     const received = await dbAll(
         `SELECT rec.id, rec.round_id, rec.game_name, rec.game_cover_url, rec.game_description, rec.reason,
+                rec.steam_app_id,
                 rec.created_at, rec.updated_at,
                 rr.rating_letter, rr.interest_score, rr.updated_at AS rating_updated_at,
                 giver.id AS giver_id, giver.username AS giver_username, giver.nickname AS giver_nickname
@@ -2083,7 +2087,7 @@ async function countCompletedRoundsForUser(userId, gatedAfter = 0) {
 async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter = 0) {
     const gate = Number(gatedAfter || 0);
     const missing = await dbAll(
-        `SELECT rec.id, rec.steam_app_id
+        `SELECT rec.id, rec.steam_app_id, rec.game_name
          FROM recommendations rec
          JOIN rounds r ON r.id = rec.round_id
          WHERE rec.giver_user_id = ?
@@ -2097,7 +2101,6 @@ async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter =
                 )
            )
            AND COALESCE(rec.updated_at, rec.created_at, 0) > ?
-           AND COALESCE(rec.steam_app_id, '') <> ''
            AND (
                 rec.game_release_year IS NULL
                 OR rec.game_release_year <= 0
@@ -2110,8 +2113,15 @@ async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter =
     );
     for (const row of missing) {
         const appId = sanitizeText(row?.steam_app_id || "", 20);
-        if (!appId) continue;
-        const details = await getSteamAppDetails(appId);
+        const gameName = sanitizeText(row?.game_name || "", 120);
+        let details = null;
+        if (appId) {
+            details = await getSteamAppDetails(appId);
+        }
+        if (!details && gameName) {
+            // Para jogos sem Steam App ID, usa RAWG (incluindo tags) para ajudar no cálculo das conquistas.
+            details = await getRawgGameDetailsByName(gameName);
+        }
         if (!details) continue;
         const genresText = sanitizeText((details.genres || []).join(", "), 2000);
         const releaseYear = Number(details.releaseYear || 0);
@@ -2623,7 +2633,7 @@ async function generateAssignmentsWithRotation(participantIds, blockedPairs = []
 
     if (!assignmentMap) {
         throw new Error(
-            "Nao foi possivel montar um sorteio valido com as restricoes atuais. Tente ajustar participantes/pares."
+            "Não foi possível montar um sorteio válido com as restrições atuais. Tente ajustar participantes/pares."
         );
     }
 
@@ -2785,7 +2795,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
         }
         const targetFlags = buildRoleFlags(targetUser);
         if (targetFlags.isOwner && ["user_block", "user_delete", "set_role"].includes(actionType)) {
-            const error = new Error("Nao e permitido modificar a conta dona.");
+            const error = new Error("Não é permitido modificar a conta dona.");
             error.statusCode = 400;
             throw error;
         }
@@ -2832,7 +2842,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
             const achievementKey = sanitizeText(payload?.achievementKey || "", 40);
             const validAchievement = ACHIEVEMENT_DEFINITIONS.find((item) => item.key === achievementKey);
             if (!validAchievement) {
-                const error = new Error("Conquista inv?lida.");
+                const error = new Error("Conquista inválida.");
                 error.statusCode = 400;
                 throw error;
             }
@@ -2858,7 +2868,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
     if (actionType === "round_close" || actionType === "round_delete") {
         const roundId = Number(payload?.roundId || 0);
         if (!Number.isInteger(roundId) || roundId <= 0) {
-            const error = new Error("Rodada inv?lida.");
+            const error = new Error("Rodada inválida.");
             error.statusCode = 400;
             throw error;
         }
@@ -2895,7 +2905,7 @@ async function prepareAdminActionPayload(actionType, rawPayload, actorUser) {
         };
     }
 
-    const error = new Error("A??o administrativa inv?lida.");
+    const error = new Error("Ação administrativa inválida.");
     error.statusCode = 400;
     throw error;
 }
@@ -3050,7 +3060,7 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
         };
     }
 
-    const error = new Error("A??o administrativa inv?lida.");
+    const error = new Error("Ação administrativa inválida.");
     error.statusCode = 400;
     throw error;
 }
@@ -3193,7 +3203,7 @@ app.use(
                 styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
                 fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
                 imgSrc: ["'self'", "data:", "blob:", "https:"],
-                connectSrc: ["'self'"],
+                connectSrc: ["'self'", "https://ca.account.sony.com"],
                 objectSrc: ["'none'"],
                 frameAncestors: ["'none'"],
                 baseUri: ["'self'"],
@@ -3246,7 +3256,7 @@ app.use((req, res, next) => {
     if (!origin && referer) {
         const refererOrigin = parseOrigin(referer);
         if (!refererOrigin) {
-            return res.status(403).json({ message: "Referer inv?lido." });
+            return res.status(403).json({ message: "Referer inválido." });
         }
         if (!isAllowedOrigin(refererOrigin, req)) {
             return res.status(403).json({ message: "Referer da requisição não permitido." });

@@ -143,10 +143,10 @@ app.post("/api/auth/register", async (req, res) => {
         const phone = sanitizeText(req.body.phone, 30);
 
         if (!username || username.length < 3) {
-            return res.status(400).json({ message: "Nome de usu?rio inv?lido." });
+            return res.status(400).json({ message: "Nome de usuário inválido." });
         }
         if (!isValidEmail(email)) {
-            return res.status(400).json({ message: "Email inv?lido." });
+            return res.status(400).json({ message: "Email inválido." });
         }
         if (password.length < 8) {
             return res.status(400).json({ message: "A senha precisa ter ao menos 8 caracteres." });
@@ -157,7 +157,7 @@ app.post("/api/auth/register", async (req, res) => {
             [email, username]
         );
         if (existingUser) {
-            return res.status(409).json({ message: "Email ou nome de usu?rio j? cadastrados." });
+            return res.status(409).json({ message: "Email ou nome de usuário já cadastrados." });
         }
 
         await dbRun("DELETE FROM pending_registrations WHERE email = ?", [email]);
@@ -207,7 +207,7 @@ app.post("/api/auth/verify-email", async (req, res) => {
 
         const validCode = await bcrypt.compare(code, pending.code_hash);
         if (!validCode) {
-            return res.status(400).json({ message: "C?digo inv?lido." });
+            return res.status(400).json({ message: "Código inválido." });
         }
 
         const finalNickname = normalizeNickname(pending.nickname, pending.username);
@@ -234,7 +234,7 @@ app.post("/api/auth/verify-email", async (req, res) => {
             return res.status(409).json({ message: error.message });
         }
         if (String(error.message || "").includes("UNIQUE")) {
-            return res.status(409).json({ message: "Conta j? confirmada para este email/usu?rio." });
+            return res.status(409).json({ message: "Conta já confirmada para este email/usuário." });
         }
         console.error(error);
         return res.status(500).json({ message: "Erro ao confirmar email." });
@@ -252,7 +252,7 @@ app.post("/api/auth/login", async (req, res) => {
         );
 
         if (!user) {
-            return res.status(401).json({ message: "Email ou senha inv?lidos." });
+            return res.status(401).json({ message: "Email ou senha inválidos." });
         }
         if (!user.email_verified) {
             return res.status(403).json({ message: "Email ainda não confirmado." });
@@ -263,7 +263,7 @@ app.post("/api/auth/login", async (req, res) => {
 
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
-            return res.status(401).json({ message: "Email ou senha inv?lidos." });
+            return res.status(401).json({ message: "Email ou senha inválidos." });
         }
 
         req.session.userId = user.id;

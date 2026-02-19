@@ -37,6 +37,103 @@ const {
     validatePairRestrictions,
 } = deps;
 let roundEventClientSeq = Number(initialRoundEventClientSeq) || 0;
+const epicCatalogCache = {
+    loadedAt: 0,
+    slugs: []
+};
+const EPIC_CATALOG_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const EPIC_CATALOG_SOURCE_URL = "https://erri120.github.io/egs-db/";
+const EPIC_STORE_BASE_URL = "https://store.epicgames.com/en-US";
+
+function normalizeEpicLookupToken(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/-{2,}/g, "-")
+        .replace(/^-+|-+$/g, "");
+}
+
+function buildEpicLookupCandidates(gameName) {
+    const base = normalizeEpicLookupToken(gameName);
+    if (!base) return [];
+    const candidates = new Set([base]);
+    const trimmed = base
+        .replace(
+            /\b(complete|ultimate|definitive|deluxe|premium|gold|goty|edition|remastered|remake|directors-cut|director-s-cut|enhanced)\b/g,
+            ""
+        )
+        .replace(/-{2,}/g, "-")
+        .replace(/^-+|-+$/g, "");
+    if (trimmed) {
+        candidates.add(trimmed);
+    }
+    const words = trimmed.split("-").filter(Boolean);
+    if (words.length >= 2) {
+        candidates.add(words.slice(0, 2).join("-"));
+    }
+    if (words.length >= 3) {
+        candidates.add(words.slice(0, 3).join("-"));
+    }
+    return [...candidates].filter(Boolean);
+}
+
+async function loadEpicCatalogSlugs() {
+    const now = Date.now();
+    if (epicCatalogCache.slugs.length && (now - epicCatalogCache.loadedAt) < EPIC_CATALOG_CACHE_TTL_MS) {
+        return epicCatalogCache.slugs;
+    }
+    const response = await fetch(EPIC_CATALOG_SOURCE_URL, {
+        method: "GET",
+        headers: {
+            "User-Agent": "ClubeDoJogo/1.0 (+https://clubedojogo.app.br)",
+            "Accept": "text/html,application/xhtml+xml"
+        }
+    });
+    if (!response.ok) {
+        throw new Error(`Epic catalog unavailable (${response.status})`);
+    }
+    const html = await response.text();
+    const slugSet = new Set();
+    const regex = /https:\/\/store\.epicgames\.com\/(?:[a-z]{2}-[A-Z]{2})\/p\/([a-z0-9-]+)/gi;
+    let match = regex.exec(html);
+    while (match) {
+        const slug = String(match[1] || "").trim().toLowerCase();
+        if (slug) slugSet.add(slug);
+        match = regex.exec(html);
+    }
+    const slugs = [...slugSet];
+    epicCatalogCache.loadedAt = now;
+    epicCatalogCache.slugs = slugs;
+    return slugs;
+}
+
+async function resolveEpicUrlByGameName(gameName) {
+    const candidates = buildEpicLookupCandidates(gameName);
+    if (!candidates.length) return "";
+    let slugs = [];
+    try {
+        slugs = await loadEpicCatalogSlugs();
+    } catch {
+        return "";
+    }
+    if (!Array.isArray(slugs) || !slugs.length) return "";
+    const slugSet = new Set(slugs);
+
+    for (const candidate of candidates) {
+        if (slugSet.has(candidate)) {
+            return `${EPIC_STORE_BASE_URL}/p/${candidate}`;
+        }
+    }
+    return "";
+}
+
+function buildEpicSearchUrl(gameName) {
+    const query = sanitizeText(gameName || "", 140);
+    return `${EPIC_STORE_BASE_URL}/browse?q=${encodeURIComponent(query || "jogo")}&sortBy=relevancy&sortDir=DESC&count=40`;
+}
 
 app.get("/api/rounds/active", requireAuth, async (req, res) => {
     try {
@@ -177,7 +274,7 @@ app.delete("/api/rounds/:roundId/participants/:userId", requireAuth, async (req,
             return res.status(400).json({ message: "So e possivel editar participantes na fase de sorteio." });
         }
         if (round.creator_user_id === userId) {
-            return res.status(400).json({ message: "O criador da rodada nao pode ser removido." });
+            return res.status(400).json({ message: "O criador da rodada não pode ser removido." });
         }
 
         await dbRun("DELETE FROM round_participants WHERE round_id = ? AND user_id = ?", [roundId, userId]);
@@ -252,7 +349,7 @@ app.post("/api/rounds/:roundId/draw", requireAuth, async (req, res) => {
             status: "reveal",
             actorUserId: Number(req.session.userId) || 0
         });
-        return res.json({ message: "Sorteio realizado. Agora revele os pares antes das indicacoes.", round: payload });
+        return res.json({ message: "Sorteio realizado. Agora revele os pares antes das indicações.", round: payload });
     } catch (error) {
         console.error(error);
         const status = Number(error?.statusCode) || 500;
@@ -418,7 +515,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
             const allowed = new Set(["draft", "reveal", "indication", "reopened", "closed"]);
             const status = String(req.body.status);
             if (!allowed.has(status)) {
-                return res.status(400).json({ message: "Status de rodada inv?lido." });
+                return res.status(400).json({ message: "Status de rodada inválido." });
             }
             updates.push("status = ?");
             params.push(status);
@@ -427,7 +524,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
         if (req.body.ratingStartsAt !== undefined) {
             const ts = Number(req.body.ratingStartsAt);
             if (!Number.isInteger(ts) || ts <= 0) {
-                return res.status(400).json({ message: "Data de notas inv?lida." });
+                return res.status(400).json({ message: "Data de notas inválida." });
             }
             updates.push("rating_starts_at = ?");
             params.push(ts);
@@ -956,7 +1053,7 @@ app.post("/api/recommendation-comments/:commentId/like", requireAuth, async (req
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Coment?rio inv?lido." });
+            return res.status(400).json({ message: "Comentário inválido." });
         }
         const commentExists = await dbGet(
             `SELECT id, recommendation_id
@@ -1039,7 +1136,7 @@ app.get("/api/recommendation-comments/:commentId/likes", requireAuth, async (req
     try {
         const commentId = Number(req.params.commentId);
         if (!Number.isInteger(commentId) || commentId <= 0) {
-            return res.status(400).json({ message: "Coment?rio inv?lido." });
+            return res.status(400).json({ message: "Comentário inválido." });
         }
         const commentExists = await dbGet(
             `SELECT id
@@ -1145,6 +1242,25 @@ app.get("/api/steam/app/:appId", requireAuth, async (req, res) => {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Erro ao carregar detalhes do jogo." });
+    }
+});
+
+app.get("/api/epic/resolve-redirect", requireAuth, async (req, res) => {
+    try {
+        const term = sanitizeText(req.query.term || "", 140);
+        const googleFallback = `https://www.google.com/search?q=${encodeURIComponent(term || "jogo")}`;
+        if (!term) {
+            return res.redirect(302, googleFallback);
+        }
+        const epicUrl = await resolveEpicUrlByGameName(term);
+        if (epicUrl) {
+            return res.redirect(302, epicUrl);
+        }
+        return res.redirect(302, buildEpicSearchUrl(term));
+    } catch (error) {
+        console.error("[epic-resolve-redirect]", error);
+        const term = sanitizeText(req.query.term || "", 140);
+        return res.redirect(302, buildEpicSearchUrl(term));
     }
 });
 };

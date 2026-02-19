@@ -107,7 +107,7 @@ app.post("/api/suggestions", requireAuth, async (req, res) => {
         const suggestionText = sanitizeText(req.body?.suggestionText || "", 1000);
         const allowedTargets = new Set(["home", "profile", "round", "admin"]);
         if (!allowedTargets.has(targetPage)) {
-            return res.status(400).json({ message: "Tela da sugest?o inv?lida." });
+            return res.status(400).json({ message: "Tela da sugestão inválida." });
         }
         if (targetPage === "admin" && !req.currentUser?.isOwner && !req.currentUser?.isModerator) {
             return res.status(403).json({ message: "Você não pode enviar sugestão para essa tela." });
@@ -124,10 +124,10 @@ app.post("/api/suggestions", requireAuth, async (req, res) => {
             userId: Number(req.currentUser.id) || 0,
             targetPage
         });
-        return res.json({ message: "Sugestao enviada." });
+        return res.json({ message: "Sugestão enviada." });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao enviar sugest?o." });
+        return res.status(500).json({ message: "Erro ao enviar sugestão." });
     }
 });
 
@@ -135,16 +135,16 @@ app.delete("/api/admin/suggestions/:suggestionId", requireAuth, requireOwner, as
     try {
         const suggestionId = Number(req.params.suggestionId);
         if (!Number.isInteger(suggestionId) || suggestionId <= 0) {
-            return res.status(400).json({ message: "Sugest?o inv?lida." });
+            return res.status(400).json({ message: "Sugestão inválida." });
         }
         await dbRun("DELETE FROM suggestions WHERE id = ?", [suggestionId]);
         emitAdminChange("suggestion_deleted", {
             suggestionId
         });
-        return res.json({ message: "Sugestao excluida." });
+        return res.json({ message: "Sugestão excluída." });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao excluir sugest?o." });
+        return res.status(500).json({ message: "Erro ao excluir sugestão." });
     }
 });
 
@@ -160,7 +160,7 @@ app.post("/api/admin/users/:userId/achievements", requireAuth, requireAdminAcces
         if (action === "revoke") actionType = "achievement_revoke";
         if (action === "reset_all") actionType = "achievement_reset_all";
         if (!actionType) {
-            return res.status(400).json({ message: "A??o inv?lida." });
+            return res.status(400).json({ message: "Ação inválida." });
         }
         const result = await queueOrExecuteAdminAction(req.currentUser, actionType, {
             targetUserId: userId,
@@ -170,7 +170,7 @@ app.post("/api/admin/users/:userId/achievements", requireAuth, requireAdminAcces
     } catch (error) {
         console.error(error);
         const status = Number(error?.statusCode) || 500;
-        return res.status(status).json({ message: error.message || "Erro ao atualizar conquistas do usu?rio." });
+        return res.status(status).json({ message: error.message || "Erro ao atualizar conquistas do usuário." });
     }
 });
 
@@ -273,7 +273,7 @@ app.post("/api/admin/rounds/:roundId/close", requireAuth, requireAdminAccess, as
     try {
         const roundId = Number(req.params.roundId);
         if (!Number.isInteger(roundId) || roundId <= 0) {
-            return res.status(400).json({ message: "Rodada inv?lida." });
+            return res.status(400).json({ message: "Rodada inválida." });
         }
         const result = await queueOrExecuteAdminAction(req.currentUser, "round_close", { roundId });
         return res.json(result);
@@ -288,7 +288,7 @@ app.delete("/api/admin/rounds/:roundId", requireAuth, requireAdminAccess, async 
     try {
         const roundId = Number(req.params.roundId);
         if (!Number.isInteger(roundId) || roundId <= 0) {
-            return res.status(400).json({ message: "Rodada inv?lida." });
+            return res.status(400).json({ message: "Rodada inválida." });
         }
         const result = await queueOrExecuteAdminAction(req.currentUser, "round_delete", { roundId });
         return res.json(result);
@@ -303,11 +303,11 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
     try {
         const requestId = Number(req.params.requestId);
         if (!Number.isInteger(requestId) || requestId <= 0) {
-            return res.status(400).json({ message: "Solicita??o inv?lida." });
+            return res.status(400).json({ message: "Solicitação inválida." });
         }
         const decision = String(req.body?.decision || "").trim().toLowerCase();
         if (!["allow", "deny"].includes(decision)) {
-            return res.status(400).json({ message: "Decis?o inv?lida." });
+            return res.status(400).json({ message: "Decisão inválida." });
         }
         await pruneExpiredAdminActionRequests();
         const row = await dbGet(
@@ -371,11 +371,11 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
                 decision: "deny"
             });
             const status = Number(executeError?.statusCode) || 400;
-            return res.status(status).json({ message: executeError?.message || "Falha ao executar solicita??o." });
+            return res.status(status).json({ message: executeError?.message || "Falha ao executar solicitação." });
         }
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao processar solicita??o." });
+        return res.status(500).json({ message: "Erro ao processar solicitação." });
     }
 });
 };

@@ -1,4 +1,4 @@
-const page = document.body.dataset.page;
+﻿const page = document.body.dataset.page;
 const baseAvatar =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' rx='16' fill='%23101933'/%3E%3Ccircle cx='60' cy='46' r='22' fill='%2339d2ff'/%3E%3Crect x='25' y='77' width='70' height='28' rx='14' fill='%234f79ff'/%3E%3C/svg%3E";
 const lockedAchievementImageDataUri =
@@ -107,13 +107,13 @@ function ensureRawgAttributionLink() {
 function normalizeTextArtifacts(value) {
     let text = String(value ?? "");
     const hasMojibake = /[\u00C3\u00C2\u00E2]/.test(text);
-    const hasBrokenQuestion = /[A-Za-zÀ-ÿ]\?[A-Za-zÀ-ÿ]/.test(text);
+    const hasBrokenQuestion = /[A-Za-z\u00C0-\u00FF]\?[A-Za-z\u00C0-\u00FF]/.test(text);
     if (!text || (!hasMojibake && !hasBrokenQuestion)) return text;
     try {
         const repaired = decodeURIComponent(escape(text));
         if (repaired) text = repaired;
     } catch {
-        // Mantem texto original quando nao for possivel reparar.
+        // Mantém texto original quando não for possível reparar.
     }
     text = text
         .replace(/\bNao\b/g, "Não")
@@ -429,6 +429,60 @@ function profileUrlByUserId(userId) {
     const numericUserId = Number(userId);
     if (!Number.isInteger(numericUserId) || numericUserId <= 0) return "/profile.html";
     return `/profile.html?userId=${numericUserId}`;
+}
+
+function recommendationGameLinkTarget(recommendationLike) {
+    const steamAppIdRaw = String(
+        recommendationLike?.steam_app_id
+        || recommendationLike?.steamAppId
+        || ""
+    ).trim();
+    const gameName = String(
+        recommendationLike?.game_name
+        || recommendationLike?.gameName
+        || ""
+    ).trim();
+    if (/^\d+$/.test(steamAppIdRaw)) {
+        return {
+            source: "steam",
+            url: `https://store.steampowered.com/app/${steamAppIdRaw}/`
+        };
+    }
+    const query = gameName || "jogo";
+    return {
+        source: "epic_or_google",
+        url: `/api/epic/resolve-redirect?term=${encodeURIComponent(query)}`
+    };
+}
+
+function recommendationCoverWrapTemplate(recommendationLike, options = {}) {
+    const showGradeOverlay = options.showGradeOverlay === true;
+    const grade = String(options.grade || "").trim();
+    const cover = String(
+        recommendationLike?.game_cover_url
+        || recommendationLike?.gameCoverUrl
+        || baseAvatar
+    ).trim() || baseAvatar;
+    const gameName = String(
+        recommendationLike?.game_name
+        || recommendationLike?.gameName
+        || "Jogo"
+    ).trim() || "Jogo";
+    const target = recommendationGameLinkTarget(recommendationLike);
+    const destinationLabel = target.source === "steam" ? "Steam" : "Epic Games (ou Google)";
+
+    return `
+        <a
+            class="recommendation-cover-wrap recommendation-cover-link"
+            href="${escapeHtml(target.url)}"
+            aria-label="${escapeHtml(`Abrir ${gameName} na ${destinationLabel}`)}"
+            title="${escapeHtml(`Abrir ${gameName} na ${destinationLabel}`)}"
+        >
+            <img class="recommendation-cover-bg" src="${escapeHtml(cover)}" alt="">
+            <img class="recommendation-cover" src="${escapeHtml(cover)}" alt="Capa ${escapeHtml(gameName)}">
+            ${showGradeOverlay && grade ? `<span class="grade-overlay">${escapeHtml(grade)}</span>` : ""}
+        </a>
+    `;
 }
 
 function normalizeAchievementKey(value) {
@@ -943,7 +997,7 @@ function startAdminNotificationStream() {
             window.dispatchEvent(new CustomEvent("clubedojogo:admin-change"));
         });
         stream.onerror = () => {
-            // reconexao automatica do EventSource
+            // reconexão automática do EventSource
         };
         adminNotificationEventSource = stream;
         if (!adminNotificationUnloadBound) {
@@ -1046,7 +1100,7 @@ function startRoundRealtimeStream() {
             });
         });
         stream.onerror = () => {
-            // reconexao automatica do EventSource
+            // reconexão automática do EventSource
         };
         roundRealtimeEventSource = stream;
         if (!roundRealtimeUnloadBound) {
@@ -1167,13 +1221,13 @@ function renderAdminDashboardRounds(rounds) {
     return (rounds || [])
         .map(
             (round) => `
-                <div class="search-item">
+                <div class="search-item admin-round-item">
                     <div>
                         <strong>Rodada - ${formatRoundDateTime(round.created_at)}</strong>
                         <div>Status: ${escapeHtml(round.status)}</div>
                         <div>Criador: ${displayNameStyledHtml({ id: round.creator_user_id, nickname: round.creator_nickname, username: round.creator_username })}</div>
                     </div>
-                    <div class="inline-actions">
+                    <div class="inline-actions admin-round-actions">
                         <button class="btn btn-outline" data-admin-close-round="${round.id}" type="button">Fechar</button>
                         <button
                             class="btn btn-danger"
@@ -2404,7 +2458,6 @@ function recommendationCardTemplate(rec, options = {}) {
     const isRoundIndicationLayout = options.layout === "round-indication";
     const hasReason = String(rec.reason || "").trim().length > 0;
     const grade = rec.rating_letter && rec.interest_score ? `${rec.rating_letter}${rec.interest_score}` : "";
-    const cover = rec.game_cover_url || baseAvatar;
     const commentsHtml = recommendationCommentsHtml(rec.id, rec.comments || [], { interactive: true });
     const cardClass = `recommendation-card${isRoundIndicationLayout ? " recommendation-card-indication" : ""}${hasReason ? "" : " recommendation-card-no-reason"}`;
     const reasonHtml = hasReason
@@ -2419,11 +2472,7 @@ function recommendationCardTemplate(rec, options = {}) {
     if (isRoundIndicationLayout) {
         return `
             <article class="${cardClass}" data-recommendation-id="${rec.id}">
-                <div class="recommendation-cover-wrap">
-                    <img class="recommendation-cover-bg" src="${escapeHtml(cover)}" alt="">
-                    <img class="recommendation-cover" src="${escapeHtml(cover)}" alt="Capa ${escapeHtml(rec.game_name)}">
-                    ${showGradeOverlay && grade ? `<span class="grade-overlay">${escapeHtml(grade)}</span>` : ""}
-                </div>
+                ${recommendationCoverWrapTemplate(rec, { showGradeOverlay, grade })}
                 <div class="recommendation-indication-main">
                     <div class="recommendation-indication-top">
                         <h3>${escapeHtml(rec.game_name)}</h3>
@@ -2454,11 +2503,7 @@ function recommendationCardTemplate(rec, options = {}) {
 
     return `
         <article class="${cardClass}" data-recommendation-id="${rec.id}">
-            <div class="recommendation-cover-wrap">
-                <img class="recommendation-cover-bg" src="${escapeHtml(cover)}" alt="">
-                <img class="recommendation-cover" src="${escapeHtml(cover)}" alt="Capa ${escapeHtml(rec.game_name)}">
-                ${showGradeOverlay && grade ? `<span class="grade-overlay">${escapeHtml(grade)}</span>` : ""}
-            </div>
+            ${recommendationCoverWrapTemplate(rec, { showGradeOverlay, grade })}
             <h3>${escapeHtml(rec.game_name)}</h3>
             <div class="meta-row">
                 <span class="pill">De: ${userLinkHtml({ nickname: rec.giver_nickname, username: rec.giver_username }, rec.giver_user_id)}</span>
@@ -2650,12 +2695,38 @@ async function loadProfile() {
     const profileActivitySection = byId("profileActivitySection");
     const achievementsGrid = byId("achievementsGrid");
     const achievementsProgress = byId("achievementsProgress");
+    const psnSection = byId("profilePsnSection");
     const psnSummaryText = byId("psnSummaryText");
     const psnLinkBtn = byId("psnLinkBtn");
     const psnUnlinkBtn = byId("psnUnlinkBtn");
+    const psnLinkSteps = byId("psnLinkSteps");
+    const psnLinkStepsTitle = byId("psnLinkStepsTitle");
+    const psnGrabNpssoBtn = byId("psnGrabNpssoBtn");
+    const psnGrabNpssoFeedback = byId("psnGrabNpssoFeedback");
+    const psnTitleDetailsModal = byId("psnTitleDetailsModal");
+    const psnTitleDetailsCloseBtn = byId("psnTitleDetailsCloseBtn");
+    const psnTitleDetailsCloseIconBtn = byId("psnTitleDetailsCloseIconBtn");
+    const psnTitleDetailsIcon = byId("psnTitleDetailsIcon");
+    const psnTitleDetailsName = byId("psnTitleDetailsName");
+    const psnTitleDetailsMeta = byId("psnTitleDetailsMeta");
+    const psnTitleDetailsBody = byId("psnTitleDetailsBody");
+    const psnTierDetailsModal = byId("psnTierDetailsModal");
+    const psnTierDetailsCloseBtn = byId("psnTierDetailsCloseBtn");
+    const psnTierDetailsCloseIconBtn = byId("psnTierDetailsCloseIconBtn");
+    const psnTierDetailsHeroIcon = byId("psnTierDetailsHeroIcon");
+    const psnTierDetailsHeroLabel = byId("psnTierDetailsHeroLabel");
+    const psnTierDetailsHeroMeta = byId("psnTierDetailsHeroMeta");
+    const psnTierDetailsBody = byId("psnTierDetailsBody");
+    const psnTierDetailsPagination = byId("psnTierDetailsPagination");
+    const psnTierDetailsPrevBtn = byId("psnTierDetailsPrevBtn");
+    const psnTierDetailsNextBtn = byId("psnTierDetailsNextBtn");
+    const psnTierDetailsPageLabel = byId("psnTierDetailsPageLabel");
     const psnProfileHead = byId("psnProfileHead");
     const psnTitlesGrid = byId("psnTitlesGrid");
-    const psnShowMoreBtn = byId("psnShowMoreBtn");
+    const psnTitlesPagination = byId("psnTitlesPagination");
+    const psnTitlesPrevBtn = byId("psnTitlesPrevBtn");
+    const psnTitlesNextBtn = byId("psnTitlesNextBtn");
+    const psnTitlesPageLabel = byId("psnTitlesPageLabel");
     const psnFeedback = byId("psnFeedback");
     const viewedUserId = Number(getQueryParam("userId") || 0);
     let currentProfileUserId = 0;
@@ -2688,15 +2759,41 @@ async function loadProfile() {
         label: ""
     };
     const defaultEmailLabel = "Email (não editável)";
-    const sonySsoCookieUrl = "https://ca.account.sony.com/api/v1/ssocookie";
+    const psnAutoNpssoEndpoint = "/api/user/psn/auto-npsso";
     const psnTrophyIconByTier = Object.freeze({
-        platinum: "/assets/psn/trophy-platinum.svg",
-        gold: "/assets/psn/trophy-gold.svg",
-        silver: "/assets/psn/trophy-silver.svg",
-        bronze: "/assets/psn/trophy-bronze.svg"
+        platinum: "/uploads/trofeus/ps5/platina.png",
+        gold: "/uploads/trofeus/ps5/ouro.png",
+        silver: "/uploads/trofeus/ps5/prata.png",
+        bronze: "/uploads/trofeus/ps5/bronze.png"
     });
-    let psnVisibleTitlesLimit = 10;
+    const psnTitlesPageSize = 10;
+    const psnTierPageSize = 10;
+    let psnTitlesCurrentPage = 1;
+    let psnTitlesTotalPages = 1;
+    let psnTitlesTotalItems = 0;
+    let psnTitlesRequestSeq = 0;
+    let psnTitlesRouteUnavailable = false;
+    let psnAllTitlesFallbackCache = [];
     let psnCachedTitles = [];
+    let psnPreparedNpsso = "";
+    let psnCanEditState = false;
+    let psnLinkedState = false;
+    let psnNeedsRelinkAttention = false;
+    let psnActiveTitleCard = null;
+    let psnActiveSummaryTierButton = null;
+    let psnTitleDetailsRequestSeq = 0;
+    let psnTitleDetailsCacheOwnerUserId = 0;
+    const psnTitleDetailsCache = new Map();
+    let psnTitleDetailsCurrentPayload = null;
+    let psnTitleDetailsActiveTier = "";
+    let psnTierDetailsRequestSeq = 0;
+    let psnTierDetailsCacheOwnerUserId = 0;
+    const psnTierDetailsCache = new Map();
+    let psnTierDetailsRouteUnavailable = false;
+    let psnTierDetailsCurrentTier = "";
+    let psnTierDetailsCurrentPage = 1;
+    let psnTierDetailsTotalPages = 1;
+    let psnTierDetailsTotalItems = 0;
 
     function setupAchievementImageProtection() {
         if (!achievementsGrid || achievementsGrid.dataset.achievementImageProtectionBound === "1") return;
@@ -2854,7 +2951,6 @@ async function loadProfile() {
             ? `Para: ${userLinkHtml({ nickname: item.receiver_nickname, username: item.receiver_username }, item.receiver_id)}`
             : `De: ${userLinkHtml({ nickname: item.giver_nickname, username: item.giver_username }, item.giver_id)}`;
         const grade = item.rating_letter && item.interest_score ? `${item.rating_letter}${item.interest_score}` : "Sem nota";
-        const cover = item.game_cover_url || baseAvatar;
         const gradeClass = item.rating_letter && item.interest_score
             ? "grade-inline"
             : "grade-inline grade-inline-muted";
@@ -2868,11 +2964,10 @@ async function loadProfile() {
             : "";
         return `
             <article class="recommendation-card recommendation-card-indication recommendation-card-profile-activity">
-                <div class="recommendation-cover-wrap">
-                    <img class="recommendation-cover-bg" src="${escapeHtml(cover)}" alt="">
-                    <img class="recommendation-cover" src="${escapeHtml(cover)}" alt="Capa ${escapeHtml(item.game_name)}">
-                    ${item.rating_letter && item.interest_score ? `<span class="grade-overlay">${escapeHtml(grade)}</span>` : ""}
-                </div>
+                ${recommendationCoverWrapTemplate(item, {
+                    showGradeOverlay: Boolean(item.rating_letter && item.interest_score),
+                    grade
+                })}
                 <div class="recommendation-indication-main">
                     <div class="recommendation-indication-top">
                         <h3>${escapeHtml(item.game_name)}</h3>
@@ -3088,6 +3183,54 @@ async function loadProfile() {
         return Number(value || 0).toLocaleString("pt-BR");
     }
 
+    function buildPsnProfileUrl(onlineId = "") {
+        const profileName = String(onlineId || "").trim();
+        if (!profileName) return "https://my.playstation.com/";
+        return `https://my.playstation.com/profile/${encodeURIComponent(profileName)}`;
+    }
+
+    function normalizePsnTier(rawTier = "") {
+        const tier = String(rawTier || "").trim().toLowerCase();
+        if (tier === "platinum" || tier === "gold" || tier === "silver" || tier === "bronze") {
+            return tier;
+        }
+        return "";
+    }
+
+    function psnTierLabelFromTier(rawTier = "") {
+        const tier = normalizePsnTier(rawTier);
+        if (tier === "platinum") return "Platina";
+        if (tier === "gold") return "Ouro";
+        if (tier === "silver") return "Prata";
+        if (tier === "bronze") return "Bronze";
+        return "Troféu";
+    }
+
+    function buildPsnTierDetailsCacheKey(userId, tier, page = 1, pageSize = psnTierPageSize) {
+        return `${Number(userId || 0)}|${normalizePsnTier(tier)}|${normalizePsnPageValue(page, 1)}|${normalizePsnPageValue(pageSize, psnTierPageSize)}`;
+    }
+
+    function setPsnActiveSummaryTierButton(button) {
+        if (psnActiveSummaryTierButton instanceof HTMLElement && psnActiveSummaryTierButton !== button) {
+            psnActiveSummaryTierButton.classList.remove("is-active");
+        }
+        psnActiveSummaryTierButton = button instanceof HTMLElement ? button : null;
+        if (psnActiveSummaryTierButton) {
+            psnActiveSummaryTierButton.classList.add("is-active");
+        }
+    }
+
+    function clearPsnActiveSummaryTierButton() {
+        if (!(psnActiveSummaryTierButton instanceof HTMLElement)) return;
+        const button = psnActiveSummaryTierButton;
+        psnActiveSummaryTierButton = null;
+        button.classList.remove("is-active");
+        button.classList.add("is-returning");
+        window.setTimeout(() => {
+            button.classList.remove("is-returning");
+        }, 280);
+    }
+
     function normalizeNpssoValue(rawValue) {
         return String(rawValue || "")
             .trim()
@@ -3122,31 +3265,100 @@ async function loadProfile() {
         return "";
     }
 
+    function isPsnRenewalRequiredMessage(rawMessage) {
+        const text = String(rawMessage || "").trim().toLowerCase();
+        if (!text) return false;
+        const normalized = text
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+        if (normalized.includes("sessao psn expirada")) return true;
+        if (normalized.includes("refresh token") && normalized.includes("vincule novamente")) return true;
+        if (normalized.includes("npsso") && (normalized.includes("expir") || normalized.includes("inval"))) return true;
+        if (normalized.includes("token") && normalized.includes("expir")) return true;
+        return false;
+    }
+
+    function setPsnActiveTitleCard(nextCard) {
+        if (psnActiveTitleCard instanceof HTMLElement && psnActiveTitleCard !== nextCard) {
+            psnActiveTitleCard.classList.remove("is-active");
+        }
+        psnActiveTitleCard = nextCard instanceof HTMLElement ? nextCard : null;
+        if (psnActiveTitleCard) {
+            psnActiveTitleCard.classList.add("is-active");
+        }
+    }
+
+    function clearPsnActiveTitleCard() {
+        if (!(psnActiveTitleCard instanceof HTMLElement)) return;
+        const card = psnActiveTitleCard;
+        psnActiveTitleCard = null;
+        card.classList.remove("is-active");
+        card.classList.add("is-returning");
+        window.setTimeout(() => {
+            card.classList.remove("is-returning");
+        }, 280);
+    }
+
+    function applyPsnRenewalUiState() {
+        const canWarn = psnCanEditState && psnNeedsRelinkAttention;
+        if (psnSection) {
+            psnSection.classList.toggle("psn-attention", canWarn);
+        }
+        if (psnLinkSteps) {
+            const shouldShowSteps = psnCanEditState && (!psnLinkedState || canWarn);
+            psnLinkSteps.classList.toggle("hidden", !shouldShowSteps);
+            psnLinkSteps.classList.toggle("psn-link-steps-warning", canWarn);
+        }
+        if (psnLinkStepsTitle) {
+            psnLinkStepsTitle.textContent = canWarn
+                ? "Atenção: sessão PSN expirada. Renove o NPSSO:"
+                : "Passo a passo para vincular PSN:";
+        }
+    }
+
+    function markPsnRenewalRequired(message = "") {
+        if (!psnCanEditState) return;
+        psnNeedsRelinkAttention = true;
+        applyPsnRenewalUiState();
+        const warnMessage = String(message || "").trim()
+            || "Sua sessão PSN expirou. Siga o passo a passo abaixo, gere um novo NPSSO e clique em Vincular PSN.";
+        setFeedback(psnFeedback, warnMessage, "warn");
+    }
+
     async function tryAutoReadNpssoFromSonyCookie() {
         try {
-            const response = await fetch(sonySsoCookieUrl, {
-                method: "GET",
-                credentials: "include",
-                headers: { Accept: "application/json" }
-            });
-            if (!response.ok) return "";
-            const payload = await response.json().catch(() => null);
-            if (!payload) return "";
-            const value = typeof payload === "object"
-                ? payload?.npsso || ""
-                : String(payload || "");
-            return extractNpssoFromRaw(value);
+            const payload = await sendJson(psnAutoNpssoEndpoint, "GET");
+            const value = extractNpssoFromRaw(payload?.npsso || "");
+            return {
+                npsso: value,
+                reason: String(payload?.reason || ""),
+                message: String(payload?.message || "")
+            };
         } catch {
-            return "";
+            return {
+                npsso: "",
+                reason: "request_failed",
+                message: "Falha ao tentar obter o NPSSO automaticamente."
+            };
         }
     }
 
     async function requestNpssoForLinkFlow() {
-        const autoNpsso = await tryAutoReadNpssoFromSonyCookie();
-        if (autoNpsso) return autoNpsso;
+        const prepared = extractNpssoFromRaw(psnPreparedNpsso);
+        if (prepared && prepared.length >= 20) {
+            return prepared;
+        }
+
+        const autoResult = await tryAutoReadNpssoFromSonyCookie();
+        if (autoResult?.npsso) return autoResult.npsso;
+
+        const autoMessage = String(autoResult?.message || "").trim();
+        const promptHeader = autoMessage
+            ? `${autoMessage}\n\n`
+            : "";
 
         const rawInput = window.prompt(
-            "Nao foi possivel obter o NPSSO automaticamente. Faca login na conta PlayStation neste navegador e tente novamente. Se preferir, cole aqui o JSON completo (ou apenas o valor de npsso)."
+            `${promptHeader}Cole aqui o JSON retornado pelo endpoint da Sony (ou apenas o valor de npsso).`
         );
         return extractNpssoFromRaw(rawInput);
     }
@@ -3161,25 +3373,551 @@ async function loadProfile() {
         `;
     }
 
-    function renderPsnTitlesCards(titles) {
-        if (!psnTitlesGrid) return;
-        if (!Array.isArray(titles) || !titles.length) {
-            psnTitlesGrid.innerHTML = '<p class="psn-empty-state">Nenhum titulo de trofeu visivel para esta conta.</p>';
-            if (psnShowMoreBtn) psnShowMoreBtn.classList.add("hidden");
+    function normalizePsnTitleEntryForClient(rawTitle = {}) {
+        const title = rawTitle || {};
+        const progress = Math.max(0, Math.min(100, Number(title?.progress || 0)));
+        return {
+            npServiceName: String(title?.npServiceName || title?.np_service_name || "").trim(),
+            npCommunicationId: String(title?.npCommunicationId || title?.np_communication_id || "").trim(),
+            titleName: String(title?.titleName || title?.title_name || "").trim(),
+            titleIconUrl: String(title?.titleIconUrl || title?.title_icon_url || "").trim(),
+            titlePlatform: String(title?.titlePlatform || title?.title_platform || "").trim(),
+            progress,
+            earnedBronze: Number(title?.earnedBronze ?? title?.earned_bronze ?? 0) || 0,
+            earnedSilver: Number(title?.earnedSilver ?? title?.earned_silver ?? 0) || 0,
+            earnedGold: Number(title?.earnedGold ?? title?.earned_gold ?? 0) || 0,
+            earnedPlatinum: Number(title?.earnedPlatinum ?? title?.earned_platinum ?? 0) || 0
+        };
+    }
+
+    function psnTierCountFromTitle(title = {}, rawTier = "") {
+        const tier = normalizePsnTier(rawTier);
+        if (tier === "platinum") return Math.max(0, Number(title?.earnedPlatinum || 0));
+        if (tier === "gold") return Math.max(0, Number(title?.earnedGold || 0));
+        if (tier === "silver") return Math.max(0, Number(title?.earnedSilver || 0));
+        if (tier === "bronze") return Math.max(0, Number(title?.earnedBronze || 0));
+        return 0;
+    }
+
+    function psnSummaryTrophyPillHtml(label, tier, value, options = {}) {
+        const icon = String(psnTrophyIconByTier[tier] || "").trim();
+        const normalizedTier = normalizePsnTier(tier);
+        const clickable = Boolean(options?.clickable) && Boolean(normalizedTier);
+        const active = clickable && Boolean(options?.active);
+        const clickableClass = clickable ? " psn-summary-trophy-clickable" : "";
+        const activeClass = active ? " is-active" : "";
+        const ariaLabel = clickable
+            ? String(options?.ariaLabel || `Ver troféus ${label}`).trim()
+            : "";
+        const attrs = clickable
+            ? ` role="button" tabindex="0" data-psn-tier="${escapeHtml(normalizedTier)}" aria-label="${escapeHtml(ariaLabel)}" aria-pressed="${active ? "true" : "false"}"`
+            : "";
+        return `
+            <span class="psn-summary-pill psn-summary-trophy${clickableClass}${activeClass} psn-${escapeHtml(String(tier || "").toLowerCase())}" title="${escapeHtml(label)}"${attrs}>
+                <img class="psn-summary-tier-icon" src="${escapeHtml(icon)}" alt="${escapeHtml(label)}">
+                <span class="psn-summary-tier-count">${escapeHtml(formatPsnCount(value))}</span>
+            </span>
+        `;
+    }
+
+    function buildPsnTitleDetailsCacheKey(userId, npServiceName, npCommunicationId) {
+        const safeUserId = Number(userId || 0);
+        const safeService = String(npServiceName || "").trim();
+        const safeCommunicationId = String(npCommunicationId || "").trim();
+        return `${safeUserId}|${safeService}|${safeCommunicationId}`;
+    }
+
+    function togglePsnTitleDetailsTierFilter(rawTier = "") {
+        const tier = normalizePsnTier(rawTier);
+        if (!tier) return;
+        psnTitleDetailsActiveTier = psnTitleDetailsActiveTier === tier ? "" : tier;
+        if (psnTitleDetailsCurrentPayload) {
+            renderPsnTitleDetailsContent(psnTitleDetailsCurrentPayload);
+        }
+    }
+
+    function closePsnTitleDetailsModal() {
+        if (psnTitleDetailsModal) {
+            psnTitleDetailsModal.classList.add("hidden");
+        }
+        psnTitleDetailsCurrentPayload = null;
+        psnTitleDetailsActiveTier = "";
+        clearPsnActiveTitleCard();
+    }
+
+    function closePsnTierDetailsModal() {
+        if (psnTierDetailsModal) {
+            psnTierDetailsModal.classList.add("hidden");
+        }
+        psnTierDetailsCurrentTier = "";
+        psnTierDetailsCurrentPage = 1;
+        psnTierDetailsTotalPages = 1;
+        psnTierDetailsTotalItems = 0;
+        updatePsnTierDetailsPaginationUi();
+        clearPsnActiveSummaryTierButton();
+    }
+
+    function renderPsnTierDetailsShell({ tier, tierLabel, total }) {
+        const normalizedTier = normalizePsnTier(tier);
+        const icon = String(psnTrophyIconByTier[normalizedTier] || "").trim() || baseAvatar;
+        if (psnTierDetailsHeroIcon instanceof HTMLImageElement) {
+            psnTierDetailsHeroIcon.src = icon;
+            psnTierDetailsHeroIcon.classList.remove(
+                "psn-tier-platinum",
+                "psn-tier-gold",
+                "psn-tier-silver",
+                "psn-tier-bronze"
+            );
+            if (normalizedTier) {
+                psnTierDetailsHeroIcon.classList.add(`psn-tier-${normalizedTier}`);
+            }
+        }
+        if (psnTierDetailsHeroLabel) {
+            psnTierDetailsHeroLabel.textContent = `${String(tierLabel || psnTierLabelFromTier(normalizedTier))}`;
+        }
+        if (psnTierDetailsHeroMeta) {
+            const countLabel = Number(total || 0).toLocaleString("pt-BR");
+            psnTierDetailsHeroMeta.textContent = `${countLabel} troféu(s)`;
+        }
+    }
+
+    function renderPsnTierDetailsLoading(payload = {}) {
+        renderPsnTierDetailsShell(payload);
+        psnTierDetailsTotalItems = 0;
+        if (psnTierDetailsPagination) {
+            psnTierDetailsPagination.classList.add("hidden");
+        }
+        if (psnTierDetailsBody) {
+            psnTierDetailsBody.innerHTML = `
+                <div class="psn-loading-state">
+                    <span class="psn-loading-spinner" aria-hidden="true"></span>
+                    <p class="psn-tier-details-loading">Carregando troféus...</p>
+                </div>
+            `;
+        }
+    }
+
+    function renderPsnTierDetailsError(payload = {}, message = "") {
+        renderPsnTierDetailsShell(payload);
+        psnTierDetailsTotalItems = 0;
+        if (psnTierDetailsPagination) {
+            psnTierDetailsPagination.classList.add("hidden");
+        }
+        if (psnTierDetailsBody) {
+            psnTierDetailsBody.innerHTML = `
+                <p class="psn-tier-details-error">${escapeHtml(String(message || "Falha ao carregar essa categoria de troféu."))}</p>
+            `;
+        }
+    }
+
+    function renderPsnTierDetailsContent(payload = {}) {
+        const tier = normalizePsnTier(payload?.tier || "");
+        const tierLabel = String(payload?.tierLabel || psnTierLabelFromTier(tier));
+        const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+        renderPsnTierDetailsShell({
+            tier,
+            tierLabel,
+            total: Number(payload?.total || entries.length || 0)
+        });
+        psnTierDetailsTotalItems = Math.max(0, Number(payload?.total || entries.length || 0));
+        psnTierDetailsCurrentPage = normalizePsnPageValue(payload?.page, psnTierDetailsCurrentPage || 1);
+        psnTierDetailsTotalPages = Math.max(
+            1,
+            Number(payload?.totalPages || Math.ceil(Number(payload?.total || 0) / Math.max(1, Number(payload?.pageSize || psnTierPageSize))) || 1)
+        );
+        updatePsnTierDetailsPaginationUi();
+        if (!psnTierDetailsBody) return;
+        if (!entries.length) {
+            psnTierDetailsBody.innerHTML = `
+                <p class="psn-tier-details-empty">Nenhum troféu ${escapeHtml(tierLabel.toLowerCase())} encontrado para esse perfil.</p>
+            `;
+            return;
+        }
+        const tierIcon = String(psnTrophyIconByTier[tier] || "").trim() || baseAvatar;
+        psnTierDetailsBody.innerHTML = `
+            <div class="psn-tier-details-list">
+                ${entries
+                    .map((entry) => {
+                        const trophyName = String(entry?.trophyName || "Troféu");
+                        const gameName = String(entry?.titleName || "Jogo PSN");
+                        const platform = String(entry?.titlePlatform || "").trim();
+                        const detail = String(entry?.trophyDetail || "").trim();
+                        const earnedAt = Number(entry?.earnedAt || 0);
+                        const earnedLabel = earnedAt > 0 ? formatPsnSyncDate(earnedAt) : "Data não informada";
+                        const gameIcon = String(entry?.titleIconUrl || "").trim() || baseAvatar;
+                        return `
+                            <article class="psn-tier-entry">
+                                <img class="psn-tier-entry-game-icon" src="${escapeHtml(gameIcon)}" alt="${escapeHtml(gameName)}">
+                                <img class="psn-tier-entry-tier-icon psn-tier-${escapeHtml(tier)}" src="${escapeHtml(tierIcon)}" alt="${escapeHtml(tierLabel)}">
+                                <div class="psn-tier-entry-texts">
+                                    <p class="psn-tier-entry-trophy-name">${escapeHtml(trophyName)}</p>
+                                    <p class="psn-tier-entry-game-name">${escapeHtml(gameName)}${platform ? ` · ${escapeHtml(platform)}` : ""}</p>
+                                    ${detail ? `<p class="psn-tier-entry-detail">${escapeHtml(detail)}</p>` : ""}
+                                </div>
+                                <span class="psn-tier-entry-date">${escapeHtml(earnedLabel)}</span>
+                            </article>
+                        `;
+                    })
+                    .join("")}
+            </div>
+        `;
+    }
+
+    function updatePsnTierDetailsPaginationUi() {
+        const totalPages = Math.max(1, Number(psnTierDetailsTotalPages || 1));
+        const currentPage = Math.min(totalPages, Math.max(1, Number(psnTierDetailsCurrentPage || 1)));
+        const hasItems = Number(psnTierDetailsTotalItems || 0) > 0 && Boolean(psnTierDetailsCurrentTier);
+        if (psnTierDetailsPagination) {
+            psnTierDetailsPagination.classList.toggle("hidden", !hasItems);
+        }
+        if (psnTierDetailsPageLabel) {
+            psnTierDetailsPageLabel.textContent = `Pagina ${currentPage} de ${totalPages}`;
+        }
+        if (psnTierDetailsPrevBtn) {
+            psnTierDetailsPrevBtn.disabled = !hasItems || currentPage <= 1;
+        }
+        if (psnTierDetailsNextBtn) {
+            psnTierDetailsNextBtn.disabled = !hasItems || currentPage >= totalPages;
+        }
+    }
+
+    async function fetchPsnTierDetailsClientFallback({ userId, tier, page = 1, pageSize = psnTierPageSize }) {
+        const normalizedTier = normalizePsnTier(tier);
+        const basePayload = {
+            tier: normalizedTier,
+            tierLabel: psnTierLabelFromTier(normalizedTier),
+            total: 0,
+            page: normalizePsnPageValue(page, 1),
+            pageSize: normalizePsnPageValue(pageSize, psnTierPageSize),
+            totalPages: 1,
+            entries: []
+        };
+        if (!normalizedTier) return basePayload;
+        return basePayload;
+    }
+
+    async function loadPsnTierDetailsPage(page = 1) {
+        const normalizedTier = normalizePsnTier(psnTierDetailsCurrentTier);
+        if (!normalizedTier) return;
+        const currentUserId = Number(currentProfileUserId || 0);
+        if (!Number.isInteger(currentUserId) || currentUserId <= 0) return;
+
+        const targetPage = normalizePsnPageValue(page, 1);
+        const payloadBase = {
+            tier: normalizedTier,
+            tierLabel: psnTierLabelFromTier(normalizedTier),
+            total: 0
+        };
+        renderPsnTierDetailsLoading(payloadBase);
+        updatePsnTierDetailsPaginationUi();
+
+        const cacheKey = buildPsnTierDetailsCacheKey(currentUserId, normalizedTier, targetPage, psnTierPageSize);
+        const cached = psnTierDetailsCache.get(cacheKey);
+        if (cached) {
+            renderPsnTierDetailsContent(cached);
             return;
         }
 
-        const visibleCount = Math.max(0, Math.min(psnVisibleTitlesLimit, titles.length));
-        const visibleTitles = titles.slice(0, visibleCount);
-        psnTitlesGrid.innerHTML = visibleTitles
+        const requestSeq = ++psnTierDetailsRequestSeq;
+        try {
+            let payload = null;
+            if (!psnTierDetailsRouteUnavailable) {
+                try {
+                    payload = await sendJson(
+                        `/api/users/${encodeURIComponent(currentUserId)}/psn/trophies-by-tier?tier=${encodeURIComponent(normalizedTier)}&page=${encodeURIComponent(targetPage)}&pageSize=${encodeURIComponent(psnTierPageSize)}`
+                    );
+                } catch (error) {
+                    const code = Number(error?.statusCode || 0);
+                    if (code !== 404) throw error;
+                    psnTierDetailsRouteUnavailable = true;
+                }
+            }
+            if (!payload) {
+                payload = await fetchPsnTierDetailsClientFallback({
+                    userId: currentUserId,
+                    tier: normalizedTier,
+                    page: targetPage,
+                    pageSize: psnTierPageSize
+                });
+            }
+            if (requestSeq !== psnTierDetailsRequestSeq) return;
+            psnTierDetailsCache.set(cacheKey, payload);
+            renderPsnTierDetailsContent(payload);
+        } catch (error) {
+            if (requestSeq !== psnTierDetailsRequestSeq) return;
+            const errorMessage = String(error?.message || "Falha ao carregar essa categoria de troféu.");
+            if (isPsnRenewalRequiredMessage(errorMessage)) {
+                markPsnRenewalRequired(
+                    "Sua sessão PSN expirou. Renove o NPSSO no passo a passo abaixo e clique em Vincular PSN."
+                );
+            }
+            renderPsnTierDetailsError(payloadBase, errorMessage);
+            if (psnTierDetailsPagination) psnTierDetailsPagination.classList.add("hidden");
+        }
+    }
+
+    async function openPsnTierDetailsByTier(tier, triggerElement = null) {
+        const normalizedTier = normalizePsnTier(tier);
+        if (!normalizedTier) return;
+        const currentUserId = Number(currentProfileUserId || 0);
+        if (!Number.isInteger(currentUserId) || currentUserId <= 0) return;
+        setPsnActiveSummaryTierButton(triggerElement);
+        psnTierDetailsCurrentTier = normalizedTier;
+        psnTierDetailsCurrentPage = 1;
+        psnTierDetailsTotalPages = 1;
+        psnTierDetailsTotalItems = 0;
+        if (psnTierDetailsModal) {
+            psnTierDetailsModal.classList.remove("hidden");
+        }
+        await loadPsnTierDetailsPage(1);
+    }
+
+    function renderPsnTitleDetailsModalShell({ titleName, titleIconUrl, titleMeta }) {
+        if (psnTitleDetailsIcon instanceof HTMLImageElement) {
+            psnTitleDetailsIcon.src = String(titleIconUrl || "").trim() || baseAvatar;
+        }
+        if (psnTitleDetailsName) {
+            psnTitleDetailsName.textContent = String(titleName || "Detalhes do jogo");
+        }
+        if (psnTitleDetailsMeta) {
+            psnTitleDetailsMeta.textContent = String(titleMeta || "");
+        }
+    }
+
+    function renderPsnTitleDetailsLoading(payload = {}) {
+        renderPsnTitleDetailsModalShell(payload);
+        psnTitleDetailsCurrentPayload = null;
+        if (psnTitleDetailsBody) {
+            psnTitleDetailsBody.innerHTML = `
+                <div class="psn-loading-state">
+                    <span class="psn-loading-spinner" aria-hidden="true"></span>
+                    <p class="psn-title-details-loading">Carregando troféus...</p>
+                </div>
+            `;
+        }
+    }
+
+    function renderPsnTitleDetailsError(payload = {}, errorMessage = "") {
+        renderPsnTitleDetailsModalShell(payload);
+        psnTitleDetailsCurrentPayload = null;
+        if (psnTitleDetailsBody) {
+            psnTitleDetailsBody.innerHTML = `
+                <p class="psn-title-details-error">${escapeHtml(String(errorMessage || "Falha ao carregar troféus deste jogo."))}</p>
+            `;
+        }
+    }
+
+    function renderPsnTitleDetailsContent(payload = {}) {
+        const title = payload?.title || {};
+        const totals = payload?.totals || {};
+        const trophies = Array.isArray(payload?.earnedTrophies) ? payload.earnedTrophies : [];
+        const activeTier = normalizePsnTier(psnTitleDetailsActiveTier);
+        psnTitleDetailsCurrentPayload = payload;
+        const progress = Math.max(0, Math.min(100, Number(title?.progress || 0)));
+        const titleName = String(title?.titleName || "Detalhes do jogo");
+        const titleIconUrl = String(title?.titleIconUrl || "").trim() || baseAvatar;
+        const titleMeta = `${String(title?.titlePlatform || "-")} - ${progress}%`;
+        renderPsnTitleDetailsModalShell({
+            titleName,
+            titleIconUrl,
+            titleMeta
+        });
+
+        const summaryHtml = `
+            <div class="psn-title-details-summary">
+                ${psnSummaryTrophyPillHtml("Platina", "platinum", totals?.platinum || 0, {
+                    clickable: true,
+                    active: activeTier === "platinum",
+                    ariaLabel: activeTier === "platinum" ? "Remover filtro de troféus platina" : "Filtrar troféus platina"
+                })}
+                ${psnSummaryTrophyPillHtml("Ouro", "gold", totals?.gold || 0, {
+                    clickable: true,
+                    active: activeTier === "gold",
+                    ariaLabel: activeTier === "gold" ? "Remover filtro de troféus ouro" : "Filtrar troféus ouro"
+                })}
+                ${psnSummaryTrophyPillHtml("Prata", "silver", totals?.silver || 0, {
+                    clickable: true,
+                    active: activeTier === "silver",
+                    ariaLabel: activeTier === "silver" ? "Remover filtro de troféus prata" : "Filtrar troféus prata"
+                })}
+                ${psnSummaryTrophyPillHtml("Bronze", "bronze", totals?.bronze || 0, {
+                    clickable: true,
+                    active: activeTier === "bronze",
+                    ariaLabel: activeTier === "bronze" ? "Remover filtro de troféus bronze" : "Filtrar troféus bronze"
+                })}
+            </div>
+        `;
+
+        const filteredTrophies = activeTier
+            ? trophies.filter((trophy) => normalizePsnTier(trophy?.trophyType || "") === activeTier)
+            : trophies;
+
+        const listHtml = filteredTrophies.length
+            ? `
+                <div class="psn-title-earned-list">
+                    ${filteredTrophies
+                        .map((trophy) => {
+                            const type = normalizePsnTier(trophy?.trophyType || "");
+                            const icon = String(psnTrophyIconByTier[type] || "").trim() || baseAvatar;
+                            const earnedAt = Number(trophy?.earnedAt || 0);
+                            const earnedLabel = earnedAt > 0 ? formatPsnSyncDate(earnedAt) : "Data não informada";
+                            const detail = String(trophy?.trophyDetail || "").trim();
+                            return `
+                                <article class="psn-earned-trophy-item">
+                                    <img class="psn-earned-tier-icon" src="${escapeHtml(icon)}" alt="${escapeHtml(type)}">
+                                    <div class="psn-earned-trophy-texts">
+                                        <p class="psn-earned-trophy-name">${escapeHtml(String(trophy?.trophyName || "Troféu"))}</p>
+                                        ${detail ? `<p class="psn-earned-trophy-detail">${escapeHtml(detail)}</p>` : ""}
+                                    </div>
+                                    <span class="psn-earned-trophy-date">${escapeHtml(earnedLabel)}</span>
+                                </article>
+                            `;
+                        })
+                        .join("")}
+                </div>
+            `
+            : activeTier
+                ? `<p class="psn-title-details-empty">Nenhum troféu ${escapeHtml(psnTierLabelFromTier(activeTier).toLowerCase())} encontrado neste jogo.</p>`
+                : '<p class="psn-title-details-empty">Esse jogo ainda não possui troféus conquistados visíveis.</p>';
+
+        if (psnTitleDetailsBody) {
+            psnTitleDetailsBody.innerHTML = `${summaryHtml}${listHtml}`;
+        }
+    }
+
+    async function openPsnTitleDetailsFromCard(cardElement) {
+        if (!(cardElement instanceof HTMLElement)) return;
+        const npServiceName = String(cardElement.dataset.psnNpServiceName || "").trim();
+        const npCommunicationId = String(cardElement.dataset.psnNpCommunicationId || "").trim();
+        if (!npServiceName || !npCommunicationId) return;
+
+        const titleName = String(cardElement.dataset.psnTitleName || "").trim() || "Detalhes do jogo";
+        const titleIconUrl = String(cardElement.dataset.psnTitleIconUrl || "").trim() || baseAvatar;
+        const titleMeta = String(cardElement.dataset.psnTitleMeta || "").trim();
+        const currentUserId = Number(currentProfileUserId || 0);
+        if (!Number.isInteger(currentUserId) || currentUserId <= 0) return;
+        setPsnActiveTitleCard(cardElement);
+        psnTitleDetailsCurrentPayload = null;
+        psnTitleDetailsActiveTier = "";
+
+        const cacheKey = buildPsnTitleDetailsCacheKey(currentUserId, npServiceName, npCommunicationId);
+        const cached = psnTitleDetailsCache.get(cacheKey);
+        renderPsnTitleDetailsLoading({ titleName, titleIconUrl, titleMeta });
+        if (psnTitleDetailsModal) {
+            psnTitleDetailsModal.classList.remove("hidden");
+        }
+
+        if (cached) {
+            renderPsnTitleDetailsContent(cached);
+            return;
+        }
+
+        const requestSeq = ++psnTitleDetailsRequestSeq;
+        try {
+            const details = await sendJson(
+                `/api/users/${encodeURIComponent(currentUserId)}/psn/title-details?npServiceName=${encodeURIComponent(npServiceName)}&npCommunicationId=${encodeURIComponent(npCommunicationId)}`
+            );
+            if (requestSeq !== psnTitleDetailsRequestSeq) return;
+            psnTitleDetailsCache.set(cacheKey, details);
+            renderPsnTitleDetailsContent(details);
+        } catch (error) {
+            if (requestSeq !== psnTitleDetailsRequestSeq) return;
+            const errorMessage = String(error?.message || "Falha ao carregar troféus deste jogo.");
+            if (isPsnRenewalRequiredMessage(errorMessage)) {
+                markPsnRenewalRequired(
+                    "Sua sessão PSN expirou. Renove o NPSSO no passo a passo abaixo e clique em Vincular PSN."
+                );
+            }
+            renderPsnTitleDetailsError(
+                { titleName, titleIconUrl, titleMeta },
+                errorMessage
+            );
+        }
+    }
+
+    function normalizePsnPageValue(value, fallback = 1) {
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+        return parsed;
+    }
+
+    function updatePsnTitlesPaginationUi() {
+        const totalPages = Math.max(1, Number(psnTitlesTotalPages || 1));
+        const currentPage = Math.min(totalPages, Math.max(1, Number(psnTitlesCurrentPage || 1)));
+        const hasItems = Number(psnTitlesTotalItems || 0) > 0;
+        if (psnTitlesPagination) {
+            psnTitlesPagination.classList.toggle("hidden", !hasItems);
+        }
+        if (psnTitlesPageLabel) {
+            psnTitlesPageLabel.textContent = `Pagina ${currentPage} de ${totalPages}`;
+        }
+        if (psnTitlesPrevBtn) {
+            psnTitlesPrevBtn.disabled = !hasItems || currentPage <= 1;
+        }
+        if (psnTitlesNextBtn) {
+            psnTitlesNextBtn.disabled = !hasItems || currentPage >= totalPages;
+        }
+    }
+
+    function setPsnTitlesGridLoading(isLoading) {
+        if (!psnTitlesGrid) return;
+        const existingOverlay = psnTitlesGrid.querySelector(".psn-grid-loading-overlay");
+        if (isLoading) {
+            const measuredHeight = Math.ceil(psnTitlesGrid.getBoundingClientRect().height || 0);
+            if (measuredHeight > 0) {
+                psnTitlesGrid.style.minHeight = `${measuredHeight}px`;
+            } else {
+                psnTitlesGrid.style.minHeight = "180px";
+            }
+            psnTitlesGrid.classList.add("psn-titles-grid-loading");
+            if (!existingOverlay) {
+                const overlay = document.createElement("div");
+                overlay.className = "psn-grid-loading-overlay";
+                overlay.innerHTML = `
+                    <span class="psn-loading-spinner" aria-hidden="true"></span>
+                    <p class="psn-title-details-loading">Carregando jogos...</p>
+                `;
+                psnTitlesGrid.appendChild(overlay);
+            }
+            return;
+        }
+
+        psnTitlesGrid.classList.remove("psn-titles-grid-loading");
+        psnTitlesGrid.style.removeProperty("min-height");
+        if (existingOverlay) {
+            existingOverlay.remove();
+        }
+    }
+
+    function renderPsnTitlesCards(titles) {
+        if (!psnTitlesGrid) return;
+        if (!Array.isArray(titles) || !titles.length) {
+            psnTitlesGrid.innerHTML = '<p class="psn-empty-state">Nenhum título de troféu visível para esta conta.</p>';
+            updatePsnTitlesPaginationUi();
+            return;
+        }
+
+        psnTitlesGrid.innerHTML = titles
             .map((title) => {
                 const icon = String(title?.titleIconUrl || baseAvatar).trim() || baseAvatar;
                 const progress = Math.max(0, Math.min(100, Number(title?.progress || 0)));
+                const serviceName = String(title?.npServiceName || "").trim();
+                const communicationId = String(title?.npCommunicationId || "").trim();
+                const titleMeta = `${String(title?.titlePlatform || "-")} - ${String(progress)}%`;
                 return `
-                    <article class="psn-title-card">
-                        <img src="${escapeHtml(icon)}" alt="${escapeHtml(String(title?.titleName || "Titulo PSN"))}">
+                    <article
+                        class="psn-title-card psn-title-card-clickable"
+                        role="button"
+                        tabindex="0"
+                        data-psn-np-service-name="${escapeHtml(serviceName)}"
+                        data-psn-np-communication-id="${escapeHtml(communicationId)}"
+                        data-psn-title-name="${escapeHtml(String(title?.titleName || "Título"))}"
+                        data-psn-title-icon-url="${escapeHtml(icon)}"
+                        data-psn-title-meta="${escapeHtml(titleMeta)}"
+                    >
+                        <img src="${escapeHtml(icon)}" alt="${escapeHtml(String(title?.titleName || "Título PSN"))}">
                         <div class="psn-title-main">
-                            <p class="psn-title-name">${escapeHtml(String(title?.titleName || "Titulo"))}</p>
+                            <p class="psn-title-name">${escapeHtml(String(title?.titleName || "Título"))}</p>
                             <p class="psn-title-meta">
                                 ${escapeHtml(String(title?.titlePlatform || "-"))} - ${escapeHtml(String(progress))}%
                             </p>
@@ -3195,19 +3933,85 @@ async function loadProfile() {
                 `;
             })
             .join("");
+        updatePsnTitlesPaginationUi();
+    }
 
-        if (psnShowMoreBtn) {
-            const hasMore = titles.length > visibleCount;
-            psnShowMoreBtn.classList.toggle("hidden", !hasMore);
-            if (hasMore) {
-                const nextBatch = Math.min(5, titles.length - visibleCount);
-                psnShowMoreBtn.textContent = `Ver mais (${nextBatch})`;
+    async function loadPsnTitlesPage(page = 1) {
+        const currentUserId = Number(currentProfileUserId || 0);
+        if (!Number.isInteger(currentUserId) || currentUserId <= 0) return;
+
+        const targetPage = normalizePsnPageValue(page, 1);
+        const requestSeq = ++psnTitlesRequestSeq;
+        setPsnTitlesGridLoading(true);
+
+        try {
+            let payload = null;
+            if (!psnTitlesRouteUnavailable) {
+                try {
+                    payload = await sendJson(
+                        `/api/users/${encodeURIComponent(currentUserId)}/psn/titles?page=${encodeURIComponent(targetPage)}&pageSize=${encodeURIComponent(psnTitlesPageSize)}`
+                    );
+                } catch (error) {
+                    const code = Number(error?.statusCode || 0);
+                    if (code !== 404) throw error;
+                    psnTitlesRouteUnavailable = true;
+                }
+            }
+            if (!payload) {
+                const sortedLocal = Array.isArray(psnAllTitlesFallbackCache)
+                    ? psnAllTitlesFallbackCache.slice()
+                    : [];
+                const total = sortedLocal.length;
+                const totalPages = Math.max(1, Math.ceil(total / psnTitlesPageSize));
+                const safePage = Math.min(totalPages, Math.max(1, targetPage));
+                const start = (safePage - 1) * psnTitlesPageSize;
+                const pageItems = sortedLocal.slice(start, start + psnTitlesPageSize);
+                payload = {
+                    total,
+                    page: safePage,
+                    pageSize: psnTitlesPageSize,
+                    totalPages,
+                    titles: pageItems
+                };
+            }
+            if (requestSeq !== psnTitlesRequestSeq) return;
+
+            const titles = Array.isArray(payload?.titles)
+                ? payload.titles.map((title) => normalizePsnTitleEntryForClient(title))
+                : [];
+            psnCachedTitles = titles;
+            psnTitlesCurrentPage = normalizePsnPageValue(payload?.page, targetPage);
+            psnTitlesTotalItems = Math.max(0, Number(payload?.total || 0));
+            psnTitlesTotalPages = Math.max(1, Number(payload?.totalPages || Math.ceil(psnTitlesTotalItems / psnTitlesPageSize) || 1));
+            renderPsnTitlesCards(psnCachedTitles);
+        } catch (error) {
+            if (requestSeq !== psnTitlesRequestSeq) return;
+            if (isPsnRenewalRequiredMessage(String(error?.message || ""))) {
+                markPsnRenewalRequired(
+                    "Sua sessão PSN expirou. Renove o NPSSO no passo a passo abaixo e clique em Vincular PSN."
+                );
+            }
+            if (psnTitlesGrid) {
+                psnTitlesGrid.innerHTML = `<p class="psn-empty-state">${escapeHtml(String(error?.message || "Falha ao carregar jogos da PSN."))}</p>`;
+            }
+            psnTitlesTotalItems = 0;
+            psnTitlesTotalPages = 1;
+            psnTitlesCurrentPage = 1;
+            updatePsnTitlesPaginationUi();
+        } finally {
+            if (requestSeq === psnTitlesRequestSeq) {
+                setPsnTitlesGridLoading(false);
             }
         }
     }
 
     function renderPsnProfile(psnProfile, canEdit) {
         const linked = Boolean(psnProfile?.linked);
+        psnCanEditState = Boolean(canEdit);
+        psnLinkedState = linked;
+        if (!linked) {
+            psnNeedsRelinkAttention = false;
+        }
         if (psnLinkBtn) {
             psnLinkBtn.classList.toggle("hidden", !canEdit);
             psnLinkBtn.textContent = linked ? "Sincronizar PSN" : "Vincular PSN";
@@ -3216,12 +4020,18 @@ async function loadProfile() {
             psnUnlinkBtn.classList.toggle("hidden", !canEdit);
             psnUnlinkBtn.disabled = !linked;
         }
+        applyPsnRenewalUiState();
+        if (linked) {
+            psnPreparedNpsso = "";
+            setFeedback(psnGrabNpssoFeedback, "", "");
+        }
 
         if (!linked) {
+            closePsnTierDetailsModal();
             if (psnSummaryText) {
                 psnSummaryText.textContent = canEdit
-                    ? "Clique em Vincular PSN para sincronizar seus trofeus automaticamente."
-                    : "Este usuario ainda nao vinculou uma conta da PSN.";
+                    ? "Clique em Vincular PSN para sincronizar seus troféus automaticamente."
+                    : "Este usuário ainda não vinculou uma conta da PSN.";
             }
             if (psnProfileHead) {
                 psnProfileHead.classList.add("hidden");
@@ -3230,11 +4040,12 @@ async function loadProfile() {
             if (psnTitlesGrid) {
                 psnTitlesGrid.innerHTML = '<p class="psn-empty-state">Sem conquistas da PSN sincronizadas.</p>';
             }
-            if (psnShowMoreBtn) {
-                psnShowMoreBtn.classList.add("hidden");
-            }
             psnCachedTitles = [];
-            psnVisibleTitlesLimit = 10;
+            psnAllTitlesFallbackCache = [];
+            psnTitlesCurrentPage = 1;
+            psnTitlesTotalPages = 1;
+            psnTitlesTotalItems = 0;
+            updatePsnTitlesPaginationUi();
             return;
         }
 
@@ -3244,34 +4055,54 @@ async function loadProfile() {
         }
         if (psnProfileHead) {
             const avatar = String(psnProfile?.avatarUrl || baseAvatar).trim() || baseAvatar;
+            const onlineId = String(psnProfile?.onlineId || psnProfile?.accountId || "PSN");
+            const profileUrl = buildPsnProfileUrl(onlineId);
             psnProfileHead.classList.remove("hidden");
             psnProfileHead.innerHTML = `
-                <img class="psn-profile-avatar" src="${escapeHtml(avatar)}" alt="Avatar PSN">
-                <div class="psn-profile-meta">
-                    <h3>${escapeHtml(String(psnProfile?.onlineId || "PSN"))}</h3>
-                    <p class="psn-updated-text">Atualizado em ${escapeHtml(formatPsnSyncDate(psnProfile?.updatedAt || 0))}</p>
-                    <div class="psn-summary-pills">
-                        <span class="psn-summary-pill">Nivel ${escapeHtml(String(summary?.level || 0))}</span>
-                        <span class="psn-summary-pill">Progresso ${escapeHtml(String(summary?.progress || 0))}%</span>
-                        <span class="psn-summary-pill psn-bronze">Bronze ${escapeHtml(formatPsnCount(summary?.bronze || 0))}</span>
-                        <span class="psn-summary-pill psn-silver">Prata ${escapeHtml(formatPsnCount(summary?.silver || 0))}</span>
-                        <span class="psn-summary-pill psn-gold">Ouro ${escapeHtml(formatPsnCount(summary?.gold || 0))}</span>
-                        <span class="psn-summary-pill psn-platinum">Platina ${escapeHtml(formatPsnCount(summary?.platinum || 0))}</span>
+                <a class="psn-profile-link-avatar" href="${escapeHtml(profileUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir perfil PSN">
+                    <img class="psn-profile-avatar" src="${escapeHtml(avatar)}" alt="Avatar PSN">
+                </a>
+                <div class="psn-profile-info-wrap">
+                    <div class="psn-profile-meta">
+                        <h3><a class="psn-profile-link-name" href="${escapeHtml(profileUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(onlineId)}</a></h3>
+                        <p class="psn-updated-text">Atualizado em ${escapeHtml(formatPsnSyncDate(psnProfile?.updatedAt || 0))}</p>
+                        <div class="psn-summary-pills">
+                            <span class="psn-summary-pill">Nivel ${escapeHtml(String(summary?.level || 0))}</span>
+                            <span class="psn-summary-pill">Progresso ${escapeHtml(String(summary?.progress || 0))}%</span>
+                        </div>
+                    </div>
+                    <div class="psn-summary-trophies-row" aria-label="Resumo de troféus PSN">
+                        ${psnSummaryTrophyPillHtml("Platina", "platinum", summary?.platinum || 0, { clickable: true })}
+                        ${psnSummaryTrophyPillHtml("Ouro", "gold", summary?.gold || 0, { clickable: true })}
+                        ${psnSummaryTrophyPillHtml("Prata", "silver", summary?.silver || 0, { clickable: true })}
+                        ${psnSummaryTrophyPillHtml("Bronze", "bronze", summary?.bronze || 0, { clickable: true })}
                     </div>
                 </div>
             `;
         }
 
-        psnCachedTitles = Array.isArray(psnProfile?.titles)
-            ? psnProfile.titles.slice().sort((a, b) => {
-                const progressA = Number(a?.progress || 0);
-                const progressB = Number(b?.progress || 0);
-                if (progressB !== progressA) return progressB - progressA;
-                return String(a?.titleName || "").localeCompare(String(b?.titleName || ""), "pt-BR");
-            })
+        psnAllTitlesFallbackCache = Array.isArray(psnProfile?.titles)
+            ? psnProfile.titles
+                .map((title) => normalizePsnTitleEntryForClient(title))
+                .sort((a, b) => {
+                    const platinumA = Number(a?.earnedPlatinum || 0);
+                    const platinumB = Number(b?.earnedPlatinum || 0);
+                    const hasPlatinumA = platinumA > 0 ? 1 : 0;
+                    const hasPlatinumB = platinumB > 0 ? 1 : 0;
+                    if (hasPlatinumB !== hasPlatinumA) return hasPlatinumB - hasPlatinumA;
+                    if (platinumB !== platinumA) return platinumB - platinumA;
+                    const progressA = Number(a?.progress || 0);
+                    const progressB = Number(b?.progress || 0);
+                    if (progressB !== progressA) return progressB - progressA;
+                    return String(a?.titleName || "").localeCompare(String(b?.titleName || ""), "pt-BR");
+                })
             : [];
-        psnVisibleTitlesLimit = 10;
-        renderPsnTitlesCards(psnCachedTitles);
+        psnCachedTitles = psnAllTitlesFallbackCache.slice(0, psnTitlesPageSize);
+        psnTitlesCurrentPage = 1;
+        psnTitlesTotalItems = psnAllTitlesFallbackCache.length;
+        psnTitlesTotalPages = Math.max(1, Math.ceil(psnTitlesTotalItems / psnTitlesPageSize));
+        updatePsnTitlesPaginationUi();
+        loadPsnTitlesPage(1);
     }
 
     function renderProfileAchievements(achievementData) {
@@ -3298,14 +4129,14 @@ async function loadProfile() {
             const nameEl = item.querySelector("strong");
             if (nameEl) {
                 const unlockedName = String(achievement?.name || "").trim() || String(key || "").trim();
-                nameEl.textContent = unlocked ? unlockedName : "??????";
+                nameEl.textContent = unlocked ? unlockedName : "Conquista oculta";
             }
             const descriptionEl = item.querySelector(".achievement-description, .achievement-state");
             if (descriptionEl) {
                 const description = String(achievement?.description || "").trim();
                 descriptionEl.textContent = unlocked
                     ? (description || "Conquista desbloqueada")
-                    : "???????";
+                    : "Desbloqueie para ver";
             }
         });
     }
@@ -3319,6 +4150,19 @@ async function loadProfile() {
         }
         const targetUserId = viewedUserId > 0 ? viewedUserId : ownUserId;
         currentProfileUserId = targetUserId || ownUserId;
+        if (Number(psnTitleDetailsCacheOwnerUserId || 0) !== Number(currentProfileUserId || 0)) {
+            psnTitleDetailsCacheOwnerUserId = Number(currentProfileUserId || 0);
+            psnTitleDetailsCache.clear();
+            psnTitleDetailsRequestSeq += 1;
+            closePsnTitleDetailsModal();
+        }
+        if (Number(psnTierDetailsCacheOwnerUserId || 0) !== Number(currentProfileUserId || 0)) {
+            psnTierDetailsCacheOwnerUserId = Number(currentProfileUserId || 0);
+            psnTierDetailsCache.clear();
+            psnTierDetailsRequestSeq += 1;
+            closePsnTierDetailsModal();
+        }
+        psnTitlesRequestSeq += 1;
 
         let profileView = null;
         let profileComments = { comments: [] };
@@ -3663,7 +4507,7 @@ async function loadProfile() {
         if (!npsso || npsso.length < 20) {
             setFeedback(
                 psnFeedback,
-                "Nao foi possivel obter o NPSSO. Entre na conta PlayStation no navegador e tente novamente.",
+                "Não foi possível obter o NPSSO. Entre na conta PlayStation no navegador e tente novamente.",
                 "error"
             );
             return;
@@ -3674,10 +4518,50 @@ async function loadProfile() {
             const result = await withButtonLoading(psnLinkBtn, loadingText, async () =>
                 sendJson("/api/user/psn/link", "POST", { npsso })
             );
+            psnPreparedNpsso = "";
+            psnNeedsRelinkAttention = false;
+            applyPsnRenewalUiState();
+            setFeedback(psnGrabNpssoFeedback, "", "");
             setFeedback(psnFeedback, result?.message || "Conta PSN sincronizada.", "ok");
             await refreshProfile();
         } catch (error) {
-            setFeedback(psnFeedback, error.message, "error");
+            const errorMessage = String(error?.message || "Falha ao vincular conta PSN.");
+            if (isPsnRenewalRequiredMessage(errorMessage)) {
+                markPsnRenewalRequired(
+                    "O NPSSO informado expirou ou ficou inválido. Gere um novo token e vincule novamente."
+                );
+            } else {
+                setFeedback(psnFeedback, errorMessage, "error");
+            }
+        }
+    });
+    psnGrabNpssoBtn?.addEventListener("click", async () => {
+        if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
+        setFeedback(psnGrabNpssoFeedback, "", "");
+        try {
+            const npsso = await withButtonLoading(psnGrabNpssoBtn, "Lendo...", async () => {
+                let parsed = "";
+                if (navigator?.clipboard && typeof navigator.clipboard.readText === "function") {
+                    const clipboardText = await navigator.clipboard.readText().catch(() => "");
+                    parsed = extractNpssoFromRaw(clipboardText);
+                }
+                if (!parsed || parsed.length < 20) {
+                    const rawInput = window.prompt(
+                        "Não foi possível ler um NPSSO válido da área de transferência. Cole aqui o JSON da Sony (ou apenas o NPSSO)."
+                    );
+                    parsed = extractNpssoFromRaw(rawInput);
+                }
+                if (!parsed || parsed.length < 20) {
+                    throw new Error(
+                        "NPSSO não encontrado. Copie o JSON da aba da Sony e clique em Pegar NPSSO novamente."
+                    );
+                }
+                return parsed;
+            });
+            psnPreparedNpsso = npsso;
+            setFeedback(psnGrabNpssoFeedback, "NPSSO capturado. Agora clique em Vincular PSN.", "ok");
+        } catch (error) {
+            setFeedback(psnGrabNpssoFeedback, error.message, "error");
         }
     });
     psnUnlinkBtn?.addEventListener("click", async () => {
@@ -3688,6 +4572,8 @@ async function loadProfile() {
             const result = await withButtonLoading(psnUnlinkBtn, "Desvinculando...", async () =>
                 sendJson("/api/user/psn/unlink", "POST")
             );
+            psnNeedsRelinkAttention = false;
+            applyPsnRenewalUiState();
             setFeedback(psnFeedback, result?.message || "Conta PSN desvinculada.", "ok");
             await refreshProfile();
         } catch (error) {
@@ -3695,10 +4581,111 @@ async function loadProfile() {
         }
     });
 
-    psnShowMoreBtn?.addEventListener("click", () => {
-        if (!psnCachedTitles.length) return;
-        psnVisibleTitlesLimit += 5;
-        renderPsnTitlesCards(psnCachedTitles);
+    psnTitlesPrevBtn?.addEventListener("click", () => {
+        const targetPage = Math.max(1, Number(psnTitlesCurrentPage || 1) - 1);
+        if (targetPage === Number(psnTitlesCurrentPage || 1)) return;
+        loadPsnTitlesPage(targetPage);
+    });
+    psnTitlesNextBtn?.addEventListener("click", () => {
+        const totalPages = Math.max(1, Number(psnTitlesTotalPages || 1));
+        const targetPage = Math.min(totalPages, Number(psnTitlesCurrentPage || 1) + 1);
+        if (targetPage === Number(psnTitlesCurrentPage || 1)) return;
+        loadPsnTitlesPage(targetPage);
+    });
+    psnTierDetailsPrevBtn?.addEventListener("click", () => {
+        const targetPage = Math.max(1, Number(psnTierDetailsCurrentPage || 1) - 1);
+        if (targetPage === Number(psnTierDetailsCurrentPage || 1)) return;
+        loadPsnTierDetailsPage(targetPage);
+    });
+    psnTierDetailsNextBtn?.addEventListener("click", () => {
+        const totalPages = Math.max(1, Number(psnTierDetailsTotalPages || 1));
+        const targetPage = Math.min(totalPages, Number(psnTierDetailsCurrentPage || 1) + 1);
+        if (targetPage === Number(psnTierDetailsCurrentPage || 1)) return;
+        loadPsnTierDetailsPage(targetPage);
+    });
+    psnProfileHead?.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const trophy = target.closest(".psn-summary-trophy-clickable[data-psn-tier]");
+        if (!(trophy instanceof HTMLElement)) return;
+        const tier = normalizePsnTier(trophy.dataset.psnTier || "");
+        if (!tier) return;
+        openPsnTierDetailsByTier(tier, trophy);
+    });
+    psnProfileHead?.addEventListener("keydown", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const trophy = target.closest(".psn-summary-trophy-clickable[data-psn-tier]");
+        if (!(trophy instanceof HTMLElement)) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        const tier = normalizePsnTier(trophy.dataset.psnTier || "");
+        if (!tier) return;
+        openPsnTierDetailsByTier(tier, trophy);
+    });
+    psnTitlesGrid?.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const card = target.closest(".psn-title-card-clickable");
+        if (!(card instanceof HTMLElement)) return;
+        openPsnTitleDetailsFromCard(card);
+    });
+    psnTitlesGrid?.addEventListener("keydown", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const card = target.closest(".psn-title-card-clickable");
+        if (!(card instanceof HTMLElement)) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        openPsnTitleDetailsFromCard(card);
+    });
+    psnTitleDetailsBody?.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const trophy = target.closest(".psn-title-details-summary .psn-summary-trophy-clickable[data-psn-tier]");
+        if (!(trophy instanceof HTMLElement)) return;
+        event.preventDefault();
+        togglePsnTitleDetailsTierFilter(trophy.dataset.psnTier || "");
+    });
+    psnTitleDetailsBody?.addEventListener("keydown", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const trophy = target.closest(".psn-title-details-summary .psn-summary-trophy-clickable[data-psn-tier]");
+        if (!(trophy instanceof HTMLElement)) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        togglePsnTitleDetailsTierFilter(trophy.dataset.psnTier || "");
+    });
+    psnTitleDetailsCloseBtn?.addEventListener("click", () => {
+        closePsnTitleDetailsModal();
+    });
+    psnTitleDetailsCloseIconBtn?.addEventListener("click", () => {
+        closePsnTitleDetailsModal();
+    });
+    psnTitleDetailsModal?.addEventListener("click", (event) => {
+        if (event.target === psnTitleDetailsModal) {
+            closePsnTitleDetailsModal();
+        }
+    });
+    psnTierDetailsCloseBtn?.addEventListener("click", () => {
+        closePsnTierDetailsModal();
+    });
+    psnTierDetailsCloseIconBtn?.addEventListener("click", () => {
+        closePsnTierDetailsModal();
+    });
+    psnTierDetailsModal?.addEventListener("click", (event) => {
+        if (event.target === psnTierDetailsModal) {
+            closePsnTierDetailsModal();
+        }
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (!psnTierDetailsModal?.classList.contains("hidden")) {
+            closePsnTierDetailsModal();
+            return;
+        }
+        if (psnTitleDetailsModal?.classList.contains("hidden")) return;
+        closePsnTitleDetailsModal();
     });
 
     profileCommentForm?.addEventListener("submit", async (event) => {
@@ -5952,6 +6939,8 @@ async function init() {
 }
 
 init();
+
+
 
 
 

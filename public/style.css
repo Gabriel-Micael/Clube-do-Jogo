@@ -48,7 +48,7 @@ body {
         100% 100%;
     background-attachment: fixed;
     animation: gamerBgAmbient 22s ease-in-out infinite;
-    padding-bottom: 86px;
+    padding-bottom: 0;
 }
 
 @keyframes gamerBgAmbient {
@@ -184,10 +184,113 @@ body[data-page]:not(.app-ready)::after {
     body[data-page]::after {
         animation: none;
     }
+    .psn-title-card-clickable {
+        transition: none;
+    }
+    .psn-title-card-clickable:hover,
+    .psn-title-card-clickable:focus-visible,
+    .psn-title-card-clickable.is-active {
+        transform: none;
+    }
+    .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable {
+        transition: none;
+    }
+    .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:hover,
+    .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:focus-visible,
+    .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable.is-active {
+        transform: none;
+    }
+    .psn-tier-hero-icon {
+        animation: none;
+        transform: none;
+    }
+    .psn-loading-spinner {
+        animation: none;
+    }
+    .recommendation-cover-link {
+        transition: none;
+    }
+    .recommendation-cover-link:hover,
+    .recommendation-cover-link:focus-visible {
+        transform: none;
+        box-shadow: none;
+    }
+    .btn,
+    .btn:hover,
+    .btn:focus-visible,
+    .btn:active {
+        transition: none;
+        translate: 0 0;
+    }
+    :where(
+        a[href][class],
+        button,
+        [role="button"],
+        [onclick],
+        input[type="button"],
+        input[type="submit"],
+        summary
+    ):not(:disabled):not(.navbar *):not(.site-footer *) {
+        transition: none;
+        translate: 0 0;
+    }
 }
 
 .hidden {
     display: none !important;
+}
+
+/* Global subtle lift for clickable UI elements (except navbar/footer and custom-lift components). */
+:where(
+    a[href][class],
+    button,
+    [role="button"],
+    [onclick],
+    input[type="button"],
+    input[type="submit"],
+    summary
+):not(:disabled):not(.navbar *):not(.site-footer *):not(.recommendation-cover-link):not(.psn-title-card-clickable):not(.psn-summary-trophy-clickable):not(.naval-point) {
+    translate: 0 0;
+    transition:
+        translate 170ms cubic-bezier(0.22, 0.82, 0.32, 1),
+        box-shadow 170ms ease,
+        filter 170ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    :where(
+        a[href][class],
+        button,
+        [role="button"],
+        [onclick],
+        input[type="button"],
+        input[type="submit"],
+        summary
+    ):not(:disabled):not(.navbar *):not(.site-footer *):not(.recommendation-cover-link):not(.psn-title-card-clickable):not(.psn-summary-trophy-clickable):not(.naval-point):hover,
+    :where(
+        a[href][class],
+        button,
+        [role="button"],
+        [onclick],
+        input[type="button"],
+        input[type="submit"],
+        summary
+    ):not(:disabled):not(.navbar *):not(.site-footer *):not(.recommendation-cover-link):not(.psn-title-card-clickable):not(.psn-summary-trophy-clickable):not(.naval-point):focus-visible {
+        translate: 0 -3px;
+        box-shadow: 0 10px 22px rgba(6, 12, 30, 0.35);
+    }
+
+    :where(
+        a[href][class],
+        button,
+        [role="button"],
+        [onclick],
+        input[type="button"],
+        input[type="submit"],
+        summary
+    ):not(:disabled):not(.navbar *):not(.site-footer *):not(.recommendation-cover-link):not(.psn-title-card-clickable):not(.psn-summary-trophy-clickable):not(.naval-point):active {
+        translate: 0 -1px;
+    }
 }
 
 .navbar {
@@ -369,6 +472,7 @@ li {
     display: flex;
     gap: 0.6rem;
     flex-wrap: wrap;
+    overflow: visible;
 }
 
 body[data-page="home"] .home-active-actions {
@@ -687,6 +791,7 @@ input[readonly] {
 }
 
 .btn {
+    --btn-glow-color: rgba(57, 210, 255, 0.14);
     border: 0;
     border-radius: 10px;
     min-height: 42px;
@@ -703,10 +808,24 @@ input[readonly] {
     justify-content: center;
     margin-top: 10px;
     margin-bottom: 10px;
+    translate: 0 0;
+    transition:
+        filter 170ms ease,
+        translate 170ms cubic-bezier(0.22, 0.82, 0.32, 1),
+        box-shadow 170ms ease;
 }
 
 .btn:hover {
     filter: brightness(1.07);
+    translate: 0 -3px;
+}
+
+.btn:focus-visible {
+    translate: 0 -3px;
+}
+
+.btn:active {
+    translate: 0 -1px;
 }
 
 .btn.is-loading {
@@ -739,18 +858,21 @@ input[readonly] {
 }
 
 .btn-success {
+    --btn-glow-color: rgba(37, 211, 136, 0.15);
     background: linear-gradient(140deg, #25d388, #149b63);
     color: #fff;
     border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .btn-warn {
+    --btn-glow-color: rgba(255, 209, 102, 0.16);
     background: linear-gradient(140deg, #ffd166, #f0b400);
     color: #121212;
     border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 .btn-danger {
+    --btn-glow-color: rgba(255, 93, 93, 0.15);
     background: linear-gradient(140deg, #ff5d5d, #c91e44);
     color: #fff;
     border: 1px solid rgba(255, 255, 255, 0.18);
@@ -773,6 +895,7 @@ input[readonly] {
 }
 
 .btn-google {
+    --btn-glow-color: rgba(255, 255, 255, 0.12);
     width: 100%;
     margin-top: 0;
     background: #fff;
@@ -782,6 +905,23 @@ input[readonly] {
 
 .btn-google:hover {
     background: #f7f7f7;
+}
+
+.btn-psn {
+    --btn-glow-color: rgba(68, 121, 255, 0.15);
+}
+
+:where(.btn):not(:disabled):not(.btn-disabled):not(.btn-quiet):not(.btn-outline):hover,
+:where(.btn):not(:disabled):not(.btn-disabled):not(.btn-quiet):not(.btn-outline):focus-visible {
+    filter:
+        brightness(1.02)
+        drop-shadow(0 0 2px var(--btn-glow-color))
+        drop-shadow(0 0 4px var(--btn-glow-color));
+    box-shadow:
+        0 6px 12px rgba(4, 10, 24, 0.26),
+        0 0 4px var(--btn-glow-color),
+        0 0 0 1px var(--btn-glow-color),
+        0 0 8px var(--btn-glow-color);
 }
 
 .oauth-divider {
@@ -1087,10 +1227,81 @@ input[readonly] {
     color: rgba(216, 226, 247, 0.86);
 }
 
+#profilePsnSection {
+    transition: border-color 0.24s ease, box-shadow 0.24s ease, background 0.24s ease;
+}
+
+#profilePsnSection.psn-attention {
+    border-color: rgba(255, 211, 98, 0.72);
+    background:
+        linear-gradient(145deg, rgba(76, 55, 8, 0.3), rgba(66, 50, 14, 0.18)),
+        var(--card);
+    box-shadow:
+        0 14px 36px rgba(4, 8, 20, 0.45),
+        0 0 0 1px rgba(255, 208, 92, 0.38) inset,
+        0 0 28px rgba(255, 192, 50, 0.16);
+}
+
 .psn-help-text {
-    margin: 0 0 0.9rem;
+    margin: 0.35rem 0 0.9rem;
     color: rgba(189, 207, 236, 0.82);
     font-size: 0.84rem;
+}
+
+.psn-link-steps {
+    margin: 0.7rem 0 0.95rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid rgba(104, 139, 216, 0.34);
+    border-radius: 10px;
+    background: rgba(7, 14, 34, 0.65);
+}
+
+.psn-link-steps-title {
+    margin: 0;
+    font-size: 0.86rem;
+    color: rgba(223, 234, 255, 0.95);
+}
+
+.psn-link-steps-list {
+    margin: 0.42rem 0 0;
+    padding-left: 1.15rem;
+    display: grid;
+    gap: 0.36rem;
+    color: rgba(195, 214, 243, 0.92);
+    font-size: 0.82rem;
+}
+
+.psn-link-step-link {
+    color: #9fcbff;
+    word-break: break-all;
+}
+
+.psn-grab-row {
+    margin-top: 0.35rem;
+}
+
+#psnGrabNpssoBtn {
+    margin: 0;
+}
+
+#psnGrabNpssoFeedback {
+    margin: 0.35rem 0 0;
+    text-align: left;
+    font-size: 0.8rem;
+}
+
+.psn-link-steps.psn-link-steps-warning {
+    border-color: rgba(255, 206, 93, 0.86);
+    background: rgba(71, 56, 14, 0.52);
+    box-shadow: 0 0 0 1px rgba(255, 219, 122, 0.24) inset;
+}
+
+.psn-link-steps.psn-link-steps-warning .psn-link-steps-title {
+    color: rgba(255, 230, 158, 0.98);
+}
+
+.psn-link-steps.psn-link-steps-warning .psn-link-steps-list {
+    color: rgba(255, 235, 186, 0.94);
 }
 
 .psn-help-text a {
@@ -1131,8 +1342,9 @@ input[readonly] {
 
 .psn-profile-head {
     display: grid;
-    grid-template-columns: 80px minmax(0, 1fr);
-    gap: 0.9rem;
+    grid-template-columns: auto auto;
+    gap: 1.15rem;
+    justify-content: center;
     align-items: center;
     border: 1px solid rgba(118, 154, 247, 0.34);
     border-radius: 12px;
@@ -1142,16 +1354,58 @@ input[readonly] {
 }
 
 .psn-profile-avatar {
-    width: 80px;
-    height: 80px;
+    width: 92px;
+    height: 92px;
     border-radius: 14px;
     object-fit: cover;
     border: 1px solid rgba(162, 188, 246, 0.55);
     background: rgba(11, 18, 40, 0.95);
 }
 
+.psn-profile-link-avatar {
+    display: inline-flex;
+    border-radius: 14px;
+    line-height: 0;
+    text-decoration: none;
+}
+
+.psn-profile-link-avatar:focus-visible {
+    outline: 2px solid rgba(122, 190, 255, 0.92);
+    outline-offset: 2px;
+}
+
+.psn-profile-link-name {
+    color: inherit;
+    text-decoration: none;
+}
+
+.psn-profile-link-name:hover {
+    text-decoration: underline;
+}
+
+.psn-profile-link-name:focus-visible {
+    outline: 2px solid rgba(122, 190, 255, 0.92);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+.psn-profile-info-wrap {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-content: center;
+    justify-items: start;
+    gap: 0.35rem;
+}
+
 .psn-profile-meta {
     min-width: 0;
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 0.1rem;
+    text-align: center;
 }
 
 .psn-profile-meta h3 {
@@ -1170,6 +1424,18 @@ input[readonly] {
     flex-wrap: wrap;
     gap: 0.35rem;
     margin-top: 0.45rem;
+    justify-content: center;
+}
+
+.psn-summary-trophies-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(72px, 88px));
+    gap: 0.55rem;
+    margin-top: 0;
+    width: max-content;
+    justify-self: start;
+    align-self: center;
+    justify-items: center;
 }
 
 .psn-summary-pill {
@@ -1184,26 +1450,134 @@ input[readonly] {
     color: rgba(234, 243, 255, 0.95);
 }
 
+.psn-summary-pill.psn-summary-trophy {
+    min-width: 0;
+    width: 100%;
+    align-items: center;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.42rem;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    padding: 0.15rem 0;
+    transform: translateY(0) scale(1);
+    transition:
+        transform 220ms cubic-bezier(0.22, 0.82, 0.32, 1),
+        box-shadow 220ms ease,
+        background 220ms ease;
+    will-change: transform;
+}
+
+.psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable {
+    cursor: pointer;
+}
+
+.psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:hover,
+.psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:focus-visible,
+.psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable.is-active {
+    transform: translateY(-10px) scale(1.02);
+}
+
+.psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable.is-returning {
+    transform: translateY(0) scale(1);
+}
+
+.psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:focus-visible {
+    outline: 2px solid rgba(122, 190, 255, 0.9);
+    outline-offset: 2px;
+}
+
+.psn-summary-tier-icon {
+    width: 68px;
+    height: 68px;
+    object-fit: contain;
+    flex: 0 0 68px;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
+}
+
+.psn-summary-tier-count {
+    display: block;
+    min-width: 2ch;
+    text-align: center;
+    font-size: clamp(1.55rem, 2.2vw, 2rem);
+    line-height: 1;
+    color: rgba(244, 248, 255, 0.98);
+    letter-spacing: 0.02em;
+}
+
 .psn-summary-pill.psn-bronze {
-    border-color: rgba(175, 127, 88, 0.72);
+    border-color: transparent;
 }
 
 .psn-summary-pill.psn-silver {
-    border-color: rgba(180, 189, 206, 0.72);
+    border-color: transparent;
 }
 
 .psn-summary-pill.psn-gold {
-    border-color: rgba(219, 181, 84, 0.78);
+    border-color: transparent;
 }
 
 .psn-summary-pill.psn-platinum {
-    border-color: rgba(135, 196, 233, 0.82);
+    border-color: transparent;
+}
+
+.psn-summary-pill.psn-platinum .psn-summary-tier-icon {
+    filter:
+        drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45))
+        drop-shadow(0 0 6px rgba(90, 184, 255, 0.56))
+        drop-shadow(0 0 12px rgba(72, 160, 255, 0.34));
+}
+
+.psn-summary-pill.psn-gold .psn-summary-tier-icon {
+    filter:
+        drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45))
+        drop-shadow(0 0 6px rgba(255, 204, 80, 0.58))
+        drop-shadow(0 0 12px rgba(232, 170, 36, 0.36));
+}
+
+.psn-summary-pill.psn-silver .psn-summary-tier-icon {
+    filter:
+        drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45))
+        drop-shadow(0 0 6px rgba(214, 225, 246, 0.52))
+        drop-shadow(0 0 12px rgba(152, 170, 207, 0.32));
+}
+
+.psn-summary-pill.psn-bronze .psn-summary-tier-icon {
+    filter:
+        drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45))
+        drop-shadow(0 0 6px rgba(224, 158, 118, 0.5))
+        drop-shadow(0 0 12px rgba(166, 106, 72, 0.3));
 }
 
 .psn-titles-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.72rem;
+    position: relative;
+}
+
+.psn-titles-grid-loading {
+    pointer-events: none;
+}
+
+.psn-grid-loading-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 0.55rem;
+    border-radius: 12px;
+    background: rgba(6, 13, 30, 0.56);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+
+.psn-grid-loading-overlay .psn-title-details-loading {
+    width: min(100%, 340px);
+    text-align: center;
 }
 
 .psn-title-card {
@@ -1215,6 +1589,41 @@ input[readonly] {
     gap: 0.62rem;
     align-items: center;
     padding: 0.6rem;
+}
+
+.psn-title-card-clickable {
+    cursor: pointer;
+    position: relative;
+    z-index: 0;
+    transform: translateY(0) scale(1);
+    transform-origin: center bottom;
+    transition:
+        transform 220ms cubic-bezier(0.22, 0.82, 0.32, 1),
+        border-color 220ms ease,
+        box-shadow 220ms ease,
+        background 220ms ease;
+    will-change: transform;
+}
+
+.psn-title-card-clickable:hover,
+.psn-title-card-clickable:focus-visible,
+.psn-title-card-clickable.is-active {
+    transform: translateY(-12px) scale(1.015);
+    border-color: rgba(106, 174, 255, 0.88);
+    background: rgba(10, 23, 52, 0.95);
+    box-shadow:
+        0 14px 26px rgba(5, 10, 28, 0.56),
+        0 0 0 1px rgba(92, 168, 255, 0.34);
+    z-index: 6;
+}
+
+.psn-title-card-clickable.is-returning {
+    transform: translateY(0) scale(1);
+}
+
+.psn-title-card-clickable:focus-visible {
+    outline: 2px solid rgba(122, 190, 255, 0.9);
+    outline-offset: 1px;
 }
 
 .psn-title-card > img {
@@ -1262,16 +1671,56 @@ input[readonly] {
 }
 
 .psn-tier-icon {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     object-fit: contain;
     border: 0;
     border-radius: 0;
     background: transparent;
+    flex: 0 0 16px;
 }
 
-#psnShowMoreBtn {
+.psn-show-more-wrap {
+    display: flex;
+    justify-content: center;
     margin-top: 0.75rem;
+}
+
+.psn-show-more-link {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(188, 207, 239, 0.82);
+    font-size: 0.82rem;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+
+.psn-show-more-link:hover {
+    color: rgba(226, 239, 255, 0.95);
+}
+
+.psn-pagination {
+    margin-top: 0.72rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+}
+
+.psn-pagination .btn {
+    margin: 0;
+    min-height: 34px;
+    padding: 0.35rem 0.7rem;
+}
+
+.psn-pagination-label {
+    color: rgba(202, 220, 250, 0.9);
+    font-size: 0.82rem;
+    min-width: 108px;
+    text-align: center;
 }
 
 .psn-title-progress {
@@ -1287,6 +1736,523 @@ input[readonly] {
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, #4ea1ff, #83d0ff);
+}
+
+.psn-title-details-modal-card {
+    width: min(880px, 96vw);
+    max-height: min(92vh, 860px);
+    position: relative;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    overflow: hidden;
+}
+
+.psn-title-details-head {
+    margin: 0;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid rgba(124, 158, 235, 0.22);
+    align-items: flex-start;
+    gap: 0.7rem;
+}
+
+.psn-title-details-head .btn-quiet {
+    margin: 0;
+    min-height: 0;
+    padding: 0.15rem 0.25rem;
+    align-self: flex-start;
+}
+
+#psnTitleDetailsCloseBtn,
+#psnTierDetailsCloseBtn {
+    display: none;
+}
+
+.psn-modal-close-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 34px;
+    height: 34px;
+    min-height: 34px;
+    margin: 0;
+    border: 1px solid rgba(129, 168, 244, 0.48);
+    border-radius: 999px;
+    background: rgba(7, 14, 35, 0.96);
+    color: rgba(232, 242, 255, 0.98);
+    font-family: "Orbitron", sans-serif;
+    font-size: 0.86rem;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 2;
+}
+
+.psn-modal-close-icon:hover {
+    filter: brightness(1.1);
+}
+
+.psn-modal-close-icon:focus-visible {
+    outline: 2px solid rgba(122, 190, 255, 0.92);
+    outline-offset: 2px;
+}
+
+.psn-title-details-head-main {
+    min-width: 0;
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 0.68rem;
+    align-items: center;
+}
+
+#psnTitleDetailsIcon {
+    width: 72px;
+    height: 72px;
+    border-radius: 10px;
+    object-fit: cover;
+    border: 1px solid rgba(126, 162, 239, 0.36);
+    background: rgba(6, 11, 26, 0.92);
+}
+
+#psnTitleDetailsName {
+    margin: 0;
+    font-size: 1.08rem;
+    line-height: 1.18;
+    color: #f5f9ff;
+}
+
+.psn-title-details-meta {
+    margin: 0.2rem 0 0;
+    color: rgba(188, 207, 240, 0.86);
+    font-size: 0.87rem;
+}
+
+.psn-title-details-body {
+    min-height: 0;
+    overflow: auto;
+    padding-right: 0.24rem;
+    display: grid;
+    gap: 0.58rem;
+    align-content: start;
+}
+
+.psn-title-details-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.42rem;
+    padding: 0.48rem;
+    border-radius: 10px;
+    border: 1px solid rgba(107, 140, 214, 0.34);
+    background: rgba(7, 14, 33, 0.82);
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy {
+    border: 1px solid rgba(116, 149, 226, 0.32);
+    border-radius: 10px;
+    background: rgba(16, 27, 54, 0.88);
+    padding: 0.34rem 0.22rem;
+    gap: 0.24rem;
+    --psn-title-tier-glow: rgba(108, 177, 255, 0.2);
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-platinum {
+    --psn-title-tier-glow: rgba(98, 188, 255, 0.22);
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-gold {
+    --psn-title-tier-glow: rgba(255, 206, 92, 0.22);
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-silver {
+    --psn-title-tier-glow: rgba(214, 225, 246, 0.2);
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-bronze {
+    --psn-title-tier-glow: rgba(226, 162, 124, 0.2);
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable {
+    cursor: pointer;
+    transform: translateY(0) scale(1);
+    transition:
+        transform 180ms cubic-bezier(0.22, 0.82, 0.32, 1),
+        box-shadow 180ms ease,
+        border-color 180ms ease,
+        background 180ms ease;
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:hover,
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:focus-visible,
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable.is-active {
+    transform: translateY(-5px) scale(1.012);
+    border-color: rgba(132, 176, 255, 0.62);
+    background: rgba(21, 35, 67, 0.95);
+    box-shadow:
+        0 8px 16px rgba(6, 12, 28, 0.35),
+        0 0 0 1px rgba(120, 168, 255, 0.24),
+        0 0 12px var(--psn-title-tier-glow);
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:focus-visible {
+    outline: 2px solid rgba(122, 190, 255, 0.9);
+    outline-offset: 2px;
+}
+
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:hover .psn-summary-tier-icon,
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable:focus-visible .psn-summary-tier-icon,
+.psn-title-details-summary .psn-summary-pill.psn-summary-trophy.psn-summary-trophy-clickable.is-active .psn-summary-tier-icon {
+    filter: drop-shadow(0 0 6px var(--psn-title-tier-glow));
+}
+
+.psn-title-details-summary .psn-summary-tier-icon {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+    filter: none;
+}
+
+.psn-title-details-summary .psn-summary-tier-count {
+    font-size: 1.04rem;
+}
+
+.psn-title-earned-list {
+    display: grid;
+    gap: 0.46rem;
+    padding-bottom: 0.12rem;
+}
+
+.psn-earned-trophy-item {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    gap: 0.55rem;
+    align-items: center;
+    border: 1px solid rgba(96, 133, 209, 0.26);
+    border-radius: 10px;
+    background: rgba(9, 17, 40, 0.72);
+    padding: 0.5rem 0.56rem;
+}
+
+.psn-earned-tier-icon {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    background: transparent;
+}
+
+.psn-earned-trophy-texts {
+    min-width: 0;
+}
+
+.psn-earned-trophy-name {
+    margin: 0;
+    color: rgba(245, 250, 255, 0.98);
+    font-size: 0.9rem;
+    line-height: 1.26;
+    word-break: break-word;
+}
+
+.psn-earned-trophy-detail {
+    margin: 0.16rem 0 0;
+    color: rgba(176, 198, 234, 0.92);
+    font-size: 0.78rem;
+    line-height: 1.24;
+    word-break: break-word;
+}
+
+.psn-earned-trophy-date {
+    color: rgba(172, 195, 233, 0.84);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.psn-title-details-loading,
+.psn-title-details-empty,
+.psn-title-details-error {
+    margin: 0;
+    padding: 0.7rem;
+    border-radius: 10px;
+    border: 1px solid rgba(108, 144, 220, 0.26);
+    background: rgba(8, 14, 33, 0.72);
+    color: rgba(201, 220, 249, 0.94);
+}
+
+.psn-title-details-error {
+    border-color: rgba(255, 150, 150, 0.4);
+    color: rgba(255, 198, 198, 0.95);
+    background: rgba(49, 18, 24, 0.45);
+}
+
+.psn-loading-state {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 0.55rem;
+    padding: 0.32rem 0;
+}
+
+.psn-loading-state .psn-title-details-loading,
+.psn-loading-state .psn-tier-details-loading {
+    width: min(100%, 340px);
+    text-align: center;
+}
+
+.psn-loading-spinner {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 3px solid rgba(120, 162, 245, 0.32);
+    border-top-color: rgba(90, 186, 255, 0.96);
+    border-right-color: rgba(126, 210, 255, 0.72);
+    animation: psnLoadingSpin 0.8s linear infinite;
+}
+
+@keyframes psnLoadingSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.psn-tier-details-modal-card {
+    width: min(860px, 96vw);
+    max-height: min(92vh, 860px);
+    position: relative;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 0.7rem;
+    overflow: hidden;
+}
+
+.psn-tier-details-head {
+    margin: 0;
+    padding-bottom: 0.58rem;
+    border-bottom: 1px solid rgba(124, 158, 235, 0.22);
+    align-items: center;
+}
+
+.psn-tier-details-head h3 {
+    margin: 0;
+}
+
+.psn-tier-details-head .btn-quiet {
+    margin: 0;
+    min-height: 0;
+    padding: 0.1rem 0.25rem;
+}
+
+.psn-tier-details-hero {
+    display: grid;
+    justify-items: center;
+    text-align: center;
+    gap: 0.2rem;
+    padding: 0.5rem 0.4rem 0.35rem;
+    border: 1px solid rgba(110, 143, 219, 0.26);
+    border-radius: 12px;
+    background: rgba(10, 19, 42, 0.75);
+}
+
+.psn-tier-hero-icon {
+    width: 74px;
+    height: 74px;
+    object-fit: contain;
+    transform: scale(1);
+    animation: psn-tier-hero-ambient 2.5s ease-in-out infinite;
+}
+
+.psn-tier-hero-icon.psn-tier-platinum {
+    filter:
+        drop-shadow(0 0 6px rgba(90, 184, 255, 0.62))
+        drop-shadow(0 0 14px rgba(72, 160, 255, 0.38));
+}
+
+.psn-tier-hero-icon.psn-tier-gold {
+    filter:
+        drop-shadow(0 0 6px rgba(255, 204, 80, 0.62))
+        drop-shadow(0 0 14px rgba(232, 170, 36, 0.38));
+}
+
+.psn-tier-hero-icon.psn-tier-silver {
+    filter:
+        drop-shadow(0 0 6px rgba(214, 225, 246, 0.52))
+        drop-shadow(0 0 14px rgba(152, 170, 207, 0.34));
+}
+
+.psn-tier-hero-icon.psn-tier-bronze {
+    filter:
+        drop-shadow(0 0 6px rgba(224, 158, 118, 0.48))
+        drop-shadow(0 0 14px rgba(166, 106, 72, 0.3));
+}
+
+@keyframes psn-tier-hero-ambient {
+    0% {
+        transform: scale(0.97);
+    }
+    50% {
+        transform: scale(1.035);
+    }
+    100% {
+        transform: scale(0.97);
+    }
+}
+
+.psn-tier-hero-label {
+    margin: 0;
+    color: rgba(246, 250, 255, 0.98);
+    font-size: 1.02rem;
+    line-height: 1.2;
+}
+
+.psn-tier-hero-meta {
+    margin: 0;
+    color: rgba(188, 207, 240, 0.88);
+    font-size: 0.84rem;
+}
+
+.psn-tier-details-body {
+    min-height: 0;
+    overflow: auto;
+    padding-right: 0.2rem;
+}
+
+#psnTitleDetailsModal,
+#psnTierDetailsModal,
+.psn-title-details-body,
+.psn-tier-details-body {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(106, 179, 255, 0.9) rgba(8, 16, 36, 0.62);
+}
+
+#psnTitleDetailsModal::-webkit-scrollbar,
+#psnTierDetailsModal::-webkit-scrollbar,
+.psn-title-details-body::-webkit-scrollbar,
+.psn-tier-details-body::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+#psnTitleDetailsModal::-webkit-scrollbar-track,
+#psnTierDetailsModal::-webkit-scrollbar-track,
+.psn-title-details-body::-webkit-scrollbar-track,
+.psn-tier-details-body::-webkit-scrollbar-track {
+    background: rgba(8, 16, 36, 0.58);
+    border-radius: 999px;
+}
+
+#psnTitleDetailsModal::-webkit-scrollbar-thumb,
+#psnTierDetailsModal::-webkit-scrollbar-thumb,
+.psn-title-details-body::-webkit-scrollbar-thumb,
+.psn-tier-details-body::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(118, 195, 255, 0.95), rgba(84, 138, 255, 0.92));
+    border-radius: 999px;
+    border: 2px solid rgba(8, 16, 36, 0.45);
+}
+
+#psnTitleDetailsModal::-webkit-scrollbar-thumb:hover,
+#psnTierDetailsModal::-webkit-scrollbar-thumb:hover,
+.psn-title-details-body::-webkit-scrollbar-thumb:hover,
+.psn-tier-details-body::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(140, 207, 255, 0.98), rgba(96, 154, 255, 0.95));
+}
+
+.psn-tier-details-list {
+    display: grid;
+    gap: 0.5rem;
+    align-content: start;
+    padding-bottom: 0.12rem;
+}
+
+.psn-tier-entry {
+    display: grid;
+    grid-template-columns: 44px 28px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.55rem;
+    border: 1px solid rgba(97, 135, 210, 0.28);
+    border-radius: 11px;
+    background: rgba(9, 18, 41, 0.76);
+    padding: 0.5rem 0.58rem;
+}
+
+.psn-tier-entry-game-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    object-fit: cover;
+    border: 1px solid rgba(132, 164, 237, 0.42);
+    background: rgba(5, 10, 28, 0.9);
+}
+
+.psn-tier-entry-tier-icon {
+    width: 26px;
+    height: 26px;
+    object-fit: contain;
+}
+
+.psn-tier-entry-tier-icon.psn-tier-platinum {
+    filter: drop-shadow(0 0 6px rgba(90, 184, 255, 0.56));
+}
+
+.psn-tier-entry-tier-icon.psn-tier-gold {
+    filter: drop-shadow(0 0 6px rgba(255, 204, 80, 0.58));
+}
+
+.psn-tier-entry-tier-icon.psn-tier-silver {
+    filter: drop-shadow(0 0 6px rgba(214, 225, 246, 0.5));
+}
+
+.psn-tier-entry-tier-icon.psn-tier-bronze {
+    filter: drop-shadow(0 0 6px rgba(224, 158, 118, 0.46));
+}
+
+.psn-tier-entry-texts {
+    min-width: 0;
+}
+
+.psn-tier-entry-trophy-name {
+    margin: 0;
+    color: rgba(245, 250, 255, 0.98);
+    font-size: 0.9rem;
+    line-height: 1.26;
+    word-break: break-word;
+}
+
+.psn-tier-entry-game-name {
+    margin: 0.14rem 0 0;
+    color: rgba(188, 207, 240, 0.88);
+    font-size: 0.78rem;
+    line-height: 1.24;
+}
+
+.psn-tier-entry-detail {
+    margin: 0.12rem 0 0;
+    color: rgba(171, 194, 232, 0.86);
+    font-size: 0.75rem;
+    line-height: 1.24;
+    word-break: break-word;
+}
+
+.psn-tier-entry-date {
+    color: rgba(170, 193, 231, 0.82);
+    font-size: 0.74rem;
+    white-space: nowrap;
+}
+
+.psn-tier-details-loading,
+.psn-tier-details-empty,
+.psn-tier-details-error {
+    margin: 0;
+    padding: 0.72rem;
+    border-radius: 10px;
+    border: 1px solid rgba(108, 144, 220, 0.26);
+    background: rgba(8, 14, 33, 0.72);
+    color: rgba(201, 220, 249, 0.94);
+}
+
+.psn-tier-details-error {
+    border-color: rgba(255, 150, 150, 0.4);
+    color: rgba(255, 198, 198, 0.95);
+    background: rgba(49, 18, 24, 0.45);
 }
 
 .psn-empty-state {
@@ -1536,6 +2502,10 @@ input[readonly] {
     min-height: 42px;
 }
 
+.home-round-actions {
+    overflow: visible;
+}
+
 .round-participants-mini {
     font-size: 0.84rem;
     margin-top: -0.2rem;
@@ -1752,7 +2722,7 @@ body[data-page="home"] .recommendation-card-indication .comment-form {
     max-height: none;
     height: 100%;
     min-height: 330px;
-    object-fit: contain;
+    object-fit: cover;
     background: rgba(6, 11, 24, 0.9);
 }
 
@@ -1907,10 +2877,37 @@ body[data-page="home"] .recommendation-card-indication .comment-form {
 
 .recommendation-cover-wrap {
     position: relative;
+    display: block;
+    aspect-ratio: 2 / 3;
     border-radius: 10px;
     overflow: hidden;
     isolation: isolate;
     line-height: 0;
+}
+
+.recommendation-cover-link {
+    cursor: pointer;
+    transform: translateY(0) scale(1);
+    transform-origin: center bottom;
+    transition:
+        transform 180ms cubic-bezier(0.22, 0.82, 0.32, 1),
+        box-shadow 180ms ease;
+    box-shadow: 0 8px 20px rgba(4, 9, 24, 0.34);
+    text-decoration: none;
+}
+
+.recommendation-cover-link:hover,
+.recommendation-cover-link:focus-visible {
+    transform: translateY(-6px) scale(1.01);
+    box-shadow:
+        0 12px 24px rgba(4, 10, 24, 0.5),
+        0 0 0 1px rgba(104, 176, 255, 0.48),
+        0 0 16px rgba(57, 210, 255, 0.3);
+}
+
+.recommendation-cover-link:focus-visible {
+    outline: 2px solid rgba(118, 196, 255, 0.94);
+    outline-offset: 2px;
 }
 
 .recommendation-cover-bg {
@@ -1928,9 +2925,9 @@ body[data-page="home"] .recommendation-card-indication .comment-form {
 
 .recommendation-cover {
     width: 100%;
-    max-height: 360px;
-    height: auto;
-    object-fit: contain;
+    max-height: none;
+    height: 100%;
+    object-fit: cover;
     border-radius: 10px;
     background: transparent;
     position: relative;
@@ -2408,8 +3405,8 @@ body[data-page="round"] .draft-draw-actions {
 .user-name-owner {
     color: #ff9b2f;
     text-shadow:
-        0 0 5px rgba(255, 166, 66, 0.9),
-        0 0 10px rgba(255, 132, 24, 0.75);
+        0 0 4px rgba(255, 166, 66, 0.7),
+        0 0 8px rgba(255, 132, 24, 0.55);
 }
 
 .user-name-moderator {
@@ -2992,17 +3989,12 @@ body[data-page="round"] .draft-draw-actions {
 }
 
 .site-footer {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 140;
+    position: static;
     width: 100%;
-    margin: 0;
+    margin: 1rem 0 0;
     border: 1px solid var(--stroke);
     border-left: 0;
     border-right: 0;
-    border-bottom: 0;
     border-radius: 0;
     background: rgba(7, 12, 28, 0.9);
     padding: 0.75rem 1rem;
@@ -3086,8 +4078,27 @@ body[data-page="round"] .draft-draw-actions {
         justify-self: center;
     }
 
+    .psn-profile-link-avatar {
+        justify-self: center;
+        margin-inline: auto;
+    }
+
+    .psn-profile-info-wrap {
+        grid-template-columns: 1fr;
+        justify-items: center;
+        gap: 0.7rem;
+    }
+
     .psn-summary-pills {
         justify-content: center;
+    }
+
+    .psn-summary-trophies-row {
+        justify-self: center;
+        width: 100%;
+        max-width: 420px;
+        grid-template-columns: repeat(4, minmax(64px, 1fr));
+        gap: 0.45rem;
     }
 
     .psn-titles-grid {
@@ -3226,7 +4237,7 @@ body[data-page="round"] .draft-draw-actions {
     }
 
     body {
-        padding-bottom: 100px;
+        padding-bottom: 0;
     }
 
     .brand span {
@@ -3399,6 +4410,206 @@ body[data-page="round"] .draft-draw-actions {
         height: 50px;
     }
 
+    .psn-title-card-clickable:hover,
+    .psn-title-card-clickable:focus-visible,
+    .psn-title-card-clickable.is-active {
+        transform: translateY(-8px) scale(1.01);
+    }
+
+    #psnTitleDetailsModal {
+        padding: 0.45rem;
+        align-items: start;
+        justify-items: center;
+        overflow-y: auto;
+    }
+
+    #psnTitleDetailsModal .psn-title-details-modal-card {
+        position: relative;
+        width: min(620px, 100%);
+        max-width: 100%;
+        max-height: calc(100vh - 0.9rem);
+        max-height: calc(100dvh - 0.9rem);
+        padding: 0.68rem 0.62rem;
+        gap: 0.58rem;
+        box-sizing: border-box;
+    }
+
+    .psn-title-details-head {
+        padding-bottom: 0.52rem;
+        gap: 0.45rem;
+    }
+
+    .psn-title-details-head-main {
+        grid-template-columns: 56px minmax(0, 1fr);
+        gap: 0.52rem;
+        align-items: start;
+        padding-right: 2.2rem;
+    }
+
+    #psnTitleDetailsIcon {
+        width: 56px;
+        height: 56px;
+    }
+
+    #psnTitleDetailsName {
+        font-size: 0.97rem;
+    }
+
+    .psn-title-details-meta {
+        font-size: 0.8rem;
+    }
+
+    .psn-title-details-summary {
+        padding: 0.35rem;
+        gap: 0.32rem;
+    }
+
+    .psn-title-details-summary .psn-summary-tier-icon {
+        width: 26px;
+        height: 26px;
+        flex-basis: 26px;
+    }
+
+    .psn-title-details-summary .psn-summary-tier-count {
+        font-size: 0.93rem;
+    }
+
+    .psn-earned-trophy-item {
+        grid-template-columns: 26px minmax(0, 1fr);
+        gap: 0.42rem;
+        padding: 0.42rem 0.45rem;
+    }
+
+    .psn-earned-tier-icon {
+        width: 20px;
+        height: 20px;
+    }
+
+    .psn-earned-trophy-name {
+        font-size: 0.84rem;
+    }
+
+    .psn-earned-trophy-detail {
+        font-size: 0.74rem;
+    }
+
+    .psn-earned-trophy-date {
+        grid-column: 2;
+        margin-top: 0.16rem;
+        white-space: normal;
+    }
+
+    #psnTitleDetailsModal .psn-title-details-body {
+        padding-right: 0.12rem;
+    }
+
+    .psn-tier-details-modal-card {
+        width: min(96vw, 620px);
+        padding: 0.72rem;
+        gap: 0.54rem;
+    }
+
+    .psn-tier-details-head {
+        padding-bottom: 0.46rem;
+    }
+
+    .psn-tier-hero-icon {
+        width: 60px;
+        height: 60px;
+    }
+
+    .psn-tier-hero-label {
+        font-size: 0.95rem;
+    }
+
+    .psn-tier-hero-meta {
+        font-size: 0.79rem;
+    }
+
+    .psn-tier-entry {
+        grid-template-columns: 38px 22px minmax(0, 1fr);
+        gap: 0.42rem;
+        padding: 0.42rem 0.45rem;
+    }
+
+    .psn-tier-entry-game-icon {
+        width: 38px;
+        height: 38px;
+    }
+
+    .psn-tier-entry-tier-icon {
+        width: 20px;
+        height: 20px;
+    }
+
+    .psn-tier-entry-trophy-name {
+        font-size: 0.84rem;
+    }
+
+    .psn-tier-entry-game-name,
+    .psn-tier-entry-detail {
+        font-size: 0.73rem;
+    }
+
+    .psn-tier-entry-date {
+        grid-column: 2 / -1;
+        margin-top: 0.14rem;
+        white-space: normal;
+        font-size: 0.71rem;
+    }
+
+    .psn-summary-trophies-row {
+        gap: 0.35rem;
+    }
+
+    .psn-summary-tier-icon {
+        width: 56px;
+        height: 56px;
+        flex-basis: 56px;
+    }
+
+    .psn-summary-tier-count {
+        font-size: 1.7rem;
+    }
+
+    #psnTierDetailsModal {
+        padding: 0.45rem;
+        align-items: start;
+        justify-items: center;
+        overflow-y: auto;
+    }
+
+    #psnTierDetailsModal .psn-tier-details-modal-card {
+        position: relative;
+        width: min(620px, 100%);
+        max-width: 100%;
+        max-height: calc(100vh - 0.9rem);
+        max-height: calc(100dvh - 0.9rem);
+        padding: 2.45rem 0.7rem 0.72rem;
+        box-sizing: border-box;
+    }
+
+    #psnTierDetailsModal .psn-tier-details-head {
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        padding-bottom: 0.46rem;
+    }
+
+    #psnTierDetailsModal .psn-tier-details-head h3 {
+        text-align: center;
+    }
+
+    #psnTitleDetailsCloseIconBtn,
+    #psnTierDetailsCloseIconBtn {
+        top: 0.48rem;
+        right: 0.48rem;
+        left: auto;
+        width: 34px;
+        height: 34px;
+        min-height: 34px;
+    }
+
     .participant-tools {
         flex-direction: row;
         flex-wrap: wrap;
@@ -3450,7 +4661,7 @@ body[data-page="round"] .draft-draw-actions {
     }
 
     body {
-        padding-bottom: 122px;
+        padding-bottom: 0;
     }
 
     .desc-grade-row {

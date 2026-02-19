@@ -54,6 +54,8 @@ let adminNotificationSyncBound = false;
 let adminLatestResolvedDecisionId = 0;
 let roundRealtimeEventSource = null;
 let roundRealtimeUnloadBound = false;
+let roundRealtimeSyncBound = false;
+let roundRealtimeRecoveryTimer = 0;
 let roundRealtimeLastEventSignature = "";
 const roundRealtimeCommentReasons = new Set([
     "recommendation_comment_changed",
@@ -85,8 +87,43 @@ const sendJsonPendingGetRequests = new Map();
 const sendJsonRecentGetResponses = new Map();
 let homePhaseRefreshTimer = 0;
 let roundPhaseRefreshTimer = 0;
+let serverClockOffsetSeconds = 0;
 const appBootOverlayStartedAt = Date.now();
 let appBootOverlayDone = false;
+
+function updateServerClockOffsetFromEpochSeconds(epochSeconds) {
+    const parsed = Number(epochSeconds || 0);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    const rounded = Math.floor(parsed);
+    if (rounded < 946684800) return;
+    serverClockOffsetSeconds = rounded - Math.floor(Date.now() / 1000);
+}
+
+function updateServerClockOffsetFromPayload(data) {
+    if (!data || typeof data !== "object") return;
+    const direct = Number(data.server_now || 0);
+    if (direct > 0) {
+        updateServerClockOffsetFromEpochSeconds(direct);
+        return;
+    }
+    const roundNow = Number(data?.round?.server_now || data?.activeRound?.server_now || 0);
+    if (roundNow > 0) {
+        updateServerClockOffsetFromEpochSeconds(roundNow);
+    }
+}
+
+function updateServerClockOffsetFromResponseDate(response) {
+    if (!(response instanceof Response)) return;
+    const dateHeader = response.headers.get("date");
+    if (!dateHeader) return;
+    const parsed = Date.parse(dateHeader);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    updateServerClockOffsetFromEpochSeconds(Math.floor(parsed / 1000));
+}
+
+function getServerAlignedNowSeconds() {
+    return Math.floor(Date.now() / 1000) + Number(serverClockOffsetSeconds || 0);
+}
 
 function finishAppBootOverlay() {
     if (appBootOverlayDone) return;
@@ -1176,6 +1213,10 @@ function stopRoundRealtimeStream() {
     }
     homeRealtimeRefreshInFlight = false;
     homeRealtimeRefreshQueued = false;
+    if (roundRealtimeRecoveryTimer) {
+        clearTimeout(roundRealtimeRecoveryTimer);
+        roundRealtimeRecoveryTimer = 0;
+    }
 }
 
 function queueRoundRealtimeRefresh(roundId, options = {}) {
@@ -1417,6 +1458,54 @@ async function handleRoundRealtimeChange(rawPayload) {
     }
 }
 
+function syncRoundRealtimePageStateNow() {
+    if (page === "home") {
+        queueHomeRealtimeRefresh();
+        return;
+    }
+    if (page === "round") {
+        const currentRoundId = Number(currentRound?.id || getQueryParam("roundId") || 0);
+        queueRoundRealtimeRefresh(currentRoundId, {
+            skipUserSearchReload: Boolean(currentRound && canManageDraftRound(currentRound))
+        });
+        return;
+    }
+}
+
+function queueRoundRealtimeRecoverySync(delayMs = 1000) {
+    if (roundRealtimeRecoveryTimer) return;
+    roundRealtimeRecoveryTimer = window.setTimeout(() => {
+        roundRealtimeRecoveryTimer = 0;
+        if (document.visibilityState === "hidden") return;
+        syncRoundRealtimePageStateNow();
+    }, Math.max(0, Number(delayMs) || 0));
+}
+
+function ensureRoundRealtimeLifecycleSync() {
+    if (roundRealtimeSyncBound) return;
+    roundRealtimeSyncBound = true;
+
+    const syncOnVisible = () => {
+        if (document.visibilityState !== "visible") return;
+        if (!roundRealtimeEventSource) {
+            startRoundRealtimeStream();
+            return;
+        }
+        queueRoundRealtimeRecoverySync(0);
+    };
+    const syncOnFocus = () => {
+        if (!roundRealtimeEventSource) {
+            startRoundRealtimeStream();
+            return;
+        }
+        queueRoundRealtimeRecoverySync(0);
+    };
+
+    document.addEventListener("visibilitychange", syncOnVisible);
+    window.addEventListener("focus", syncOnFocus);
+    window.addEventListener("pageshow", syncOnFocus);
+}
+
 function startRoundRealtimeStream() {
     stopRoundRealtimeStream();
     const isAuthenticatedUiPage =
@@ -1425,8 +1514,12 @@ function startRoundRealtimeStream() {
         || page === "round"
         || page === "admin";
     if (!isAuthenticatedUiPage) return;
+    ensureRoundRealtimeLifecycleSync();
     try {
         const stream = new EventSource("/api/rounds/events");
+        stream.onopen = () => {
+            queueRoundRealtimeRecoverySync(0);
+        };
         stream.addEventListener("round-change", (event) => {
             handleRoundRealtimeChange(event.data).catch(() => {
                 // ignora erros pontuais de sincronizacao
@@ -1434,6 +1527,7 @@ function startRoundRealtimeStream() {
         });
         stream.onerror = () => {
             // reconexão automática do EventSource
+            queueRoundRealtimeRecoverySync(1200);
         };
         roundRealtimeEventSource = stream;
         if (!roundRealtimeUnloadBound) {
@@ -1442,8 +1536,10 @@ function startRoundRealtimeStream() {
                 stopRoundRealtimeStream();
             }, { once: true });
         }
+        queueRoundRealtimeRecoverySync(0);
     } catch {
         // EventSource indisponivel no navegador.
+        queueRoundRealtimeRecoverySync(0);
     }
 }
 
@@ -2832,8 +2928,10 @@ async function runJsonRequest(url, method = "GET", payload) {
         credentials: "include",
         body: payload ? JSON.stringify(payload) : undefined
     });
+    updateServerClockOffsetFromResponseDate(response);
     const rawData = await response.json().catch(() => ({}));
     const data = normalizePayloadTextArtifacts(rawData);
+    updateServerClockOffsetFromPayload(data);
     if (!response.ok) {
         const error = new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
         error.statusCode = response.status;
@@ -5769,7 +5867,7 @@ function scheduleHomePhaseRefresh(activeRound) {
     const ts = Number(activeRound?.rating_starts_at || 0);
     const status = String(activeRound?.status || "");
     if (!ts || status !== "indication") return;
-    const now = Math.floor(Date.now() / 1000);
+    const now = getServerAlignedNowSeconds();
     if (ts <= now) return;
     const delayMs = Math.max(0, (ts - now) * 1000 + 120);
     homePhaseRefreshTimer = window.setTimeout(() => {
@@ -7433,7 +7531,7 @@ async function refreshRoundData(forceRoundId, options = {}) {
     const ratingStartsAt = Number(currentRound?.rating_starts_at || 0);
     const roundStatus = String(currentRound?.status || "");
     if (roundStatus === "indication" && ratingStartsAt > 0) {
-        const now = Math.floor(Date.now() / 1000);
+        const now = getServerAlignedNowSeconds();
         if (ratingStartsAt > now) {
             const delayMs = Math.max(0, (ratingStartsAt - now) * 1000 + 120);
             roundPhaseRefreshTimer = window.setTimeout(() => {

@@ -2584,6 +2584,7 @@ async function getRoundPayload(roundId, currentUserId) {
 
     return {
         ...round,
+        server_now: now,
         participants,
         assignments,
         recommendations,

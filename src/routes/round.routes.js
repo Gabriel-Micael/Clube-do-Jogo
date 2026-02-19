@@ -44,6 +44,19 @@ const epicCatalogCache = {
 const EPIC_CATALOG_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const EPIC_CATALOG_SOURCE_URL = "https://erri120.github.io/egs-db/";
 const EPIC_STORE_BASE_URL = "https://store.epicgames.com/en-US";
+const BRASILIA_UTC_OFFSET_MS = -3 * 60 * 60 * 1000;
+
+function futureBrasiliaTimestamp({ days = 0, months = 0 } = {}) {
+    const nowUtcMs = Date.now();
+    const brasiliaWallClock = new Date(nowUtcMs + BRASILIA_UTC_OFFSET_MS);
+    if (Number(months)) {
+        brasiliaWallClock.setUTCMonth(brasiliaWallClock.getUTCMonth() + Number(months));
+    }
+    if (Number(days)) {
+        brasiliaWallClock.setUTCDate(brasiliaWallClock.getUTCDate() + Number(days));
+    }
+    return Math.floor((brasiliaWallClock.getTime() - BRASILIA_UTC_OFFSET_MS) / 1000);
+}
 
 function normalizeEpicLookupToken(value) {
     return String(value || "")
@@ -338,10 +351,14 @@ app.post("/api/rounds/:roundId/draw", requireAuth, async (req, res) => {
         validatePairRestrictions(participantIds, pairExclusions);
         const assignmentMap = await generateAssignmentsWithRotation(participantIds, pairExclusions);
         await saveAssignments(roundId, assignmentMap);
-        await dbRun("UPDATE rounds SET status = 'reveal', started_at = ? WHERE id = ?", [
-            nowInSeconds(),
-            roundId
-        ]);
+        await dbRun(
+            "UPDATE rounds SET status = 'reveal', started_at = ?, rating_starts_at = ? WHERE id = ?",
+            [
+                nowInSeconds(),
+                futureBrasiliaTimestamp({ months: 1 }),
+                roundId
+            ]
+        );
 
         const payload = await getRoundPayload(roundId, req.session.userId);
         emitRoundChange("round_draw_completed", {
@@ -392,8 +409,15 @@ app.post("/api/rounds/:roundId/start-indication", requireAuth, async (req, res) 
             return res.status(400).json({ message: "A rodada não está pronta para iniciar indicações." });
         }
 
-        const ratingStartsAtInput = Number(req.body.ratingStartsAt || 0);
-        if (!Number.isInteger(ratingStartsAtInput) || ratingStartsAtInput <= nowInSeconds()) {
+        const now = nowInSeconds();
+        const requestedRatingStartsAt = Number(req.body.ratingStartsAt || 0);
+        const storedRatingStartsAt = Number(round.rating_starts_at || 0);
+        const hasValidRequested = Number.isInteger(requestedRatingStartsAt) && requestedRatingStartsAt > now;
+        const hasValidStored = Number.isInteger(storedRatingStartsAt) && storedRatingStartsAt > now;
+        const ratingStartsAtInput = hasValidRequested
+            ? requestedRatingStartsAt
+            : (hasValidStored ? storedRatingStartsAt : 0);
+        if (!Number.isInteger(ratingStartsAtInput) || ratingStartsAtInput <= now) {
             return res.status(400).json({
                 message: "Defina uma data futura para abrir a sessão de notas."
             });
@@ -430,7 +454,7 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
             if (!canReopenRound) {
                 return res.status(403).json({ message: "Sem permissao para reabrir essa rodada." });
             }
-            const reopenAt = nowInSeconds();
+            const reopenAt = futureBrasiliaTimestamp({ days: 1 });
             await dbRun(
                 `UPDATE rounds
                  SET status = 'reopened',
@@ -477,6 +501,22 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
             || Number(round.creator_user_id) === Number(req.currentUser.id);
         if (!canCloseRound) {
             return res.status(403).json({ message: "Sem permissao para encerrar essa rodada." });
+        }
+
+        const isDraftOrRevealRound =
+            String(round.status || "") === "draft"
+            || String(round.status || "") === "reveal";
+        if (isDraftOrRevealRound) {
+            await deleteRoundCascade(roundId);
+            emitRoundChange("round_deleted", {
+                roundId,
+                actorUserId: Number(req.currentUser?.id) || 0
+            });
+            return res.json({
+                message: "Rodada encerrada e descartada.",
+                redirectToHome: true,
+                roundDeleted: true
+            });
         }
 
         await dbRun("UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?", [
@@ -635,7 +675,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 }
             }
 
-            // Se a descricao vier em ingles, tenta substituir por uma descricao em portugues via RAWG.
+            // Se a descrição vier em inglês, tenta substituir por uma descrição em português via RAWG.
             if (gameName && gameDescription && seemsMostlyEnglishText(gameDescription)) {
                 const rawgDetails = await getRawgGameDetailsByName(gameName);
                 const rawgDescription = sanitizeText(rawgDetails?.description || "", 500);
@@ -658,7 +698,7 @@ app.post("/api/rounds/:roundId/recommendations", requireAuth, (req, res) => {
                 return res.status(400).json({ message: "Informe o nome do jogo." });
             }
             if (!gameDescription) {
-                return res.status(400).json({ message: "Informe uma descricao curta do jogo." });
+                return res.status(400).json({ message: "Informe uma descrição curta do jogo." });
             }
 
             if (!gameCoverUrl && existing?.game_cover_url) {

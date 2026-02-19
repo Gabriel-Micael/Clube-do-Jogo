@@ -747,7 +747,7 @@ async function getPsnTitleDetailsView(userId, { npServiceName, npCommunicationId
             completeEarned.push({
                 trophyId: 0,
                 trophyName: `${psnTierLabelFromType(tier)} conquistado`,
-                trophyDetail: "Registro local da sincronizacao PSN.",
+                trophyDetail: "Registro local da sincronização PSN.",
                 trophyType: tier,
                 earnedAt: 0
             });
@@ -865,7 +865,7 @@ async function getPsnTierDetailsView(userId, { tier, page = 1, pageSize = 10 }) 
                 titlePlatform: "",
                 trophyId: 0,
                 trophyName: `${psnTierLabelFromType(normalizedTier)} conquistado`,
-                trophyDetail: "Registro local da sincronizacao PSN.",
+                trophyDetail: "Registro local da sincronização PSN.",
                 trophyType: normalizedTier,
                 earnedAt: 0
             });
@@ -967,7 +967,7 @@ async function getPsnTierDetailsView(userId, { tier, page = 1, pageSize = 10 }) 
                 titlePlatform: title.titlePlatform,
                 trophyId: 0,
                 trophyName: `${psnTierLabelFromType(normalizedTier)} conquistado`,
-                trophyDetail: "Registro local da sincronizacao PSN.",
+                trophyDetail: "Registro local da sincronização PSN.",
                 trophyType: normalizedTier,
                 earnedAt: 0
             });
@@ -988,7 +988,7 @@ async function getPsnTierDetailsView(userId, { tier, page = 1, pageSize = 10 }) 
             titlePlatform: "",
             trophyId: 0,
             trophyName: `${psnTierLabelFromType(normalizedTier)} conquistado`,
-            trophyDetail: "Registro local da sincronizacao PSN.",
+            trophyDetail: "Registro local da sincronização PSN.",
             trophyType: normalizedTier,
             earnedAt: 0
         });
@@ -1057,8 +1057,13 @@ app.get("/api/admin/notification-state", requireAuth, async (req, res) => {
         }
         if (req.currentUser?.isOwner) {
             const pendingOwnerActionRequests = await getPendingOwnerActionRequests();
+            const pendingOwnerActionCount = pendingOwnerActionRequests.length;
+            const suggestionsCountRow = await dbGet("SELECT COUNT(*) AS total FROM suggestions");
+            const pendingOwnerSuggestionCount = Number(suggestionsCountRow?.total || 0);
             return res.json({
-                pendingOwnerActionCount: pendingOwnerActionRequests.length,
+                pendingOwnerActionCount,
+                pendingOwnerSuggestionCount,
+                ownerNotificationCount: pendingOwnerActionCount + pendingOwnerSuggestionCount,
                 pendingOwnerActionRequests,
                 latestResolvedAdminAction: null
             });

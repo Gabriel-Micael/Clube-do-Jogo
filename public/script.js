@@ -55,6 +55,34 @@ let adminLatestResolvedDecisionId = 0;
 let roundRealtimeEventSource = null;
 let roundRealtimeUnloadBound = false;
 let roundRealtimeLastEventSignature = "";
+const roundRealtimeCommentReasons = new Set([
+    "recommendation_comment_changed",
+    "recommendation_comment_liked"
+]);
+const roundRealtimeOwnEchoReasons = new Set([
+    "recommendation_saved"
+]);
+const ROUND_REALTIME_REFRESH_DEBOUNCE_MS = 260;
+const ROUND_REALTIME_COMMENT_SYNC_DEBOUNCE_MS = 420;
+let roundRealtimeRefreshInFlight = false;
+let roundRealtimeRefreshTimer = 0;
+let roundRealtimeRefreshQueued = null;
+let roundRealtimeCommentSyncInFlight = false;
+let roundRealtimeCommentSyncTimer = 0;
+let roundRealtimeCommentSyncQueued = null;
+const HOME_REALTIME_REFRESH_DEBOUNCE_MS = 420;
+let homeRealtimeRefreshInFlight = false;
+let homeRealtimeRefreshTimer = 0;
+let homeRealtimeRefreshQueued = false;
+const ADMIN_NOTIFICATION_SYNC_DEBOUNCE_MS = 280;
+let adminNotificationSyncInFlight = false;
+let adminNotificationSyncTimer = 0;
+let adminNotificationSyncQueued = false;
+const GET_REQUEST_REUSE_WINDOW_MS = 220;
+const RATE_LIMIT_COOLDOWN_MS = 2500;
+let sendJsonRateLimitCooldownUntil = 0;
+const sendJsonPendingGetRequests = new Map();
+const sendJsonRecentGetResponses = new Map();
 let homePhaseRefreshTimer = 0;
 let roundPhaseRefreshTimer = 0;
 const appBootOverlayStartedAt = Date.now();
@@ -92,6 +120,37 @@ window.addEventListener("pageshow", (event) => {
 
 function byId(id) {
     return document.getElementById(id);
+}
+
+function resolveElement(target) {
+    if (!target) return null;
+    if (typeof target === "string") return byId(target);
+    if (target instanceof HTMLElement) return target;
+    return null;
+}
+
+function setElementHiddenState(target, shouldHide) {
+    const element = resolveElement(target);
+    if (!element) return;
+    const hide = Boolean(shouldHide);
+    if (element.classList.contains("hidden") === hide) return;
+    element.classList.toggle("hidden", hide);
+}
+
+function setElementTextIfChanged(target, nextText) {
+    const element = resolveElement(target);
+    if (!element) return;
+    const value = String(nextText ?? "");
+    if (element.textContent === value) return;
+    element.textContent = value;
+}
+
+function setElementHtmlIfChanged(target, nextHtml) {
+    const element = resolveElement(target);
+    if (!element) return;
+    const value = String(nextHtml ?? "");
+    if (element.innerHTML === value) return;
+    element.innerHTML = value;
 }
 
 function ensureRawgAttributionLink() {
@@ -133,6 +192,18 @@ function normalizeTextArtifacts(value) {
         .replace(/n\?o/gi, (m) => (m[0] === "N" ? "Não" : "não"))
         .replace(/h\?/gi, (m) => (m[0] === "H" ? "Há" : "há"));
     text = text.replaceAll("\uFFFD", "");
+    return text;
+}
+
+function normalizeClubAchievementText(value) {
+    let text = normalizeTextArtifacts(value);
+    if (!text) return "";
+    text = text
+        .replace(/\bindique um jogo de acao\b/gi, "indique um jogo de ação")
+        .replace(/\bAcao\b/g, "Ação")
+        .replace(/\bacao\b/g, "ação")
+        .replace(/\bindicacao\b/gi, (m) => (m[0] === "I" ? "Indicação" : "indicação"))
+        .replace(/\bate\b/gi, (m) => (m[0] === "A" ? "Até" : "até"));
     return text;
 }
 
@@ -943,10 +1014,10 @@ function syncAdminNotificationDotByResolvedId(resolvedDecisionId) {
     setAdminNotificationDotVisible(adminLatestResolvedDecisionId > seenId);
 }
 
-async function syncAdminNotificationState() {
+async function syncAdminNotificationStateNow() {
     if (!sessionIsModerator && !sessionIsOwner) {
         setAdminNotificationDotVisible(false);
-        return;
+        return true;
     }
     try {
         const data = await sendJsonWithFallback([
@@ -954,18 +1025,60 @@ async function syncAdminNotificationState() {
             { url: "/api/admin/dashboard" }
         ]);
         if (sessionIsOwner) {
-            const pendingCount = Number(
+            const pendingActionCount = Number(
                 data?.pendingOwnerActionCount
                 || (Array.isArray(data?.pendingOwnerActionRequests) ? data.pendingOwnerActionRequests.length : 0)
                 || 0
             );
+            const pendingSuggestionCount = Number(
+                data?.pendingOwnerSuggestionCount
+                || (Array.isArray(data?.ownerSuggestions) ? data.ownerSuggestions.length : 0)
+                || 0
+            );
+            const pendingCount = Number(data?.ownerNotificationCount || (pendingActionCount + pendingSuggestionCount) || 0);
             setAdminNotificationDotVisible(pendingCount > 0);
-            return;
+            return true;
         }
         const latestResolvedId = Number(data?.latestResolvedAdminAction?.id || 0);
         syncAdminNotificationDotByResolvedId(latestResolvedId);
+        return true;
     } catch {
-        // polling silencioso
+        return false;
+    }
+}
+
+function queueAdminNotificationStateSync(delayMs = ADMIN_NOTIFICATION_SYNC_DEBOUNCE_MS) {
+    adminNotificationSyncQueued = true;
+    if (adminNotificationSyncTimer || adminNotificationSyncInFlight) return;
+    adminNotificationSyncTimer = window.setTimeout(() => {
+        adminNotificationSyncTimer = 0;
+        flushAdminNotificationStateSyncQueue().catch(() => {
+            // tentativa falhou; proxima alteração tenta novamente
+        });
+    }, Math.max(0, Number(delayMs) || 0));
+}
+
+async function flushAdminNotificationStateSyncQueue() {
+    if (adminNotificationSyncInFlight || !adminNotificationSyncQueued) return;
+    adminNotificationSyncQueued = false;
+    adminNotificationSyncInFlight = true;
+    let syncOk = false;
+    try {
+        syncOk = await syncAdminNotificationStateNow();
+    } finally {
+        adminNotificationSyncInFlight = false;
+        if ((!syncOk || adminNotificationSyncQueued) && !adminNotificationSyncTimer) {
+            const delayMs = syncOk ? ADMIN_NOTIFICATION_SYNC_DEBOUNCE_MS : 1200;
+            adminNotificationSyncTimer = window.setTimeout(() => {
+                adminNotificationSyncTimer = 0;
+                if (!syncOk) {
+                    adminNotificationSyncQueued = true;
+                }
+                flushAdminNotificationStateSyncQueue().catch(() => {
+                    // sem acao
+                });
+            }, delayMs);
+        }
     }
 }
 
@@ -978,6 +1091,12 @@ function stopAdminNotificationStream() {
         }
         adminNotificationEventSource = null;
     }
+    if (adminNotificationSyncTimer) {
+        clearTimeout(adminNotificationSyncTimer);
+        adminNotificationSyncTimer = 0;
+    }
+    adminNotificationSyncInFlight = false;
+    adminNotificationSyncQueued = false;
 }
 
 function startAdminNotificationStream() {
@@ -986,14 +1105,14 @@ function startAdminNotificationStream() {
         setAdminNotificationDotVisible(false);
         return;
     }
-    syncAdminNotificationState();
+    queueAdminNotificationStateSync(0);
     try {
         const stream = new EventSource("/api/admin/events");
         stream.onopen = () => {
-            syncAdminNotificationState();
+            queueAdminNotificationStateSync(0);
         };
         stream.addEventListener("admin-change", () => {
-            syncAdminNotificationState();
+            queueAdminNotificationStateSync();
             window.dispatchEvent(new CustomEvent("clubedojogo:admin-change"));
         });
         stream.onerror = () => {
@@ -1010,11 +1129,11 @@ function startAdminNotificationStream() {
             adminNotificationSyncBound = true;
             const syncOnVisibility = () => {
                 if (document.visibilityState === "visible") {
-                    syncAdminNotificationState();
+                    queueAdminNotificationStateSync();
                 }
             };
             const syncOnFocus = () => {
-                syncAdminNotificationState();
+                queueAdminNotificationStateSync();
             };
             window.addEventListener("focus", syncOnFocus);
             document.addEventListener("visibilitychange", syncOnVisibility);
@@ -1038,6 +1157,204 @@ function stopRoundRealtimeStream() {
             // sem acao
         }
         roundRealtimeEventSource = null;
+    }
+    if (roundRealtimeRefreshTimer) {
+        clearTimeout(roundRealtimeRefreshTimer);
+        roundRealtimeRefreshTimer = 0;
+    }
+    if (roundRealtimeCommentSyncTimer) {
+        clearTimeout(roundRealtimeCommentSyncTimer);
+        roundRealtimeCommentSyncTimer = 0;
+    }
+    roundRealtimeRefreshInFlight = false;
+    roundRealtimeRefreshQueued = null;
+    roundRealtimeCommentSyncInFlight = false;
+    roundRealtimeCommentSyncQueued = null;
+    if (homeRealtimeRefreshTimer) {
+        clearTimeout(homeRealtimeRefreshTimer);
+        homeRealtimeRefreshTimer = 0;
+    }
+    homeRealtimeRefreshInFlight = false;
+    homeRealtimeRefreshQueued = false;
+}
+
+function queueRoundRealtimeRefresh(roundId, options = {}) {
+    const targetRoundId = Number(roundId || 0);
+    const normalizedOptions = {
+        skipUserSearchReload: Boolean(options?.skipUserSearchReload)
+    };
+    const previous = roundRealtimeRefreshQueued;
+    if (previous) {
+        roundRealtimeRefreshQueued = {
+            roundId: targetRoundId || previous.roundId,
+            options: {
+                skipUserSearchReload: Boolean(
+                    previous.options?.skipUserSearchReload || normalizedOptions.skipUserSearchReload
+                )
+            }
+        };
+    } else {
+        roundRealtimeRefreshQueued = {
+            roundId: targetRoundId,
+            options: normalizedOptions
+        };
+    }
+
+    if (roundRealtimeRefreshTimer || roundRealtimeRefreshInFlight) return;
+    roundRealtimeRefreshTimer = window.setTimeout(() => {
+        roundRealtimeRefreshTimer = 0;
+        flushRoundRealtimeRefreshQueue().catch(() => {
+            // ignora erros pontuais de sincronizacao
+        });
+    }, ROUND_REALTIME_REFRESH_DEBOUNCE_MS);
+}
+
+async function flushRoundRealtimeRefreshQueue() {
+    if (roundRealtimeRefreshInFlight || !roundRealtimeRefreshQueued) return;
+    const pending = roundRealtimeRefreshQueued;
+    roundRealtimeRefreshQueued = null;
+    roundRealtimeRefreshInFlight = true;
+    try {
+        await refreshRoundData(pending.roundId, pending.options || {});
+    } finally {
+        roundRealtimeRefreshInFlight = false;
+        if (roundRealtimeRefreshQueued && !roundRealtimeRefreshTimer) {
+            roundRealtimeRefreshTimer = window.setTimeout(() => {
+                roundRealtimeRefreshTimer = 0;
+                flushRoundRealtimeRefreshQueue().catch(() => {
+                    // ignora erros pontuais de sincronizacao
+                });
+            }, ROUND_REALTIME_REFRESH_DEBOUNCE_MS);
+        }
+    }
+}
+
+async function syncRoundRecommendationCommentsFromRealtime(roundId, recommendationId) {
+    const targetRoundId = Number(roundId || 0);
+    const targetRecommendationId = Number(recommendationId || 0);
+    if (!targetRoundId || !targetRecommendationId) return false;
+
+    const payload = await sendJson(`/api/rounds/${targetRoundId}`);
+    const remoteRound = payload?.round;
+    if (!remoteRound || Number(remoteRound.id || 0) !== targetRoundId) return false;
+
+    if (!currentRound || Number(currentRound.id || 0) !== targetRoundId) {
+        currentRound = remoteRound;
+        roundRecommendationsStructureSignature = "";
+        renderRoundState(currentRound);
+        return true;
+    }
+
+    const remoteRecommendations = Array.isArray(remoteRound.recommendations) ? remoteRound.recommendations : [];
+    const remoteRecommendation = remoteRecommendations.find((item) => Number(item.id) === targetRecommendationId);
+    if (!remoteRecommendation) return false;
+
+    const localRecommendations = Array.isArray(currentRound.recommendations) ? currentRound.recommendations : [];
+    const localIndex = localRecommendations.findIndex((item) => Number(item.id) === targetRecommendationId);
+    if (localIndex < 0) {
+        currentRound = remoteRound;
+        roundRecommendationsStructureSignature = "";
+        renderRoundState(currentRound);
+        return true;
+    }
+
+    const localRecommendation = localRecommendations[localIndex] || {};
+    const mergedRecommendation = {
+        ...localRecommendation,
+        updated_at: remoteRecommendation.updated_at,
+        rating_letter: remoteRecommendation.rating_letter,
+        interest_score: remoteRecommendation.interest_score,
+        rating_updated_at: remoteRecommendation.rating_updated_at,
+        comments: remoteRecommendation.comments || []
+    };
+    localRecommendations[localIndex] = mergedRecommendation;
+    currentRound.recommendations = localRecommendations;
+    syncRecommendationCommentList(mergedRecommendation, "round", true);
+    clearStaleCommentSignatures("round", localRecommendations.map((item) => Number(item.id) || 0));
+    roundStateRenderSignature = buildRoundStateSignature(currentRound);
+    return true;
+}
+
+function queueRoundRealtimeCommentSync(roundId, recommendationId, options = {}) {
+    const targetRoundId = Number(roundId || 0);
+    const targetRecommendationId = Number(recommendationId || 0);
+    const normalizedOptions = {
+        skipUserSearchReload: Boolean(options?.skipUserSearchReload)
+    };
+    if (!targetRoundId || !targetRecommendationId) {
+        queueRoundRealtimeRefresh(targetRoundId, normalizedOptions);
+        return;
+    }
+
+    roundRealtimeCommentSyncQueued = {
+        roundId: targetRoundId,
+        recommendationId: targetRecommendationId,
+        options: normalizedOptions
+    };
+    if (roundRealtimeCommentSyncTimer || roundRealtimeCommentSyncInFlight) return;
+    roundRealtimeCommentSyncTimer = window.setTimeout(() => {
+        roundRealtimeCommentSyncTimer = 0;
+        flushRoundRealtimeCommentSyncQueue().catch(() => {
+            // ignora erros pontuais de sincronizacao
+        });
+    }, ROUND_REALTIME_COMMENT_SYNC_DEBOUNCE_MS);
+}
+
+async function flushRoundRealtimeCommentSyncQueue() {
+    if (roundRealtimeCommentSyncInFlight || !roundRealtimeCommentSyncQueued) return;
+    const pending = roundRealtimeCommentSyncQueued;
+    roundRealtimeCommentSyncQueued = null;
+    roundRealtimeCommentSyncInFlight = true;
+    try {
+        const synced = await syncRoundRecommendationCommentsFromRealtime(
+            pending.roundId,
+            pending.recommendationId
+        );
+        if (!synced) {
+            queueRoundRealtimeRefresh(pending.roundId, pending.options || {});
+        }
+    } catch {
+        queueRoundRealtimeRefresh(pending.roundId, pending.options || {});
+    } finally {
+        roundRealtimeCommentSyncInFlight = false;
+        if (roundRealtimeCommentSyncQueued && !roundRealtimeCommentSyncTimer) {
+            roundRealtimeCommentSyncTimer = window.setTimeout(() => {
+                roundRealtimeCommentSyncTimer = 0;
+                flushRoundRealtimeCommentSyncQueue().catch(() => {
+                    // ignora erros pontuais de sincronizacao
+                });
+            }, ROUND_REALTIME_COMMENT_SYNC_DEBOUNCE_MS);
+        }
+    }
+}
+
+function queueHomeRealtimeRefresh() {
+    homeRealtimeRefreshQueued = true;
+    if (homeRealtimeRefreshTimer || homeRealtimeRefreshInFlight) return;
+    homeRealtimeRefreshTimer = window.setTimeout(() => {
+        homeRealtimeRefreshTimer = 0;
+        flushHomeRealtimeRefreshQueue().catch(() => {
+            // sem acao
+        });
+    }, HOME_REALTIME_REFRESH_DEBOUNCE_MS);
+}
+
+async function flushHomeRealtimeRefreshQueue() {
+    if (homeRealtimeRefreshInFlight || !homeRealtimeRefreshQueued) return;
+    homeRealtimeRefreshQueued = false;
+    homeRealtimeRefreshInFlight = true;
+    try {
+        await Promise.all([refreshHomeActive(), refreshHomeFeed()]);
+    } finally {
+        homeRealtimeRefreshInFlight = false;
+        if (homeRealtimeRefreshQueued && !homeRealtimeRefreshTimer) {
+            homeRealtimeRefreshTimer = window.setTimeout(() => {
+                homeRealtimeRefreshTimer = 0;
+                flushHomeRealtimeRefreshQueue().catch(() => {
+                    // sem acao
+                });
+            }, HOME_REALTIME_REFRESH_DEBOUNCE_MS);
+        }
     }
 }
 
@@ -1069,7 +1386,7 @@ async function handleRoundRealtimeChange(rawPayload) {
     }
 
     if (page === "home") {
-        await Promise.all([refreshHomeActive(), refreshHomeFeed()]);
+        queueHomeRealtimeRefresh();
         return;
     }
 
@@ -1078,9 +1395,25 @@ async function handleRoundRealtimeChange(rawPayload) {
         if (roundId > 0 && currentRoundId > 0 && roundId !== currentRoundId) {
             return;
         }
-        await refreshRoundData(roundId || currentRoundId, {
+        const targetRoundId = roundId || currentRoundId;
+        const refreshOptions = {
             skipUserSearchReload: Boolean(currentRound && canManageDraftRound(currentRound))
-        });
+        };
+        const isOwnEchoEvent = actorUserId > 0 && actorUserId === Number(sessionUserId || 0);
+        if (isOwnEchoEvent && roundRealtimeOwnEchoReasons.has(reason)) {
+            return;
+        }
+        const recommendationId = Number(payload?.recommendationId || 0);
+        const currentPhase = String(currentRound?.phase || "").trim().toLowerCase();
+        if (
+            roundRealtimeCommentReasons.has(reason)
+            && currentPhase === "indication"
+            && recommendationId > 0
+        ) {
+            queueRoundRealtimeCommentSync(targetRoundId, recommendationId, refreshOptions);
+            return;
+        }
+        queueRoundRealtimeRefresh(targetRoundId, refreshOptions);
     }
 }
 
@@ -1440,6 +1773,7 @@ async function handleAdminPage() {
     let adminActionPendingLocked = false;
     const adminAchievementKeysByUserId = new Map();
     let latestDecisionShownId = readAdminDecisionSeenId();
+    let adminDashboardRenderSignature = "";
 
     const userFeedbackElementId = (userId) => `adminUserFeedback-${Number(userId) || 0}`;
     const setAdminUserFeedback = (userId, message, type = "error") => {
@@ -1591,8 +1925,48 @@ async function handleAdminPage() {
         title.textContent = sessionIsOwner ? "Painel do Dono" : "Painel do Moderador";
     }
 
+    function buildAdminDashboardSignature(data) {
+        const usersSig = (Array.isArray(data?.users) ? data.users : [])
+            .map((user) => [
+                Number(user?.id || 0),
+                Number(user?.blocked || user?.is_blocked || 0),
+                Number(user?.is_moderator || 0),
+                Number(user?.is_owner || 0),
+                String(user?.role || "")
+            ].join(":"))
+            .join(",");
+        const roundsSig = (Array.isArray(data?.rounds) ? data.rounds : [])
+            .map((round) => [
+                Number(round?.id || 0),
+                String(round?.status || ""),
+                Number(round?.created_at || 0),
+                Number(round?.creator_user_id || 0)
+            ].join(":"))
+            .join(",");
+        const requestsSig = (Array.isArray(data?.pendingOwnerActionRequests) ? data.pendingOwnerActionRequests : [])
+            .map((item) => `${Number(item?.id || 0)}:${String(item?.status || "")}`)
+            .join(",");
+        const suggestionsSig = (Array.isArray(data?.ownerSuggestions) ? data.ownerSuggestions : [])
+            .map((item) => `${Number(item?.id || 0)}:${Number(item?.updated_at || item?.created_at || 0)}`)
+            .join(",");
+        const achievementsSig = (Array.isArray(data?.userAchievements) ? data.userAchievements : [])
+            .map((item) => `${Number(item?.user_id || 0)}:${Number(item?.unlocked_count || 0)}:${String(item?.keys || "")}`)
+            .join(",");
+        return [
+            usersSig,
+            roundsSig,
+            requestsSig,
+            suggestionsSig,
+            achievementsSig,
+            Boolean(data?.pendingAdminAction) ? 1 : 0,
+            Number(data?.latestResolvedAdminAction?.id || 0)
+        ].join("|");
+    }
+
     async function refreshAdmin() {
         const data = await sendJson("/api/admin/dashboard");
+        const nextSignature = buildAdminDashboardSignature(data);
+        const shouldRender = nextSignature !== adminDashboardRenderSignature;
         const userAchievementsMap = new Map(
             (data.userAchievements || []).map((item) => [
                 Number(item.user_id),
@@ -1616,34 +1990,37 @@ async function handleAdminPage() {
                 is_moderator: Boolean(user?.is_moderator)
             });
         });
-        adminUsersList.innerHTML = renderAdminDashboardUsers(data.users, userAchievementsMap);
-        adminRoundsList.innerHTML = renderAdminDashboardRounds(data.rounds);
-        if (adminOwnerRequestsCard && adminOwnerRequestsList) {
-            if (sessionIsOwner) {
-                const ownerRequests = Array.isArray(data?.pendingOwnerActionRequests) ? data.pendingOwnerActionRequests : [];
-                adminOwnerRequestsList.innerHTML = renderAdminOwnerActionRequests(ownerRequests);
-                adminOwnerRequestsCard.classList.toggle("hidden", ownerRequests.length === 0);
-                setAdminNotificationDotVisible(ownerRequests.length > 0);
-                if (ownerRequests.length > 0) {
-                    setFeedback("adminFeedback", "Você tem solicitações pendentes para permitir ou negar.", "warn");
+        if (shouldRender) {
+            adminUsersList.innerHTML = renderAdminDashboardUsers(data.users, userAchievementsMap);
+            adminRoundsList.innerHTML = renderAdminDashboardRounds(data.rounds);
+            if (adminOwnerRequestsCard && adminOwnerRequestsList) {
+                if (sessionIsOwner) {
+                    const ownerRequests = Array.isArray(data?.pendingOwnerActionRequests) ? data.pendingOwnerActionRequests : [];
+                    adminOwnerRequestsList.innerHTML = renderAdminOwnerActionRequests(ownerRequests);
+                    adminOwnerRequestsCard.classList.toggle("hidden", ownerRequests.length === 0);
+                    setAdminNotificationDotVisible(ownerRequests.length > 0);
+                    if (ownerRequests.length > 0) {
+                        setFeedback("adminFeedback", "Você tem solicitações pendentes para permitir ou negar.", "warn");
+                    }
+                } else {
+                    adminOwnerRequestsList.innerHTML = "";
+                    adminOwnerRequestsCard.classList.add("hidden");
                 }
-            } else {
-                adminOwnerRequestsList.innerHTML = "";
-                adminOwnerRequestsCard.classList.add("hidden");
             }
-        }
-        if (adminSuggestionsCard && adminSuggestionsList) {
-            if (sessionIsOwner) {
-                const ownerSuggestions = Array.isArray(data?.ownerSuggestions) ? data.ownerSuggestions : [];
-                adminSuggestionsList.innerHTML = renderAdminSuggestions(ownerSuggestions);
-                adminSuggestionsCard.classList.remove("hidden");
-            } else {
-                adminSuggestionsList.innerHTML = "";
-                adminSuggestionsCard.classList.add("hidden");
+            if (adminSuggestionsCard && adminSuggestionsList) {
+                if (sessionIsOwner) {
+                    const ownerSuggestions = Array.isArray(data?.ownerSuggestions) ? data.ownerSuggestions : [];
+                    adminSuggestionsList.innerHTML = renderAdminSuggestions(ownerSuggestions);
+                    adminSuggestionsCard.classList.remove("hidden");
+                } else {
+                    adminSuggestionsList.innerHTML = "";
+                    adminSuggestionsCard.classList.add("hidden");
+                }
             }
+            updateAdminListVisibleLimits();
+            clearAllAdminUserFeedback();
+            adminDashboardRenderSignature = nextSignature;
         }
-        updateAdminListVisibleLimits();
-        clearAllAdminUserFeedback();
         adminActionPendingLocked = Boolean(data?.pendingAdminAction) && sessionIsModerator && !sessionIsOwner;
         if (adminActionPendingLocked) {
             setFeedback("adminFeedback", "Você tem uma solicitação pendente. Aguarde aprovação do dono para continuar.", "warn");
@@ -1894,21 +2271,45 @@ async function handleAdminPage() {
         toggleAchievementMoreOptions(userId);
     });
 
-    let adminEventRefreshQueued = false;
-    const handleAdminChangeEvent = () => {
-        if (adminEventRefreshQueued) return;
-        adminEventRefreshQueued = true;
-        window.setTimeout(async () => {
-            adminEventRefreshQueued = false;
-            try {
-                await refreshAdmin();
-            } catch {
-                // atualizacao por evento falhou; proxima mudanca tenta novamente
+    let adminEventRefreshPending = false;
+    let adminEventRefreshInFlight = false;
+    let adminEventRefreshTimer = 0;
+    const flushAdminEventRefresh = async () => {
+        if (adminEventRefreshInFlight || !adminEventRefreshPending) return;
+        adminEventRefreshPending = false;
+        adminEventRefreshInFlight = true;
+        try {
+            await refreshAdmin();
+        } catch {
+            // atualizacao por evento falhou; proxima mudanca tenta novamente
+        } finally {
+            adminEventRefreshInFlight = false;
+            if (adminEventRefreshPending && !adminEventRefreshTimer) {
+                adminEventRefreshTimer = window.setTimeout(() => {
+                    adminEventRefreshTimer = 0;
+                    flushAdminEventRefresh().catch(() => {
+                        // sem acao
+                    });
+                }, 220);
             }
-        }, 80);
+        }
+    };
+    const handleAdminChangeEvent = () => {
+        adminEventRefreshPending = true;
+        if (adminEventRefreshTimer || adminEventRefreshInFlight) return;
+        adminEventRefreshTimer = window.setTimeout(() => {
+            adminEventRefreshTimer = 0;
+            flushAdminEventRefresh().catch(() => {
+                // sem acao
+            });
+        }, 220);
     };
     window.addEventListener("clubedojogo:admin-change", handleAdminChangeEvent);
     window.addEventListener("beforeunload", () => {
+        if (adminEventRefreshTimer) {
+            clearTimeout(adminEventRefreshTimer);
+            adminEventRefreshTimer = 0;
+        }
         window.removeEventListener("clubedojogo:admin-change", handleAdminChangeEvent);
     }, { once: true });
 }
@@ -2051,17 +2452,22 @@ function setFeedback(target, message, type = "error") {
     const el = typeof target === "string" ? byId(target) : target;
     if (!el) return;
     const text = normalizeTextArtifacts(message).trim();
-    el.textContent = text;
+    if (el.textContent !== text) {
+        el.textContent = text;
+    }
     el.classList.add("feedback");
-    el.classList.remove("ok", "error", "warn");
-    if (text && type) {
-        el.classList.add(type);
+    const normalizedType = text && type ? String(type).trim() : "";
+    const currentType =
+        el.classList.contains("ok") ? "ok"
+            : el.classList.contains("warn") ? "warn"
+                : el.classList.contains("error") ? "error" : "";
+    if (currentType !== normalizedType) {
+        el.classList.remove("ok", "error", "warn");
+        if (normalizedType) {
+            el.classList.add(normalizedType);
+        }
     }
-    if (!text) {
-        el.classList.add("hidden");
-    } else {
-        el.classList.remove("hidden");
-    }
+    setElementHiddenState(el, !text);
 }
 
 function setFieldFeedback(form, fieldName, message, type = "error") {
@@ -2069,17 +2475,22 @@ function setFieldFeedback(form, fieldName, message, type = "error") {
     const slot = form.querySelector(`[data-field-feedback-for="${fieldName}"]`);
     if (!(slot instanceof HTMLElement)) return;
     const text = normalizeTextArtifacts(message).trim();
-    slot.textContent = text;
+    if (slot.textContent !== text) {
+        slot.textContent = text;
+    }
     slot.classList.add("field-feedback");
-    slot.classList.remove("ok", "error", "warn");
-    if (text && type) {
-        slot.classList.add(type);
+    const normalizedType = text && type ? String(type).trim() : "";
+    const currentType =
+        slot.classList.contains("ok") ? "ok"
+            : slot.classList.contains("warn") ? "warn"
+                : slot.classList.contains("error") ? "error" : "";
+    if (currentType !== normalizedType) {
+        slot.classList.remove("ok", "error", "warn");
+        if (normalizedType) {
+            slot.classList.add(normalizedType);
+        }
     }
-    if (!text) {
-        slot.classList.add("hidden");
-    } else {
-        slot.classList.remove("hidden");
-    }
+    setElementHiddenState(slot, !text);
 }
 
 function clearFieldFeedback(form, fieldName) {
@@ -2175,9 +2586,9 @@ function normalizeAchievementToastPayload(achievement) {
     if (!achievement || typeof achievement !== "object") return null;
     const payload = {
         key: String(achievement?.key || "").trim(),
-        name: String(achievement?.name || "").trim(),
+        name: normalizeClubAchievementText(String(achievement?.name || "").trim()),
         imageUrl: String(achievement?.imageUrl || "").trim(),
-        description: String(achievement?.description || "").trim()
+        description: normalizeClubAchievementText(String(achievement?.description || "").trim())
     };
     if (!payload.key && !payload.name && !payload.imageUrl && !payload.description) {
         return null;
@@ -2240,9 +2651,9 @@ function showAchievementUnlockNotification(achievement) {
     const previousTops = new Map(
         existingToasts.map((item) => [item, item.getBoundingClientRect().top])
     );
-    const description = String(achievement?.description || "").trim();
+    const description = normalizeClubAchievementText(String(achievement?.description || "").trim());
     const achievementKey = String(achievement?.key || achievement?.name || "").trim();
-    const achievementTitle = String(achievement?.name || "Nova conquista").trim();
+    const achievementTitle = normalizeClubAchievementText(String(achievement?.name || "Nova conquista").trim());
 
     const toast = document.createElement("article");
     toast.className = "achievement-toast";
@@ -2385,7 +2796,36 @@ function setupGoogleButtonsLoading() {
     });
 }
 
-async function sendJson(url, method = "GET", payload) {
+function requestReuseKey(url, method, payload) {
+    const normalizedMethod = String(method || "GET").trim().toUpperCase();
+    const payloadKey = payload ? JSON.stringify(payload) : "";
+    return `${normalizedMethod}:${String(url || "").trim()}:${payloadKey}`;
+}
+
+function createRateLimitedError() {
+    const error = new Error("Muitas requisições. Tente novamente em instantes.");
+    error.statusCode = 429;
+    error.responseData = { message: error.message };
+    return error;
+}
+
+function cloneJsonValue(value) {
+    if (value === null || value === undefined) return value;
+    if (typeof structuredClone === "function") {
+        try {
+            return structuredClone(value);
+        } catch {
+            // fallback abaixo
+        }
+    }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return value;
+    }
+}
+
+async function runJsonRequest(url, method = "GET", payload) {
     const response = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -2398,9 +2838,58 @@ async function sendJson(url, method = "GET", payload) {
         const error = new Error(normalizeTextArtifacts(data.message || "Erro na requisição."));
         error.statusCode = response.status;
         error.responseData = data;
+        if (response.status === 429) {
+            sendJsonRateLimitCooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+        }
         throw error;
     }
+    sendJsonRateLimitCooldownUntil = 0;
     return data;
+}
+
+async function sendJson(url, method = "GET", payload) {
+    const normalizedMethod = String(method || "GET").trim().toUpperCase();
+    const isGet = normalizedMethod === "GET";
+    const now = Date.now();
+    if (isGet && now < sendJsonRateLimitCooldownUntil) {
+        throw createRateLimitedError();
+    }
+    const requestKey = requestReuseKey(url, normalizedMethod, payload);
+
+    if (isGet) {
+        const cached = sendJsonRecentGetResponses.get(requestKey);
+        if (cached && Number(cached.expiresAt || 0) > now) {
+            return cloneJsonValue(cached.data);
+        }
+        const pending = sendJsonPendingGetRequests.get(requestKey);
+        if (pending) {
+            return cloneJsonValue(await pending);
+        }
+    }
+
+    const requestPromise = runJsonRequest(url, normalizedMethod, payload);
+    if (isGet) {
+        sendJsonPendingGetRequests.set(requestKey, requestPromise);
+    }
+
+    try {
+        const data = await requestPromise;
+        if (isGet) {
+            sendJsonRecentGetResponses.set(requestKey, {
+                data,
+                expiresAt: Date.now() + GET_REQUEST_REUSE_WINDOW_MS
+            });
+        }
+        return cloneJsonValue(data);
+    } finally {
+        if (isGet) {
+            sendJsonPendingGetRequests.delete(requestKey);
+            const cached = sendJsonRecentGetResponses.get(requestKey);
+            if (cached && Number(cached.expiresAt || 0) <= Date.now()) {
+                sendJsonRecentGetResponses.delete(requestKey);
+            }
+        }
+    }
 }
 
 async function sendJsonWithFallback(requests) {
@@ -2701,8 +3190,9 @@ async function loadProfile() {
     const psnUnlinkBtn = byId("psnUnlinkBtn");
     const psnLinkSteps = byId("psnLinkSteps");
     const psnLinkStepsTitle = byId("psnLinkStepsTitle");
-    const psnGrabNpssoBtn = byId("psnGrabNpssoBtn");
-    const psnGrabNpssoFeedback = byId("psnGrabNpssoFeedback");
+    const psnLinkStepsListLink = byId("psnLinkStepsListLink");
+    const psnLinkStepsListSync = byId("psnLinkStepsListSync");
+    const psnSyncStepsHideBtn = byId("psnSyncStepsHideBtn");
     const psnTitleDetailsModal = byId("psnTitleDetailsModal");
     const psnTitleDetailsCloseBtn = byId("psnTitleDetailsCloseBtn");
     const psnTitleDetailsCloseIconBtn = byId("psnTitleDetailsCloseIconBtn");
@@ -2750,6 +3240,9 @@ async function loadProfile() {
     let pendingAvatarFile = null;
     let pendingAvatarPreviewUrl = "";
     let profileCommentsCache = [];
+    let profileCommentsRenderSignature = "";
+    let profileCommentsSyncTimer = 0;
+    let profileCommentsSyncInFlight = false;
     let isProfileOwnerSession = false;
     const achievementImageSourceByKey = new Map();
     let profileCommentFormState = {
@@ -2759,7 +3252,6 @@ async function loadProfile() {
         label: ""
     };
     const defaultEmailLabel = "Email (não editável)";
-    const psnAutoNpssoEndpoint = "/api/user/psn/auto-npsso";
     const psnTrophyIconByTier = Object.freeze({
         platinum: "/uploads/trofeus/ps5/platina.png",
         gold: "/uploads/trofeus/ps5/ouro.png",
@@ -2775,10 +3267,11 @@ async function loadProfile() {
     let psnTitlesRouteUnavailable = false;
     let psnAllTitlesFallbackCache = [];
     let psnCachedTitles = [];
-    let psnPreparedNpsso = "";
     let psnCanEditState = false;
     let psnLinkedState = false;
     let psnNeedsRelinkAttention = false;
+    let psnShowSyncSteps = false;
+    let psnSyncTutorialShownOnce = false;
     let psnActiveTitleCard = null;
     let psnActiveSummaryTierButton = null;
     let psnTitleDetailsRequestSeq = 0;
@@ -2794,6 +3287,7 @@ async function loadProfile() {
     let psnTierDetailsCurrentPage = 1;
     let psnTierDetailsTotalPages = 1;
     let psnTierDetailsTotalItems = 0;
+    const PROFILE_COMMENTS_SYNC_INTERVAL_MS = 7000;
 
     function setupAchievementImageProtection() {
         if (!achievementsGrid || achievementsGrid.dataset.achievementImageProtectionBound === "1") return;
@@ -3149,21 +3643,88 @@ async function loadProfile() {
         profileCommentsCache = profileCommentsCache.filter((item) => Number(item.id) !== numericId);
     }
 
-    function renderProfileComments(comments) {
+    function profileCommentsSignature(comments) {
+        const list = Array.isArray(comments) ? comments : [];
+        if (!list.length) return "0";
+        return list
+            .map((comment) => [
+                Number(comment?.id || 0),
+                Number(comment?.updated_at || comment?.created_at || 0),
+                Number(comment?.parent_comment_id || 0),
+                Number(comment?.likes_count ?? comment?.likesCount ?? 0),
+                Number(comment?.liked_by_me ?? comment?.likedByMe ?? 0),
+                String(comment?.comment_text || "")
+            ].join(":"))
+            .join("|");
+    }
+
+    function renderProfileComments(comments, options = {}) {
         if (!profileCommentsList) return;
-        profileCommentsCache = Array.isArray(comments) ? comments.slice() : [];
-        profileCommentsCache.sort((a, b) => commentSortValue(a) - commentSortValue(b));
-        const rows = buildCommentDisplayRows(profileCommentsCache);
-        if (!rows.length) {
-            profileCommentsList.innerHTML = '<div class="comment-item">Sem comentários ainda.</div>';
+        const nextComments = Array.isArray(comments) ? comments.slice() : [];
+        nextComments.sort((a, b) => commentSortValue(a) - commentSortValue(b));
+        const nextSignature = profileCommentsSignature(nextComments);
+        const forceRender = Boolean(options?.force);
+        profileCommentsCache = nextComments;
+        if (!forceRender && nextSignature === profileCommentsRenderSignature) {
             return;
         }
-        profileCommentsList.innerHTML = rows
+        profileCommentsRenderSignature = nextSignature;
+        const rows = buildCommentDisplayRows(profileCommentsCache);
+        if (!rows.length) {
+            setElementHtmlIfChanged(profileCommentsList, '<div class="comment-item">Sem comentários ainda.</div>');
+            return;
+        }
+        const nextHtml = rows
             .map((row) => profileCommentItemHtml(row.comment, {
                 depth: row.depth,
                 parentAuthor: row.parentAuthor
             }))
             .join("");
+        setElementHtmlIfChanged(profileCommentsList, nextHtml);
+    }
+
+    function profileCommentsSyncUrl(cacheBust = false) {
+        const targetUserId = Number(currentProfileUserId || 0);
+        if (!targetUserId) return "";
+        const params = new URLSearchParams();
+        params.set("userId", String(targetUserId));
+        if (cacheBust) {
+            params.set("_", String(Date.now()));
+        }
+        return `/api/user/profile-comments?${params.toString()}`;
+    }
+
+    function scheduleProfileCommentsSync(delayMs = PROFILE_COMMENTS_SYNC_INTERVAL_MS) {
+        if (profileCommentsSyncTimer) {
+            clearTimeout(profileCommentsSyncTimer);
+            profileCommentsSyncTimer = 0;
+        }
+        profileCommentsSyncTimer = window.setTimeout(() => {
+            profileCommentsSyncTimer = 0;
+            flushProfileCommentsSync().catch(() => {
+                // sem acao
+            });
+        }, Math.max(0, Number(delayMs) || 0));
+    }
+
+    async function flushProfileCommentsSync() {
+        if (profileCommentsSyncInFlight) return;
+        if (document.visibilityState !== "visible") {
+            scheduleProfileCommentsSync(PROFILE_COMMENTS_SYNC_INTERVAL_MS);
+            return;
+        }
+        const url = profileCommentsSyncUrl(true);
+        if (!url) return;
+        profileCommentsSyncInFlight = true;
+        try {
+            const payload = await sendJson(url);
+            renderProfileComments(payload?.comments || []);
+            scheduleProfileCommentsSync(PROFILE_COMMENTS_SYNC_INTERVAL_MS);
+        } catch {
+            scheduleProfileCommentsSync(Math.max(PROFILE_COMMENTS_SYNC_INTERVAL_MS, 10000));
+        } finally {
+            profileCommentsSyncInFlight = false;
+        }
     }
 
     function formatPsnSyncDate(timestampSeconds) {
@@ -3181,12 +3742,6 @@ async function loadProfile() {
 
     function formatPsnCount(value) {
         return Number(value || 0).toLocaleString("pt-BR");
-    }
-
-    function buildPsnProfileUrl(onlineId = "") {
-        const profileName = String(onlineId || "").trim();
-        if (!profileName) return "https://my.playstation.com/";
-        return `https://my.playstation.com/profile/${encodeURIComponent(profileName)}`;
     }
 
     function normalizePsnTier(rawTier = "") {
@@ -3301,18 +3856,42 @@ async function loadProfile() {
 
     function applyPsnRenewalUiState() {
         const canWarn = psnCanEditState && psnNeedsRelinkAttention;
+        const shouldShowSteps = psnCanEditState && (!psnLinkedState || canWarn || psnShowSyncSteps);
+        const useSyncSteps = psnLinkedState && (psnShowSyncSteps || canWarn);
+        const showSyncHideBtn = psnCanEditState && psnLinkedState && psnShowSyncSteps && shouldShowSteps;
         if (psnSection) {
             psnSection.classList.toggle("psn-attention", canWarn);
         }
+        if (psnLinkStepsListLink) {
+            psnLinkStepsListLink.classList.toggle("hidden", useSyncSteps);
+        }
+        if (psnLinkStepsListSync) {
+            psnLinkStepsListSync.classList.toggle("hidden", !useSyncSteps);
+        }
+        if (psnSyncStepsHideBtn) {
+            psnSyncStepsHideBtn.classList.toggle("hidden", !showSyncHideBtn);
+        }
         if (psnLinkSteps) {
-            const shouldShowSteps = psnCanEditState && (!psnLinkedState || canWarn);
-            psnLinkSteps.classList.toggle("hidden", !shouldShowSteps);
+            if (shouldShowSteps) {
+                const wasHidden = psnLinkSteps.classList.contains("hidden");
+                psnLinkSteps.classList.remove("hidden");
+                if (wasHidden) {
+                    psnLinkSteps.classList.remove("psn-link-steps-enter");
+                    void psnLinkSteps.offsetWidth;
+                    psnLinkSteps.classList.add("psn-link-steps-enter");
+                    window.setTimeout(() => {
+                        psnLinkSteps.classList.remove("psn-link-steps-enter");
+                    }, 280);
+                }
+            } else {
+                psnLinkSteps.classList.add("hidden");
+            }
             psnLinkSteps.classList.toggle("psn-link-steps-warning", canWarn);
         }
         if (psnLinkStepsTitle) {
             psnLinkStepsTitle.textContent = canWarn
                 ? "Atenção: sessão PSN expirada. Renove o NPSSO:"
-                : "Passo a passo para vincular PSN:";
+                : (useSyncSteps ? "Passo a passo para sincronizar troféus PSN:" : "Passo a passo para vincular PSN:");
         }
     }
 
@@ -3325,42 +3904,16 @@ async function loadProfile() {
         setFeedback(psnFeedback, warnMessage, "warn");
     }
 
-    async function tryAutoReadNpssoFromSonyCookie() {
-        try {
-            const payload = await sendJson(psnAutoNpssoEndpoint, "GET");
-            const value = extractNpssoFromRaw(payload?.npsso || "");
-            return {
-                npsso: value,
-                reason: String(payload?.reason || ""),
-                message: String(payload?.message || "")
-            };
-        } catch {
-            return {
-                npsso: "",
-                reason: "request_failed",
-                message: "Falha ao tentar obter o NPSSO automaticamente."
-            };
-        }
-    }
-
     async function requestNpssoForLinkFlow() {
-        const prepared = extractNpssoFromRaw(psnPreparedNpsso);
-        if (prepared && prepared.length >= 20) {
-            return prepared;
+        if (!navigator?.clipboard || typeof navigator.clipboard.readText !== "function") {
+            return "";
         }
-
-        const autoResult = await tryAutoReadNpssoFromSonyCookie();
-        if (autoResult?.npsso) return autoResult.npsso;
-
-        const autoMessage = String(autoResult?.message || "").trim();
-        const promptHeader = autoMessage
-            ? `${autoMessage}\n\n`
-            : "";
-
-        const rawInput = window.prompt(
-            `${promptHeader}Cole aqui o JSON retornado pelo endpoint da Sony (ou apenas o valor de npsso).`
-        );
-        return extractNpssoFromRaw(rawInput);
+        const clipboardText = await navigator.clipboard.readText().catch(() => "");
+        const parsed = extractNpssoFromRaw(clipboardText);
+        if (parsed && parsed.length >= 20) {
+            return parsed;
+        }
+        return "";
     }
 
     function psnTitleTrophyCountHtml(label, tier, value) {
@@ -3488,10 +4041,10 @@ async function loadProfile() {
             psnTierDetailsPagination.classList.add("hidden");
         }
         if (psnTierDetailsBody) {
+            psnTierDetailsBody.classList.add("psn-body-loading");
             psnTierDetailsBody.innerHTML = `
                 <div class="psn-loading-state">
                     <span class="psn-loading-spinner" aria-hidden="true"></span>
-                    <p class="psn-tier-details-loading">Carregando troféus...</p>
                 </div>
             `;
         }
@@ -3504,6 +4057,7 @@ async function loadProfile() {
             psnTierDetailsPagination.classList.add("hidden");
         }
         if (psnTierDetailsBody) {
+            psnTierDetailsBody.classList.remove("psn-body-loading");
             psnTierDetailsBody.innerHTML = `
                 <p class="psn-tier-details-error">${escapeHtml(String(message || "Falha ao carregar essa categoria de troféu."))}</p>
             `;
@@ -3527,6 +4081,7 @@ async function loadProfile() {
         );
         updatePsnTierDetailsPaginationUi();
         if (!psnTierDetailsBody) return;
+        psnTierDetailsBody.classList.remove("psn-body-loading");
         if (!entries.length) {
             psnTierDetailsBody.innerHTML = `
                 <p class="psn-tier-details-empty">Nenhum troféu ${escapeHtml(tierLabel.toLowerCase())} encontrado para esse perfil.</p>
@@ -3688,10 +4243,10 @@ async function loadProfile() {
         renderPsnTitleDetailsModalShell(payload);
         psnTitleDetailsCurrentPayload = null;
         if (psnTitleDetailsBody) {
+            psnTitleDetailsBody.classList.add("psn-body-loading");
             psnTitleDetailsBody.innerHTML = `
                 <div class="psn-loading-state">
                     <span class="psn-loading-spinner" aria-hidden="true"></span>
-                    <p class="psn-title-details-loading">Carregando troféus...</p>
                 </div>
             `;
         }
@@ -3701,6 +4256,7 @@ async function loadProfile() {
         renderPsnTitleDetailsModalShell(payload);
         psnTitleDetailsCurrentPayload = null;
         if (psnTitleDetailsBody) {
+            psnTitleDetailsBody.classList.remove("psn-body-loading");
             psnTitleDetailsBody.innerHTML = `
                 <p class="psn-title-details-error">${escapeHtml(String(errorMessage || "Falha ao carregar troféus deste jogo."))}</p>
             `;
@@ -3781,6 +4337,7 @@ async function loadProfile() {
                 : '<p class="psn-title-details-empty">Esse jogo ainda não possui troféus conquistados visíveis.</p>';
 
         if (psnTitleDetailsBody) {
+            psnTitleDetailsBody.classList.remove("psn-body-loading");
             psnTitleDetailsBody.innerHTML = `${summaryHtml}${listHtml}`;
         }
     }
@@ -3875,7 +4432,6 @@ async function loadProfile() {
                 overlay.className = "psn-grid-loading-overlay";
                 overlay.innerHTML = `
                     <span class="psn-loading-spinner" aria-hidden="true"></span>
-                    <p class="psn-title-details-loading">Carregando jogos...</p>
                 `;
                 psnTitlesGrid.appendChild(overlay);
             }
@@ -4011,20 +4567,17 @@ async function loadProfile() {
         psnLinkedState = linked;
         if (!linked) {
             psnNeedsRelinkAttention = false;
+            psnShowSyncSteps = false;
         }
         if (psnLinkBtn) {
             psnLinkBtn.classList.toggle("hidden", !canEdit);
             psnLinkBtn.textContent = linked ? "Sincronizar PSN" : "Vincular PSN";
         }
         if (psnUnlinkBtn) {
-            psnUnlinkBtn.classList.toggle("hidden", !canEdit);
+            psnUnlinkBtn.classList.toggle("hidden", !canEdit || !linked);
             psnUnlinkBtn.disabled = !linked;
         }
         applyPsnRenewalUiState();
-        if (linked) {
-            psnPreparedNpsso = "";
-            setFeedback(psnGrabNpssoFeedback, "", "");
-        }
 
         if (!linked) {
             closePsnTierDetailsModal();
@@ -4056,15 +4609,14 @@ async function loadProfile() {
         if (psnProfileHead) {
             const avatar = String(psnProfile?.avatarUrl || baseAvatar).trim() || baseAvatar;
             const onlineId = String(psnProfile?.onlineId || psnProfile?.accountId || "PSN");
-            const profileUrl = buildPsnProfileUrl(onlineId);
             psnProfileHead.classList.remove("hidden");
             psnProfileHead.innerHTML = `
-                <a class="psn-profile-link-avatar" href="${escapeHtml(profileUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir perfil PSN">
+                <div class="psn-profile-link-avatar">
                     <img class="psn-profile-avatar" src="${escapeHtml(avatar)}" alt="Avatar PSN">
-                </a>
+                </div>
                 <div class="psn-profile-info-wrap">
                     <div class="psn-profile-meta">
-                        <h3><a class="psn-profile-link-name" href="${escapeHtml(profileUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(onlineId)}</a></h3>
+                        <h3><span class="psn-profile-link-name">${escapeHtml(onlineId)}</span></h3>
                         <p class="psn-updated-text">Atualizado em ${escapeHtml(formatPsnSyncDate(psnProfile?.updatedAt || 0))}</p>
                         <div class="psn-summary-pills">
                             <span class="psn-summary-pill">Nivel ${escapeHtml(String(summary?.level || 0))}</span>
@@ -4128,12 +4680,13 @@ async function loadProfile() {
             }
             const nameEl = item.querySelector("strong");
             if (nameEl) {
-                const unlockedName = String(achievement?.name || "").trim() || String(key || "").trim();
+                const unlockedName = normalizeClubAchievementText(String(achievement?.name || "").trim())
+                    || String(key || "").trim();
                 nameEl.textContent = unlocked ? unlockedName : "Conquista oculta";
             }
             const descriptionEl = item.querySelector(".achievement-description, .achievement-state");
             if (descriptionEl) {
-                const description = String(achievement?.description || "").trim();
+                const description = normalizeClubAchievementText(String(achievement?.description || "").trim());
                 descriptionEl.textContent = unlocked
                     ? (description || "Conquista desbloqueada")
                     : "Desbloqueie para ver";
@@ -4285,6 +4838,7 @@ async function loadProfile() {
             });
         }
         resetProfileCommentFormState();
+        scheduleProfileCommentsSync(1400);
         return { ...data, canEdit };
     }
 
@@ -4294,6 +4848,23 @@ async function loadProfile() {
     } catch (error) {
         setFeedback("feedback", error.message, "error");
     }
+
+    const handleProfileVisibilitySync = () => {
+        if (document.visibilityState !== "visible") return;
+        scheduleProfileCommentsSync(450);
+    };
+    document.addEventListener("visibilitychange", handleProfileVisibilitySync);
+    window.addEventListener("focus", handleProfileVisibilitySync);
+    window.addEventListener("pageshow", handleProfileVisibilitySync);
+    window.addEventListener("beforeunload", () => {
+        if (profileCommentsSyncTimer) {
+            clearTimeout(profileCommentsSyncTimer);
+            profileCommentsSyncTimer = 0;
+        }
+        document.removeEventListener("visibilitychange", handleProfileVisibilitySync);
+        window.removeEventListener("focus", handleProfileVisibilitySync);
+        window.removeEventListener("pageshow", handleProfileVisibilitySync);
+    }, { once: true });
 
     form?.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -4502,27 +5073,41 @@ async function loadProfile() {
 
     psnLinkBtn?.addEventListener("click", async () => {
         if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
+        const label = String(psnLinkBtn?.textContent || "").toLowerCase();
+        const isSyncAction = label.includes("sincronizar");
+        if (isSyncAction) {
+            const shouldOnlyRevealTutorial = !psnSyncTutorialShownOnce;
+            psnShowSyncSteps = true;
+            applyPsnRenewalUiState();
+            if (shouldOnlyRevealTutorial) {
+                psnSyncTutorialShownOnce = true;
+                setFeedback(psnFeedback, "", "");
+                return;
+            }
+        }
         setFeedback(psnFeedback, "", "");
         const npsso = await requestNpssoForLinkFlow();
         if (!npsso || npsso.length < 20) {
             setFeedback(
                 psnFeedback,
-                "Não foi possível obter o NPSSO. Entre na conta PlayStation no navegador e tente novamente.",
+                "NPSSO não informado. Use o passo a passo abaixo, copie o JSON e clique em Vincular PSN novamente.",
                 "error"
             );
             return;
         }
         try {
-            const label = String(psnLinkBtn?.textContent || "").toLowerCase();
-            const loadingText = label.includes("sincronizar") ? "Sincronizando..." : "Vinculando...";
-            const result = await withButtonLoading(psnLinkBtn, loadingText, async () =>
+            const loadingText = isSyncAction ? "Sincronizando..." : "Vinculando...";
+            await withButtonLoading(psnLinkBtn, loadingText, async () =>
                 sendJson("/api/user/psn/link", "POST", { npsso })
             );
-            psnPreparedNpsso = "";
+            psnShowSyncSteps = false;
             psnNeedsRelinkAttention = false;
             applyPsnRenewalUiState();
-            setFeedback(psnGrabNpssoFeedback, "", "");
-            setFeedback(psnFeedback, result?.message || "Conta PSN sincronizada.", "ok");
+            setFeedback(
+                psnFeedback,
+                isSyncAction ? "Conquistas sincronizadas." : "Conta PSN vinculada e conquistas sincronizadas.",
+                "ok"
+            );
             await refreshProfile();
         } catch (error) {
             const errorMessage = String(error?.message || "Falha ao vincular conta PSN.");
@@ -4535,34 +5120,10 @@ async function loadProfile() {
             }
         }
     });
-    psnGrabNpssoBtn?.addEventListener("click", async () => {
+    psnSyncStepsHideBtn?.addEventListener("click", () => {
         if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
-        setFeedback(psnGrabNpssoFeedback, "", "");
-        try {
-            const npsso = await withButtonLoading(psnGrabNpssoBtn, "Lendo...", async () => {
-                let parsed = "";
-                if (navigator?.clipboard && typeof navigator.clipboard.readText === "function") {
-                    const clipboardText = await navigator.clipboard.readText().catch(() => "");
-                    parsed = extractNpssoFromRaw(clipboardText);
-                }
-                if (!parsed || parsed.length < 20) {
-                    const rawInput = window.prompt(
-                        "Não foi possível ler um NPSSO válido da área de transferência. Cole aqui o JSON da Sony (ou apenas o NPSSO)."
-                    );
-                    parsed = extractNpssoFromRaw(rawInput);
-                }
-                if (!parsed || parsed.length < 20) {
-                    throw new Error(
-                        "NPSSO não encontrado. Copie o JSON da aba da Sony e clique em Pegar NPSSO novamente."
-                    );
-                }
-                return parsed;
-            });
-            psnPreparedNpsso = npsso;
-            setFeedback(psnGrabNpssoFeedback, "NPSSO capturado. Agora clique em Vincular PSN.", "ok");
-        } catch (error) {
-            setFeedback(psnGrabNpssoFeedback, error.message, "error");
-        }
+        psnShowSyncSteps = false;
+        applyPsnRenewalUiState();
     });
     psnUnlinkBtn?.addEventListener("click", async () => {
         if (viewedUserId > 0 && viewedUserId !== ownUserId) return;
@@ -4572,6 +5133,7 @@ async function loadProfile() {
             const result = await withButtonLoading(psnUnlinkBtn, "Desvinculando...", async () =>
                 sendJson("/api/user/psn/unlink", "POST")
             );
+            psnShowSyncSteps = false;
             psnNeedsRelinkAttention = false;
             applyPsnRenewalUiState();
             setFeedback(psnFeedback, result?.message || "Conta PSN desvinculada.", "ok");
@@ -4866,7 +5428,61 @@ let homeActiveRound = null;
 let homeRoundsMap = new Map();
 let homeRoundFeedPageMap = new Map();
 let homeCommentFormAlignRaf = 0;
+let homeActiveRoundRenderSignature = "";
+let homeFeedRenderSignature = "";
 const HOME_FEED_RECOMMENDATION_PAGE_SIZE = 6;
+
+function recommendationCommentSignatureValue(comments) {
+    const list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return "0";
+    return list
+        .map((comment) => [
+            Number(comment?.id || 0),
+            Number(comment?.updated_at || comment?.created_at || 0),
+            Number(comment?.parent_comment_id || 0),
+            Number(comment?.likes_count ?? comment?.likesCount ?? 0),
+            Number(comment?.liked_by_me ?? comment?.likedByMe ?? 0)
+        ].join(":"))
+        .join(",");
+}
+
+function buildHomeActiveRoundSignature(activeRound) {
+    if (!activeRound || typeof activeRound !== "object") return "none";
+    return [
+        Number(activeRound.id || 0),
+        String(activeRound.status || ""),
+        String(activeRound.phase || ""),
+        Number(activeRound.created_at || 0),
+        Number(activeRound.rating_starts_at || 0),
+        Number(activeRound.creator_user_id || 0),
+        activeRound.isCreator ? 1 : 0
+    ].join(":");
+}
+
+function buildHomeFeedSignature(rounds) {
+    const list = Array.isArray(rounds) ? rounds : [];
+    return list
+        .map((round) => {
+            const recommendations = Array.isArray(round?.recommendations) ? round.recommendations : [];
+            const recSignature = recommendations
+                .map((rec) => [
+                    Number(rec?.id || 0),
+                    Number(rec?.updated_at || 0),
+                    Number(rec?.rating_updated_at || 0),
+                    recommendationCommentSignatureValue(rec?.comments)
+                ].join(":"))
+                .join(",");
+            return [
+                Number(round?.id || 0),
+                String(round?.status || ""),
+                String(round?.phase || ""),
+                Number(round?.created_at || 0),
+                Number(round?.rating_starts_at || 0),
+                recSignature
+            ].join("|");
+        })
+        .join("||");
+}
 
 function alignRoundCommentForms(roundSection) {
     if (!(roundSection instanceof HTMLElement)) return;
@@ -5017,6 +5633,7 @@ function renderFeed(rounds) {
                 const participants = Array.isArray(round.participants) ? round.participants : [];
                 const isRoundParticipant = participants.some((item) => Number(item?.id || 0) === Number(sessionUserId || 0));
                 const canReopenRound = Boolean(sessionIsOwner || sessionIsModerator);
+                const canDeleteRound = Boolean(sessionIsOwner || sessionIsModerator);
                 const canEditReopenedRound = Boolean(
                     round.status === "reopened"
                     && (isRoundParticipant || sessionIsOwner || sessionIsModerator)
@@ -5038,6 +5655,7 @@ function renderFeed(rounds) {
                         ${showRoundActions
         ? `
                                 <div class="inline-actions home-round-actions">
+                                    ${canDeleteRound ? `<button class="btn btn-danger" data-home-delete-round="${round.id}" type="button">Excluir Rodada</button>` : ""}
                                     ${round.status === "closed" && canReopenRound ? `<button class="btn btn-warn" data-home-reopen-round="${round.id}" type="button">Reabrir Rodada</button>` : ""}
                                     ${canEditReopenedRound ? `<button class="btn btn-success" data-home-edit-round="${round.id}" type="button">Editar Rodada</button>` : ""}
                                     <button class="btn btn-outline" data-open-naval-plan="${round.id}" type="button">Plano Naval</button>
@@ -5153,22 +5771,32 @@ function scheduleHomePhaseRefresh(activeRound) {
     if (ts <= now) return;
     const delayMs = Math.max(0, (ts - now) * 1000 + 120);
     homePhaseRefreshTimer = window.setTimeout(() => {
-        Promise.all([refreshHomeActive(), refreshHomeFeed()]).catch(() => {
-            // sem acao
-        });
+        queueHomeRealtimeRefresh();
     }, delayMs);
 }
 
 async function refreshHomeActive() {
     const active = await sendJson("/api/rounds/active");
-    homeActiveRound = active.activeRound;
-    updateHomeRoundStatus(homeActiveRound);
-    scheduleHomePhaseRefresh(homeActiveRound);
+    const nextActiveRound = active.activeRound;
+    const nextSignature = buildHomeActiveRoundSignature(nextActiveRound);
+    const shouldRender = nextSignature !== homeActiveRoundRenderSignature;
+    homeActiveRound = nextActiveRound;
+    homeActiveRoundRenderSignature = nextSignature;
+    if (shouldRender) {
+        updateHomeRoundStatus(homeActiveRound);
+    }
+    if (shouldRender || !homePhaseRefreshTimer) {
+        scheduleHomePhaseRefresh(homeActiveRound);
+    }
 }
 
 async function refreshHomeFeed() {
     const feed = await sendJson("/api/feed/rounds?limit=8");
-    renderFeed(feed.rounds || []);
+    const rounds = Array.isArray(feed?.rounds) ? feed.rounds : [];
+    const nextSignature = buildHomeFeedSignature(rounds);
+    if (nextSignature === homeFeedRenderSignature) return;
+    homeFeedRenderSignature = nextSignature;
+    renderFeed(rounds);
 }
 async function handleHome() {
     await ensureSessionUserId();
@@ -5263,7 +5891,9 @@ async function handleHome() {
             }
             const created = await sendJson("/api/rounds/new", "POST", {});
             homeActiveRound = created.round;
+            homeActiveRoundRenderSignature = buildHomeActiveRoundSignature(homeActiveRound);
             updateHomeRoundStatus(homeActiveRound);
+            scheduleHomePhaseRefresh(homeActiveRound);
             setFeedback("homeFeedback", "Nova rodada criada. Você já pode abrir e gerenciar.", "ok");
         } catch (error) {
             setFeedback("homeFeedback", error.message, "error");
@@ -5305,10 +5935,33 @@ async function handleHome() {
         if (reopenBtn) {
             const roundId = Number(reopenBtn.dataset.homeReopenRound);
             if (!roundId) return;
+            const confirmed = window.confirm("Deseja reabrir esta rodada?");
+            if (!confirmed) return;
             try {
                 await withButtonLoading(reopenBtn, "Reabrindo...", async () => {
                     const result = await sendJson(`/api/rounds/${roundId}/close`, "POST", {});
                     setFeedback("homeFeedback", result.message || "Rodada reaberta.", "ok");
+                    await Promise.all([refreshHomeActive(), refreshHomeFeed()]);
+                });
+            } catch (error) {
+                setFeedback("homeFeedback", error.message, "error");
+            }
+            return;
+        }
+
+        const deleteRoundBtn = event.target.closest("button[data-home-delete-round]");
+        if (deleteRoundBtn) {
+            if (!sessionIsOwner && !sessionIsModerator) return;
+            const roundId = Number(deleteRoundBtn.dataset.homeDeleteRound);
+            if (!roundId) return;
+            const confirmationMessage = sessionIsOwner
+                ? "Deseja excluir esta rodada? Essa ação não pode ser desfeita."
+                : "Deseja solicitar ao dono a exclusão desta rodada?";
+            if (!window.confirm(confirmationMessage)) return;
+            try {
+                await withButtonLoading(deleteRoundBtn, "Excluindo...", async () => {
+                    const result = await sendJson(`/api/admin/rounds/${roundId}`, "DELETE");
+                    setFeedback("homeFeedback", result.message || "Solicitação enviada.", "ok");
                     await Promise.all([refreshHomeActive(), refreshHomeFeed()]);
                 });
             } catch (error) {
@@ -5362,10 +6015,69 @@ async function handleHome() {
 let currentRound = null;
 let roundUsers = [];
 let roundRecommendationsStructureSignature = "";
+let roundStateRenderSignature = "";
 let pairExclusionAutosaveToken = 0;
 let pairExclusionsRenderSignature = "";
 let roundRatingActionInFlight = false;
 const navalRatingLetters = "ABCDEFGHIJ";
+
+function buildRoundStateSignature(round) {
+    if (!round || typeof round !== "object") return "none";
+    const participants = Array.isArray(round.participants) ? round.participants : [];
+    const assignments = Array.isArray(round.assignments) ? round.assignments : [];
+    const recommendations = Array.isArray(round.recommendations) ? round.recommendations : [];
+    const ratingsToDo = Array.isArray(round.ratingsToDo) ? round.ratingsToDo : [];
+    const pairExclusions = Array.isArray(round.pair_exclusions) ? round.pair_exclusions : [];
+
+    const participantsSig = participants.map((item) => Number(item?.id || 0)).join(",");
+    const assignmentsSig = assignments
+        .map((item) => [
+            Number(item?.giver_user_id || 0),
+            Number(item?.receiver_user_id || 0),
+            item?.revealed ? 1 : 0
+        ].join(":"))
+        .join(",");
+    const recommendationsSig = recommendations
+        .map((item) => [
+            Number(item?.id || 0),
+            Number(item?.updated_at || 0),
+            Number(item?.rating_updated_at || 0),
+            String(item?.rating_letter || ""),
+            Number(item?.interest_score || 0),
+            recommendationCommentSignatureValue(item?.comments)
+        ].join(":"))
+        .join(",");
+    const ratingsSig = ratingsToDo
+        .map((item) => [
+            Number(item?.id || 0),
+            String(item?.rating_letter || ""),
+            Number(item?.interest_score || 0),
+            Number(item?.rating_updated_at || 0)
+        ].join(":"))
+        .join(",");
+    const pairExclusionsSig = pairExclusions
+        .map((item) => `${Number(item?.giver_user_id || 0)}:${Number(item?.receiver_user_id || 0)}`)
+        .join(",");
+
+    return [
+        Number(round.id || 0),
+        String(round.status || ""),
+        String(round.phase || ""),
+        Number(round.created_at || 0),
+        Number(round.rating_starts_at || 0),
+        round.ratingOpen ? 1 : 0,
+        round.isCreator ? 1 : 0,
+        Number(round.myAssignment?.giver_user_id || 0),
+        Number(round.myAssignment?.receiver_user_id || 0),
+        Number(round.myRecommendation?.id || 0),
+        Number(round.myRecommendation?.updated_at || 0),
+        participantsSig,
+        assignmentsSig,
+        recommendationsSig,
+        ratingsSig,
+        pairExclusionsSig
+    ].join("|");
+}
 
 function renderParticipantList(round) {
     const list = byId("participantList");
@@ -5618,7 +6330,7 @@ function renderRoundRecommendations(round) {
         .join("|");
 
     if (!recommendations.length) {
-        container.innerHTML = "<p>Ainda não há indicações enviadas nesta rodada.</p>";
+        setElementHtmlIfChanged(container, "<p>Ainda não há indicações enviadas nesta rodada.</p>");
         recommendationCommentSignatureCaches.round.clear();
         recommendationCommentIdsCaches.round.clear();
         clearStaleCommentSignatures("round", []);
@@ -5627,7 +6339,7 @@ function renderRoundRecommendations(round) {
     }
 
     if (structureSignature !== roundRecommendationsStructureSignature) {
-        container.innerHTML = recommendations
+        const nextHtml = recommendations
             .map((rec) =>
                 recommendationCardTemplate(rec, {
                     showGradeOverlay: false,
@@ -5635,6 +6347,7 @@ function renderRoundRecommendations(round) {
                 })
             )
             .join("");
+        setElementHtmlIfChanged(container, nextHtml);
         recommendationCommentSignatureCaches.round.clear();
         recommendationCommentIdsCaches.round.clear();
         recommendations.forEach((rec) => resetCommentFormState(rec.id));
@@ -5645,11 +6358,21 @@ function renderRoundRecommendations(round) {
     clearStaleCommentSignatures("round", recommendations.map((rec) => rec.id));
 }
 
-function resetRoundSections() {
-    byId("draftCreatorSection")?.classList.add("hidden");
-    byId("draftSpectatorSection")?.classList.add("hidden");
-    byId("revealSection")?.classList.add("hidden");
-    byId("indicationSection")?.classList.add("hidden");
+const roundSectionIds = [
+    "draftCreatorSection",
+    "draftSpectatorSection",
+    "revealSection",
+    "indicationSection"
+];
+let roundVisibleSectionId = "";
+
+function resetRoundSections(activeSectionId = "") {
+    const targetSectionId = String(activeSectionId || "");
+    if (roundVisibleSectionId === targetSectionId) return;
+    roundSectionIds.forEach((sectionId) => {
+        setElementHiddenState(sectionId, sectionId !== targetSectionId);
+    });
+    roundVisibleSectionId = targetSectionId;
 }
 
 function canManageDraftRound(roundLike = currentRound) {
@@ -5840,16 +6563,82 @@ function recommendationHasNavalRating(recommendation) {
     return navalRatingLetters.includes(letter) && Number.isInteger(score) && score >= 1 && score <= 10;
 }
 
+function resolvePreferredRatingRecommendation(items, selectedId = 0) {
+    if (!Array.isArray(items) || !items.length) return null;
+    const preferred = Number(selectedId) > 0
+        ? items.find((item) => Number(item.id) === Number(selectedId)) || null
+        : null;
+    const firstPending = items.find((item) => !recommendationHasNavalRating(item)) || null;
+    if (firstPending) {
+        if (!preferred) return firstPending;
+        return recommendationHasNavalRating(preferred) ? firstPending : preferred;
+    }
+    return preferred || items[0] || null;
+}
+
 function getSelectedRatingRecommendation(round = currentRound) {
     const items = Array.isArray(round?.ratingsToDo) ? round.ratingsToDo : [];
     if (!items.length) return null;
-    const select = byId("ratingRecommendationSelect");
-    const selectedId = Number(select?.value || 0);
-    if (selectedId > 0) {
-        const match = items.find((item) => Number(item.id) === selectedId);
-        if (match) return match;
+    const selectedId = Number(byId("ratingRecommendationIdInput")?.value || 0);
+    return resolvePreferredRatingRecommendation(items, selectedId);
+}
+
+function renderSelectedRatingRecommendationCard(round = currentRound) {
+    const shell = byId("ratingRecommendationCard");
+    const selectedInput = byId("ratingRecommendationIdInput");
+    if (!(selectedInput instanceof HTMLInputElement)) return;
+    const items = Array.isArray(round?.ratingsToDo) ? round.ratingsToDo : [];
+    if (!(shell instanceof HTMLElement) || !items.length) {
+        selectedInput.value = "";
+        if (shell instanceof HTMLElement) {
+            setElementHtmlIfChanged(shell, "");
+        }
+        return;
     }
-    return items[0] || null;
+
+    const selectedId = Number(selectedInput.value || 0);
+    const selected = resolvePreferredRatingRecommendation(items, selectedId);
+    if (!selected) {
+        selectedInput.value = "";
+        setElementHtmlIfChanged(shell, "");
+        return;
+    }
+
+    selectedInput.value = String(Number(selected.id) || 0);
+    const hasReason = String(selected.reason || "").trim().length > 0;
+    const itemPosition = Math.max(0, items.findIndex((item) => Number(item.id) === Number(selected.id))) + 1;
+    const itemPositionPill = items.length > 1
+        ? `<span class="pill">Jogo ${itemPosition} de ${items.length}</span>`
+        : "";
+    const reasonHtml = hasReason
+        ? `
+            <div class="recommendation-reason-wrap">
+                <p class="recommendation-section-label">Motivação</p>
+                <p class="recommendation-reason">${escapeHtml(selected.reason)}</p>
+            </div>
+        `
+        : "";
+
+    const nextHtml = `
+        <article class="recommendation-card recommendation-card-indication rating-recommendation-card${hasReason ? "" : " recommendation-card-no-reason"}">
+            ${recommendationCoverWrapTemplate(selected, { showGradeOverlay: false, grade: "" })}
+            <div class="recommendation-indication-main rating-recommendation-main">
+                <div class="recommendation-indication-top">
+                    <h3>${escapeHtml(String(selected.game_name || "Jogo"))}</h3>
+                    <div class="meta-row">
+                        <span class="pill">De: ${userLinkHtml({ nickname: selected.giver_nickname, username: selected.giver_username }, selected.giver_user_id)}</span>
+                        ${itemPositionPill}
+                    </div>
+                    <div class="desc-grade-row">
+                        <span class="recommendation-section-label">Descrição</span>
+                        <p>${escapeHtml(selected.game_description || "Sem descrição informada.")}</p>
+                    </div>
+                    ${reasonHtml}
+                </div>
+            </div>
+        </article>
+    `;
+    setElementHtmlIfChanged(shell, nextHtml);
 }
 
 function syncRatingFormFieldsWithSelectedRecommendation(round = currentRound) {
@@ -6021,12 +6810,80 @@ async function clearSelectedRoundRating() {
     }
 }
 
+const BRASILIA_TIMEZONE = "America/Sao_Paulo";
+const BRASILIA_UTC_OFFSET_MS = -3 * 60 * 60 * 1000;
+
+function futureBrasiliaTimestampSeconds({ days = 0, months = 0 } = {}) {
+    const nowUtcMs = Date.now();
+    const brasiliaWallClock = new Date(nowUtcMs + BRASILIA_UTC_OFFSET_MS);
+    if (Number(months)) {
+        brasiliaWallClock.setUTCMonth(brasiliaWallClock.getUTCMonth() + Number(months));
+    }
+    if (Number(days)) {
+        brasiliaWallClock.setUTCDate(brasiliaWallClock.getUTCDate() + Number(days));
+    }
+    return Math.floor((brasiliaWallClock.getTime() - BRASILIA_UTC_OFFSET_MS) / 1000);
+}
+
+function parseDateTimeInputAsBrasiliaSeconds(rawValue) {
+    const raw = String(rawValue || "").trim();
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return 0;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6] || 0);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return 0;
+    if (!Number.isInteger(hour) || !Number.isInteger(minute)) return 0;
+    if (month < 1 || month > 12) return 0;
+    if (day < 1 || day > 31) return 0;
+    if (hour < 0 || hour > 23) return 0;
+    if (minute < 0 || minute > 59) return 0;
+    if (second < 0 || second > 59) return 0;
+    const baseUtcMs = Date.UTC(year, month - 1, day, hour, minute, second, 0);
+    const check = new Date(baseUtcMs);
+    if (
+        check.getUTCFullYear() !== year
+        || (check.getUTCMonth() + 1) !== month
+        || check.getUTCDate() !== day
+        || check.getUTCHours() !== hour
+        || check.getUTCMinutes() !== minute
+        || check.getUTCSeconds() !== second
+    ) {
+        return 0;
+    }
+    const targetUtcMs = baseUtcMs - BRASILIA_UTC_OFFSET_MS;
+    return Math.floor(targetUtcMs / 1000);
+}
+
 function toDateTimeLocalValue(timestampSeconds) {
     const ts = Number(timestampSeconds || 0);
     if (!Number.isInteger(ts) || ts <= 0) return "";
     const d = new Date(ts * 1000);
-    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 16);
+    try {
+        const parts = new Intl.DateTimeFormat("pt-BR", {
+            timeZone: BRASILIA_TIMEZONE,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false
+        }).formatToParts(d);
+        const map = new Map(parts.map((part) => [part.type, part.value]));
+        const year = map.get("year");
+        const month = map.get("month");
+        const day = map.get("day");
+        const hour = map.get("hour");
+        const minute = map.get("minute");
+        if (year && month && day && hour && minute) {
+            return `${year}-${month}-${day}T${hour}:${minute}`;
+        }
+    } catch {}
+    const brasiliaWallClock = new Date(d.getTime() + BRASILIA_UTC_OFFSET_MS);
+    return brasiliaWallClock.toISOString().slice(0, 16);
 }
 
 function renderNavalChart(round) {
@@ -6099,11 +6956,11 @@ function renderRevealList(round) {
     if (!listEl) return;
     const assignments = round.assignments || [];
     if (!assignments.length) {
-        listEl.innerHTML = "<p>O sorteio ainda não foi gerado.</p>";
+        setElementHtmlIfChanged(listEl, "<p>O sorteio ainda não foi gerado.</p>");
         return;
     }
 
-    listEl.innerHTML = assignments
+    const nextHtml = assignments
         .map((item) => {
             const giverUser = {
                 id: item.giver_user_id,
@@ -6133,58 +6990,84 @@ function renderRevealList(round) {
             `;
         })
         .join("");
+    setElementHtmlIfChanged(listEl, nextHtml);
 }
 
 function renderRoundState(round) {
-    resetRoundSections();
-    byId("roundHeading").textContent = `Rodada - ${formatRoundDateTime(round.created_at)}`;
-    byId("roundStatusText").textContent =
-        round.phase === "draft"
+    roundStateRenderSignature = buildRoundStateSignature(round);
+    const phase = String(round?.phase || "").trim().toLowerCase();
+    const activeSectionId =
+        phase === "draft"
+            ? "draftCreatorSection"
+            : phase === "reveal"
+              ? "revealSection"
+              : (phase === "indication" || phase === "rating" || phase === "closed")
+                ? "indicationSection"
+                : "";
+    resetRoundSections(activeSectionId);
+
+    setElementTextIfChanged("roundHeading", `Rodada - ${formatRoundDateTime(round.created_at)}`);
+    const draftCloseBtn = byId("draftCloseRoundBtn");
+    const revealCloseBtn = byId("revealCloseRoundBtn");
+    if (draftCloseBtn) {
+        setElementHiddenState(draftCloseBtn, true);
+    }
+    if (revealCloseBtn) {
+        setElementHiddenState(revealCloseBtn, true);
+    }
+    setElementTextIfChanged(
+        "roundStatusText",
+        phase === "draft"
             ? "Fase de sorteio e montagem de participantes."
-            : round.phase === "reveal"
+            : phase === "reveal"
               ? "Sorteio concluído. Revele os pareamentos."
-              : round.phase === "indication"
+              : phase === "indication"
                 ? "Sessão de indicações aberta."
-                : round.phase === "rating"
+                : phase === "rating"
                   ? "Sessão de notas navais aberta."
-              : "Rodada encerrada.";
+                  : "Rodada encerrada."
+    );
 
     renderRoundRecommendations(round);
 
-    if (round.phase === "draft") {
-        byId("draftCreatorSection")?.classList.remove("hidden");
+    if (phase === "draft") {
         renderParticipantList(round);
         renderPairExclusionsEditor(round);
         renderUserSearchResults();
         applyDraftReadOnlyUi(round);
-
-        byId("draftSpectatorSection")?.classList.add("hidden");
+        const canOwnerOrCreator = Boolean(round.isCreator || sessionIsOwner);
+        if (draftCloseBtn) {
+            setElementHiddenState(draftCloseBtn, !canOwnerOrCreator);
+        }
         return;
     }
 
-    if (round.phase === "reveal") {
-        byId("revealSection")?.classList.remove("hidden");
+    if (phase === "reveal") {
         renderRevealList(round);
+        const canOwnerOrCreator = Boolean(round.isCreator || sessionIsOwner);
+        if (revealCloseBtn) {
+            setElementHiddenState(revealCloseBtn, !canOwnerOrCreator);
+        }
         const tools = byId("startIndicationTools");
         if (round.isCreator || sessionIsOwner || sessionIsModerator) {
-            tools?.classList.remove("hidden");
+            setElementHiddenState(tools, false);
             const input = byId("ratingStartsAtInput");
             if (input && document.activeElement !== input) {
                 const fromRound = toDateTimeLocalValue(round.rating_starts_at);
                 if (fromRound) input.value = fromRound;
                 else if (!input.value) {
-                    const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
-                    input.value = future.toISOString().slice(0, 16);
+                    input.value = toDateTimeLocalValue(futureBrasiliaTimestampSeconds({ months: 1 }));
                 }
             }
-        } else tools?.classList.add("hidden");
+        } else {
+            setElementHiddenState(tools, true);
+        }
         return;
     }
 
-    if (round.phase === "indication" || round.phase === "rating" || round.phase === "closed") {
-        byId("indicationSection")?.classList.remove("hidden");
+    if (phase === "indication" || phase === "rating" || phase === "closed") {
         const indicationsBtn = byId("tabIndicationsBtn");
-        if (round.phase === "rating" || round.phase === "closed") {
+        if (phase === "rating" || phase === "closed") {
             if (indicationsBtn) {
                 indicationsBtn.disabled = true;
                 indicationsBtn.classList.add("disabled");
@@ -6203,8 +7086,8 @@ function renderRoundState(round) {
         const canOwnerOrCreator = Boolean(round.isCreator || sessionIsOwner);
         const canOwnerOrModerator = Boolean(sessionIsOwner || sessionIsModerator);
         const isReopenedRound = String(round.status || "") === "reopened";
-        const canReopenClosedRound = round.phase === "closed" && canOwnerOrModerator;
-        const canFinalizeReopenedRound = round.phase === "rating" && isReopenedRound && canOwnerOrModerator;
+        const canReopenClosedRound = phase === "closed" && canOwnerOrModerator;
+        const canFinalizeReopenedRound = phase === "rating" && isReopenedRound && canOwnerOrModerator;
 
         if (canReopenClosedRound || canFinalizeReopenedRound || canOwnerOrCreator) {
             if (canReopenClosedRound) {
@@ -6223,7 +7106,7 @@ function renderRoundState(round) {
                     finalizeBtn.classList.remove("btn-warn");
                     finalizeBtn.classList.add("btn-success");
                 }
-            } else if (round.phase === "rating") {
+            } else if (phase === "rating") {
                 closeBtn?.classList.add("hidden");
                 finalizeBtn?.classList.remove("hidden");
                 if (finalizeBtn) {
@@ -6245,7 +7128,7 @@ function renderRoundState(round) {
             finalizeBtn?.classList.add("hidden");
         }
 
-        const canIndicate = round.phase === "indication";
+        const canIndicate = phase === "indication";
         if (round.myAssignment) {
             const targetUser = {
                 id: round.myAssignment.receiver_user_id,
@@ -6254,9 +7137,10 @@ function renderRoundState(round) {
             };
             const assignmentText = byId("assignmentText");
             if (assignmentText) {
-                assignmentText.innerHTML = canIndicate
+                const assignmentHtml = canIndicate
                     ? `Sua indicação desta rodada vai para: ${displayNameStyledHtml(targetUser)}`
                     : `Indicações encerradas. Você indicou para: ${displayNameStyledHtml(targetUser)}`;
+                setElementHtmlIfChanged(assignmentText, assignmentHtml);
             }
             if (canIndicate) byId("recommendationForm")?.classList.remove("hidden");
             else byId("recommendationForm")?.classList.add("hidden");
@@ -6267,7 +7151,7 @@ function renderRoundState(round) {
                 if (submitBtn) submitBtn.textContent = round.myRecommendation ? "Atualizar Indicação" : "Salvar Indicação";
             }
         } else {
-            byId("assignmentText").textContent = "Você está espectando esta rodada.";
+            setElementTextIfChanged("assignmentText", "Você está espectando esta rodada.");
             byId("recommendationForm")?.classList.add("hidden");
         }
 
@@ -6277,14 +7161,13 @@ function renderRoundState(round) {
             String(round.status || "") === "reopened"
                 ? Boolean(sessionIsOwner || sessionIsModerator)
                 : Boolean(round.isCreator || sessionIsOwner || sessionIsModerator);
-        if (canEditRatingSchedule && round.phase !== "closed") {
+        if (canEditRatingSchedule && phase !== "closed") {
             ratingScheduleEditor?.classList.remove("hidden");
             if (ratingStartsAtEditInput && document.activeElement !== ratingStartsAtEditInput) {
                 const localValue = toDateTimeLocalValue(round.rating_starts_at);
                 if (localValue) ratingStartsAtEditInput.value = localValue;
                 else if (!ratingStartsAtEditInput.value) {
-                    const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
-                    ratingStartsAtEditInput.value = future.toISOString().slice(0, 16);
+                    ratingStartsAtEditInput.value = toDateTimeLocalValue(futureBrasiliaTimestampSeconds({ days: 1 }));
                 }
             }
         } else {
@@ -6294,46 +7177,42 @@ function renderRoundState(round) {
         renderNavalChart(round);
         const ratingText = byId("ratingStatusText");
         const ratingForm = byId("ratingForm");
-        const ratingSelect = byId("ratingRecommendationSelect");
-        const previousSelectionId = Number(ratingSelect?.value || 0);
 
-        if (round.phase === "closed") {
-            ratingText.textContent = "Rodada encerrada. Veja o plano naval final.";
+        if (phase === "closed") {
+            setElementTextIfChanged(ratingText, "Rodada encerrada. Veja o plano naval final.");
             ratingForm?.classList.add("hidden");
+            renderSelectedRatingRecommendationCard({ ratingsToDo: [] });
             syncClearRatingButtonState(round);
             hideRoundNavalPreviewPoint();
         } else if (round.ratingOpen) {
             const items = round.ratingsToDo || [];
             if (items.length) {
-                ratingText.textContent = "A sessão de notas foi liberada. Avalie os jogos que você recebeu.";
+                setElementTextIfChanged(ratingText, "A sessão de notas foi liberada. Avalie os jogos que você recebeu.");
                 ratingForm?.classList.remove("hidden");
-                ratingSelect.innerHTML = items
-                    .map((rec) => `<option value="${rec.id}">${escapeHtml(rec.game_name)} (de ${escapeHtml(displayName({ id: rec.giver_user_id, nickname: rec.giver_nickname, username: rec.giver_username }))})</option>`)
-                    .join("");
-                if (previousSelectionId > 0 && items.some((rec) => Number(rec.id) === previousSelectionId)) {
-                    ratingSelect.value = String(previousSelectionId);
-                }
+                renderSelectedRatingRecommendationCard(round);
                 syncRatingFormFieldsWithSelectedRecommendation(round);
                 syncClearRatingButtonState(round);
             } else {
-                ratingText.textContent = "Você não recebeu jogos para avaliar nesta rodada.";
+                setElementTextIfChanged(ratingText, "Você não recebeu jogos para avaliar nesta rodada.");
                 ratingForm?.classList.add("hidden");
+                renderSelectedRatingRecommendationCard({ ratingsToDo: [] });
                 syncClearRatingButtonState(round);
                 hideRoundNavalPreviewPoint();
             }
         } else {
             const dateText = round.rating_starts_at
-                ? new Date(round.rating_starts_at * 1000).toLocaleString("pt-BR")
+                ? new Date(round.rating_starts_at * 1000).toLocaleString("pt-BR", { timeZone: BRASILIA_TIMEZONE })
                 : "data não definida";
-            ratingText.textContent = `Notas navais liberam em: ${dateText}.`;
+            setElementTextIfChanged(ratingText, `Notas navais liberam em: ${dateText}.`);
             ratingForm?.classList.add("hidden");
+            renderSelectedRatingRecommendationCard({ ratingsToDo: [] });
             syncClearRatingButtonState(round);
             hideRoundNavalPreviewPoint();
         }
         return;
     }
 
-    byId("assignmentText").textContent = "Rodada encerrada. Confira os resultados abaixo.";
+    setElementTextIfChanged("assignmentText", "Rodada encerrada. Confira os resultados abaixo.");
 }
 
 async function loadUsersForRound(term = "") {
@@ -6393,6 +7272,7 @@ async function refreshRoundData(forceRoundId, options = {}) {
     if (!roundId) {
             currentRound = null;
             roundRecommendationsStructureSignature = "";
+            roundStateRenderSignature = "";
             recommendationCommentSignatureCaches.round.clear();
             recommendationCommentIdsCaches.round.clear();
             pairExclusionsRenderSignature = "";
@@ -6400,23 +7280,46 @@ async function refreshRoundData(forceRoundId, options = {}) {
             clearTimeout(roundPhaseRefreshTimer);
             roundPhaseRefreshTimer = 0;
         }
-        byId("roundHeading").textContent = "Sem rodada ativa";
-        byId("roundStatusText").textContent = "Crie uma nova rodada na página inicial.";
-        resetRoundSections();
-        byId("roundRecommendations").innerHTML = "";
+        setElementTextIfChanged("roundHeading", "Sem rodada ativa");
+        setElementTextIfChanged("roundStatusText", "Crie uma nova rodada na página inicial.");
+        setElementHiddenState("draftCloseRoundBtn", true);
+        setElementHiddenState("revealCloseRoundBtn", true);
+        resetRoundSections("");
+        setElementHtmlIfChanged("roundRecommendations", "");
         return;
     }
 
-    const payload = await sendJson(`/api/rounds/${roundId}`);
+    let payload;
+    try {
+        payload = await sendJson(`/api/rounds/${roundId}`);
+    } catch (error) {
+        const message = String(error?.message || "").trim();
+        const normalizedMessage = message
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+        if (page === "round" && normalizedMessage.includes("rodada") && normalizedMessage.includes("nao encontrada")) {
+            window.location.href = "/";
+            return;
+        }
+        throw error;
+    }
     const previousPhase = currentRound?.phase || "";
     const previousRoundId = currentRound?.id || 0;
-    currentRound = payload.round;
-    if (previousRoundId && previousRoundId !== currentRound.id) {
+    const nextRound = payload.round;
+    const nextRoundSignature = buildRoundStateSignature(nextRound);
+    currentRound = nextRound;
+    if (previousRoundId && previousRoundId !== nextRound.id) {
         roundRecommendationsStructureSignature = "";
         recommendationCommentSignatureCaches.round.clear();
         recommendationCommentIdsCaches.round.clear();
     }
-    renderRoundState(currentRound);
+    const shouldRenderRoundState = previousRoundId !== nextRound.id || nextRoundSignature !== roundStateRenderSignature;
+    if (shouldRenderRoundState) {
+        renderRoundState(currentRound);
+    } else {
+        roundStateRenderSignature = nextRoundSignature;
+    }
     if (previousPhase && previousPhase !== "closed" && currentRound.phase === "closed") {
         await claimAchievementUnlocksAndNotify();
     }
@@ -6506,11 +7409,6 @@ async function handleRoundPage() {
 
     byId("tabIndicationsBtn")?.addEventListener("click", () => setRoundTab("indications"));
     byId("tabRatingsBtn")?.addEventListener("click", () => setRoundTab("ratings"));
-    byId("ratingRecommendationSelect")?.addEventListener("change", () => {
-        syncRatingFormFieldsWithSelectedRecommendation(currentRound);
-        syncClearRatingButtonState(currentRound);
-        hideRoundNavalPreviewPoint();
-    });
     byId("navalChart")?.addEventListener("mousemove", (event) => {
         if (!(event instanceof MouseEvent)) return;
         updateRoundNavalHoverPreviewFromPointer(event);
@@ -6658,7 +7556,10 @@ async function handleRoundPage() {
         const btn = event.currentTarget;
         try {
             const raw = byId("ratingStartsAtInput")?.value || "";
-            const ts = Math.floor(new Date(raw).getTime() / 1000);
+            const ts = parseDateTimeInputAsBrasiliaSeconds(raw);
+            if (!Number.isInteger(ts) || ts <= 0) {
+                throw new Error("Defina uma data válida para as notas navais.");
+            }
             await withButtonLoading(btn, "Abrindo sessão...", async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}/start-indication`, "POST", {
                     ratingStartsAt: ts
@@ -6685,7 +7586,7 @@ async function handleRoundPage() {
         const btn = event.currentTarget;
         try {
             const raw = byId("ratingStartsAtEditInput")?.value || "";
-            const ts = Math.floor(new Date(raw).getTime() / 1000);
+            const ts = parseDateTimeInputAsBrasiliaSeconds(raw);
             if (!Number.isInteger(ts) || ts <= 0) {
                 throw new Error("Defina uma data válida para as notas navais.");
             }
@@ -6703,10 +7604,25 @@ async function handleRoundPage() {
     });
     const closeCurrentRound = async (button) => {
         if (!currentRound) return;
+        const roundStatus = String(currentRound.status || "").toLowerCase();
+        const roundPhase = String(currentRound.phase || "").toLowerCase();
+        let confirmationMessage = "Deseja finalizar esta rodada?";
+        if (roundPhase === "closed") {
+            confirmationMessage = "Deseja reabrir esta rodada?";
+        } else if (roundStatus === "reopened") {
+            confirmationMessage = "Deseja finalizar a rodada reaberta?";
+        } else if (roundStatus === "draft" || roundStatus === "reveal") {
+            confirmationMessage = "Deseja encerrar esta rodada agora? Ela será descartada e não ficará no histórico.";
+        }
+        if (!window.confirm(confirmationMessage)) return;
         try {
             const loadingText = currentRound.phase === "closed" ? "Reabrindo..." : "Finalizando...";
             await withButtonLoading(button, loadingText, async () => {
                 const result = await sendJson(`/api/rounds/${currentRound.id}/close`, "POST", {});
+                if (result?.redirectToHome) {
+                    window.location.href = "/";
+                    return;
+                }
                 setFeedback("roundFeedback", result.message, "ok");
                 await refreshRoundData(currentRound.id);
             });
@@ -6717,6 +7633,8 @@ async function handleRoundPage() {
 
     byId("closeRoundBtn")?.addEventListener("click", (event) => closeCurrentRound(event.currentTarget));
     byId("finalizeRoundBtn")?.addEventListener("click", (event) => closeCurrentRound(event.currentTarget));
+    byId("draftCloseRoundBtn")?.addEventListener("click", (event) => closeCurrentRound(event.currentTarget));
+    byId("revealCloseRoundBtn")?.addEventListener("click", (event) => closeCurrentRound(event.currentTarget));
 
     byId("coverInput")?.addEventListener("change", (event) => {
         const file = event.target.files?.[0] || null;
@@ -6939,6 +7857,7 @@ async function init() {
 }
 
 init();
+
 
 
 

@@ -68,36 +68,48 @@
             <div class="inline-actions">
                 <button id="psnLinkBtn" class="btn btn-psn hidden" type="button">Vincular PSN</button>
                 <button id="psnUnlinkBtn" class="btn btn-outline hidden" type="button">Desvincular PSN</button>
+                <p id="psnFeedback" class="feedback"></p>
             </div>
             <div id="psnLinkSteps" class="psn-link-steps hidden">
                 <p id="psnLinkStepsTitle" class="psn-link-steps-title">Passo a passo para vincular PSN:</p>
-                <ol class="psn-link-steps-list">
+                <ol id="psnLinkStepsListLink" class="psn-link-steps-list">
                     <li>Logue com sua conta PSN nesse navegador.</li>
                     <li>
                         Acesse o link
                         <a class="psn-link-step-link" href="https://ca.account.sony.com/api/v1/ssocookie" target="_blank" rel="noopener noreferrer">https://ca.account.sony.com/api/v1/ssocookie</a>.
                     </li>
-                    <li>
-                        Com o JSON aberto, copie o conteudo e clique no botao pegar NPSSO.
-                        <div class="psn-grab-row">
-                            <button id="psnGrabNpssoBtn" class="btn btn-outline" type="button">Pegar NPSSO</button>
-                        </div>
-                    </li>
+                    <li>Com o JSON aberto, copie o conteudo e clique no botao Vincular PSN.</li>
+                    <li>Se não der certo, tente em outro navegador.</li>
                 </ol>
-                <p id="psnGrabNpssoFeedback" class="feedback hidden"></p>
-            </div>
+                <ol id="psnLinkStepsListSync" class="psn-link-steps-list hidden">
+                    <li>
+                        Acesse o link
+                        <a class="psn-link-step-link" href="https://ca.account.sony.com/api/v1/ssocookie" target="_blank" rel="noopener noreferrer">https://ca.account.sony.com/api/v1/ssocookie</a>.
+                    </li>
+                    <li>Com o JSON aberto, copie o conteudo e clique no botao Vincular PSN.</li>
+                    <li>Se não der certo, tente em outro navegador.</li>
+                </ol>
+</div>
+            <button
+                id="psnSyncStepsHideBtn"
+                class="psn-sync-steps-hide hidden"
+                type="button"
+                aria-label="Esconder tutorial de sincronização"
+                title="Esconder tutorial"
+            >
+                ⌃
+            </button>
             <p class="psn-help-text">
-                Ao vincular, o sistema sincroniza automaticamente seus trofeus da PSN e exibe para todos no perfil.
+                Ao vincular, o sistema sincroniza automaticamente seus troféus da PSN e exibe para todos no perfil.
                 Siga os passos indicados para vincular.
             </p>
             <div id="psnProfileHead" class="psn-profile-head hidden"></div>
             <div id="psnTitlesGrid" class="psn-titles-grid"></div>
-            <div id="psnTitlesPagination" class="psn-pagination hidden" aria-label="Paginacao de jogos PSN">
+            <div id="psnTitlesPagination" class="psn-pagination hidden" aria-label="Paginação de jogos PSN">
                 <button id="psnTitlesPrevBtn" class="btn btn-outline" type="button">Anterior</button>
                 <span id="psnTitlesPageLabel" class="psn-pagination-label">Pagina 1 de 1</span>
                 <button id="psnTitlesNextBtn" class="btn btn-outline" type="button">Proxima</button>
             </div>
-            <p id="psnFeedback" class="feedback"></p>
         </section>
         <div id="psnTitleDetailsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="psnTitleDetailsName">
             <div class="modal-card psn-title-details-modal-card">
@@ -129,7 +141,7 @@
                     id="psnTierDetailsCloseIconBtn"
                     class="psn-modal-close-icon"
                     type="button"
-                    aria-label="Fechar detalhes de trofeus"
+                    aria-label="Fechar detalhes de troféus"
                     title="Fechar"
                 >
                     X
@@ -144,7 +156,7 @@
                     <p id="psnTierDetailsHeroMeta" class="psn-tier-hero-meta"></p>
                 </div>
                 <div id="psnTierDetailsBody" class="psn-tier-details-body"></div>
-                <div id="psnTierDetailsPagination" class="psn-pagination hidden" aria-label="Paginacao de trofeus por categoria">
+                <div id="psnTierDetailsPagination" class="psn-pagination hidden" aria-label="Paginação de troféus por categoria">
                     <button id="psnTierDetailsPrevBtn" class="btn btn-outline" type="button">Anterior</button>
                     <span id="psnTierDetailsPageLabel" class="psn-pagination-label">Pagina 1 de 1</span>
                     <button id="psnTierDetailsNextBtn" class="btn btn-outline" type="button">Proxima</button>

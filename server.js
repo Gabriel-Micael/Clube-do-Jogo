@@ -27,140 +27,140 @@ const ACHIEVEMENT_DEFINITIONS = [
         name: "CGFerro",
         requiredRounds: 1,
         imageUrl: "/uploads/trofeus/ferro.png",
-        description: "participe de 1 rodada ate o fim"
+        description: "Participe de 1 rodada até o fim."
     },
     {
         key: "CGBronze",
         name: "CGBronze",
         requiredRounds: 2,
         imageUrl: "/uploads/trofeus/bronze.png",
-        description: "participe de 2 rodadas ate o fim"
+        description: "Participe de 2 rodadas até o fim."
     },
     {
         key: "CGPrata",
         name: "CGPrata",
         requiredRounds: 3,
         imageUrl: "/uploads/trofeus/prata.png",
-        description: "participe de 3 rodadas ate o fim"
+        description: "Participe de 3 rodadas até o fim."
     },
     {
         key: "CGOuro",
         name: "CGOuro",
         requiredRounds: 4,
         imageUrl: "/uploads/trofeus/ouro.png",
-        description: "participe de 4 rodadas ate o fim"
+        description: "Participe de 4 rodadas até o fim."
     },
     {
         key: "CGDiamante",
         name: "CGDiamante",
         requiredRounds: 5,
         imageUrl: "/uploads/trofeus/diamante.png",
-        description: "participe de 5 rodadas ate o fim"
+        description: "Participe de 5 rodadas até o fim."
     },
     {
         key: "CGMaster",
         name: "CGMaster",
         requiredRounds: 6,
         imageUrl: "/uploads/trofeus/master.png",
-        description: "participe de 6 rodadas ate o fim"
+        description: "Participe de 6 rodadas até o fim."
     },
     {
         key: "CGAcao",
-        name: "CGAcao",
+        name: "CGAção",
         criterion: "action",
         imageUrl: "/uploads/trofeus/acao.png",
-        description: "indique um jogo de Acao"
+        description: "indique um jogo de ação"
     },
     {
         key: "CGAventura",
         name: "CGAventura",
         criterion: "adventure",
         imageUrl: "/uploads/trofeus/CGAventura.png",
-        description: "indique um jogo de aventura"
+        description: "Indique um jogo de aventura."
     },
     {
         key: "CGDrama",
         name: "CGDrama",
         criterion: "drama",
         imageUrl: "/uploads/trofeus/CGDrama.png",
-        description: "indique um jogo de drama"
+        description: "Indique um jogo de drama."
     },
     {
         key: "CGNarrativo",
         name: "CGNarrativo",
         criterion: "narrative",
         imageUrl: "/uploads/trofeus/CGNarrativo.png",
-        description: "indique um jogo narrativo"
+        description: "Indique um jogo narrativo."
     },
     {
         key: "CGRPG",
         name: "CGRPG",
         criterion: "rpg",
         imageUrl: "/uploads/trofeus/CGRPG.png",
-        description: "indique um jogo de RPG"
+        description: "Indique um jogo de RPG."
     },
     {
         key: "CGPlataforma",
         name: "CGPlataforma",
         criterion: "platform",
         imageUrl: "/uploads/trofeus/CGPlataforma.png",
-        description: "indique um jogo de plataforma"
+        description: "Indique um jogo de plataforma."
     },
     {
         key: "CGCorrida",
         name: "CGCorrida",
         criterion: "racing",
         imageUrl: "/uploads/trofeus/CGCorrida.png",
-        description: "indique um jogo de corrida"
+        description: "Indique um jogo de corrida."
     },
     {
         key: "CGMundoAberto",
         name: "CGMundoAberto",
         criterion: "open_world",
         imageUrl: "/uploads/trofeus/CGMundoAberto.png",
-        description: "indique um jogo de mundo aberto"
+        description: "Indique um jogo de mundo aberto."
     },
     {
         key: "CGTiro",
         name: "CGTiro",
         criterion: "shooter",
         imageUrl: "/uploads/trofeus/tiro.png",
-        description: "indique um jogo de Tiro"
+        description: "Indique um jogo de tiro."
     },
     {
         key: "CGTerror",
         name: "CGTerror",
         criterion: "horror",
         imageUrl: "/uploads/trofeus/terror.png",
-        description: "indique um jogo de Terror"
+        description: "Indique um jogo de terror."
     },
     {
         key: "CGSouls",
         name: "CGSouls",
         criterion: "soulslike",
         imageUrl: "/uploads/trofeus/souls.png",
-        description: "indique um jogo soulslike"
+        description: "Indique um jogo soulslike."
     },
     {
         key: "CGAwards",
         name: "CGAwards",
         criterion: "awards",
         imageUrl: "/uploads/trofeus/CGAwards.png",
-        description: "indique um jogo do ano (The Game Awards)"
+        description: "Indique um jogo do ano (The Game Awards)."
     },
     {
         key: "CGOld",
         name: "CGOld",
         criterion: "old",
         imageUrl: "/uploads/trofeus/CGOld.png",
-        description: "indique um jogo antigo (<2010)"
+        description: "Indique um jogo antigo (<2010)."
     },
     {
         key: "CGNewba",
         name: "CGNewba",
         criterion: "first_rating",
         imageUrl: "/uploads/trofeus/CGNewba.png",
-        description: "avalie uma indicação"
+        description: "Avalie uma indicação."
     }
 ];
 
@@ -171,7 +171,6 @@ const ACHIEVEMENT_KEYWORDS = {
     narrative: ["narrativo", "narrativa", "narrative", "story rich", "story-driven", "story driven"],
     rpg: ["rpg", "role playing", "role-playing", "jrpg", "arpg"],
     platform: [
-        "plataforma",
         "jogo de plataforma",
         "platformer",
         "platforming",
@@ -215,6 +214,54 @@ const TGA_GOTY_WINNERS_NORMALIZED = [
     "baldur s gate 3",
     "astro bot"
 ];
+
+const TGA_GOTY_WINNER_ALIASES_NORMALIZED = new Set([
+    ...TGA_GOTY_WINNERS_NORMALIZED,
+    "witcher 3",
+    "the witcher 3",
+    "zelda breath of the wild",
+    "breath of the wild",
+    "the last of us part 2",
+    "tlou part 2",
+    "baldurs gate 3",
+    "bg3",
+    "astrobot"
+]);
+
+const AWARDS_TITLE_SUFFIX_TOKENS = new Set([
+    "edition",
+    "edicao",
+    "definitive",
+    "deluxe",
+    "ultimate",
+    "remastered",
+    "remake",
+    "collection",
+    "bundle",
+    "pack",
+    "version",
+    "game",
+    "of",
+    "the",
+    "year",
+    "goty"
+]);
+
+function normalizeTitleForAwards(value) {
+    const normalized = normalizeMatchText(value);
+    if (!normalized) return "";
+    const tokens = normalized.split(" ").filter(Boolean);
+    while (tokens.length > 1 && AWARDS_TITLE_SUFFIX_TOKENS.has(tokens[tokens.length - 1])) {
+        tokens.pop();
+    }
+    return tokens.join(" ").trim();
+}
+
+function isTgaGotyWinnerTitle(value) {
+    const normalized = normalizeTitleForAwards(value);
+    if (!normalized || normalized.length < 3) return false;
+    return TGA_GOTY_WINNER_ALIASES_NORMALIZED.has(normalized);
+}
 
 const parseOrigin = (value) => {
     try {
@@ -445,6 +492,20 @@ function nowInSeconds() {
     return Math.floor(Date.now() / 1000);
 }
 
+function futureBrasiliaTimestamp(options = {}) {
+    const days = Number(options?.days || 0);
+    const months = Number(options?.months || 0);
+    const brasiliaOffsetMs = -3 * 60 * 60 * 1000;
+    const nowUtcMs = Date.now();
+    const brasiliaWallClock = new Date(nowUtcMs + brasiliaOffsetMs);
+    if (Number.isFinite(months) && months !== 0) {
+        brasiliaWallClock.setUTCMonth(brasiliaWallClock.getUTCMonth() + months);
+    }
+    if (Number.isFinite(days) && days !== 0) {
+        brasiliaWallClock.setUTCDate(brasiliaWallClock.getUTCDate() + days);
+    }
+    return Math.floor((brasiliaWallClock.getTime() - brasiliaOffsetMs) / 1000);
+}
 function isValidEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
@@ -464,13 +525,21 @@ function normalizeMatchText(value) {
 }
 
 function containsKeyword(text, keyword) {
-    const source = String(text || "");
-    const needle = String(keyword || "");
-    return Boolean(needle) && source.includes(needle);
+    const source = normalizeMatchText(text);
+    const needle = normalizeMatchText(keyword);
+    if (!source || !needle) return false;
+    return ` ${source} `.includes(` ${needle} `);
 }
 
 function containsAnyKeyword(text, keywords) {
     return (keywords || []).some((keyword) => containsKeyword(text, keyword));
+}
+
+function splitNormalizedLabels(value) {
+    return String(value || "")
+        .split(",")
+        .map((item) => normalizeMatchText(item))
+        .filter(Boolean);
 }
 
 function parseYearFromText(value) {
@@ -690,11 +759,10 @@ function parseSteamReleaseYear(releaseDateText) {
 
 function collectSteamGenreLabels(data) {
     const genreRows = Array.isArray(data?.genres) ? data.genres : [];
-    const categoryRows = Array.isArray(data?.categories) ? data.categories : [];
-    const combined = [...genreRows, ...categoryRows]
+    const genres = genreRows
         .map((row) => sanitizeText(row?.description || "", 80))
         .filter(Boolean);
-    return [...new Set(combined)];
+    return [...new Set(genres)];
 }
 
 function mergeGenreLabels(...labelLists) {
@@ -911,9 +979,6 @@ async function getRawgGameDetailsByName(gameName) {
         const searchGenres = (Array.isArray(best.genres) ? best.genres : [])
             .map((genre) => sanitizeText(genre?.name || "", 60))
             .filter(Boolean);
-        const searchTags = (Array.isArray(best.tags) ? best.tags : [])
-            .map((tag) => sanitizeText(tag?.name || "", 60))
-            .filter(Boolean);
         const expanded = await getRawgGameMetadataById(best.id);
         const releaseYear = Number(expanded?.releaseYear || 0) > 0
             ? Number(expanded.releaseYear)
@@ -925,9 +990,7 @@ async function getRawgGameDetailsByName(gameName) {
         }
         const mergedGenres = mergeGenreLabels(
             searchGenres,
-            searchTags,
-            expanded?.genres || [],
-            expanded?.tags || []
+            expanded?.genres || []
         );
 
         const details = {
@@ -1684,7 +1747,7 @@ function adminActionLabel(actionType, payload = {}) {
     if (actionType === "round_close") return "Fechar/Reabrir rodada";
     if (actionType === "round_delete") return "Excluir rodada";
     if (actionType === "set_role") return "Alterar cargo";
-    return "Acao administrativa";
+    return "Ação administrativa";
 }
 
 function adminActionDetailLines(actionType, payload = {}) {
@@ -1717,7 +1780,7 @@ async function pruneExpiredAdminActionRequests() {
     await dbRun(
         `UPDATE admin_action_requests
          SET status = 'denied',
-             result_message = COALESCE(result_message, 'Solicitacao expirada.'),
+             result_message = COALESCE(result_message, 'Solicitação expirada.'),
              decided_at = ?,
              decided_by_user_id = NULL
          WHERE status = 'pending'
@@ -2119,7 +2182,7 @@ async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter =
             details = await getSteamAppDetails(appId);
         }
         if (!details && gameName) {
-            // Para jogos sem Steam App ID, usa RAWG (incluindo tags) para ajudar no cálculo das conquistas.
+            // Para jogos sem Steam App ID, usa RAWG para ajudar no cálculo das conquistas.
             details = await getRawgGameDetailsByName(gameName);
         }
         if (!details) continue;
@@ -2142,48 +2205,71 @@ async function hydrateRecommendationMetadataForAchievements(userId, gatedAfter =
 }
 
 function detectRecommendationSignals(recommendation) {
-    const name = normalizeMatchText(recommendation?.game_name || "");
+    const rawName = sanitizeText(recommendation?.game_name || "", 160);
+    const name = normalizeMatchText(rawName || "");
     const description = normalizeMatchText(recommendation?.game_description || "");
     const reason = normalizeMatchText(recommendation?.reason || "");
     const genres = normalizeMatchText(recommendation?.game_genres || "");
     const allText = `${name} ${description} ${reason} ${genres}`.replace(/\s+/g, " ").trim();
+    const genreLabels = splitNormalizedLabels(recommendation?.game_genres || "");
+    const genreSet = new Set(genreLabels);
     const releaseYear = Number(recommendation?.game_release_year || 0);
     const fallbackYear = parseYearFromText(allText);
     const effectiveYear = releaseYear > 0 ? releaseYear : fallbackYear;
 
-    const gotyByName = name.length >= 3 && TGA_GOTY_WINNERS_NORMALIZED.some((winnerName) =>
-        name.includes(winnerName) || winnerName.includes(name)
-    );
-    const awardsByKeyword = containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.awards);
-    const platformSpecificKeywords = [
+    const hasGenreKeyword = (keywords = []) => {
+        return (keywords || []).some((keyword) => genreSet.has(normalizeMatchText(keyword)));
+    };
+    const hasReasonKeyword = (keywords = []) => {
+        return containsAnyKeyword(reason, keywords);
+    };
+    const detectByGenreOrReason = (genreKeywords = [], reasonKeywords = []) => {
+        return hasGenreKeyword(genreKeywords)
+            || hasReasonKeyword((reasonKeywords || []).length ? reasonKeywords : genreKeywords);
+    };
+
+    const platformGenreKeywords = [
         "platformer",
         "platforming",
-        "platform adventure",
-        "metroidvania",
+        "jogo de plataforma",
         "2d platformer",
         "3d platformer",
         "side scroller",
         "side-scroller",
-        "jogo de plataforma"
+        "sidescroller"
     ];
-    const hasPlatformSpecific = containsAnyKeyword(allText, platformSpecificKeywords);
-    const hasPlatformGeneric = containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.platform);
-    const hasRacing = containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.racing);
-    const platformDetected = hasPlatformSpecific || (hasPlatformGeneric && !hasRacing);
+    const platformReasonKeywords = [
+        ...platformGenreKeywords,
+        "metroidvania"
+    ];
+
+    const horrorStrongGenreKeywords = ["terror", "survival horror"];
+    const horrorWeakGenreKeywords = ["horror"];
+    const horrorReasonKeywords = ["terror", "horror", "assustador", "medo", "sobrenatural", "survival horror"];
+
+    const awardsDetected = isTgaGotyWinnerTitle(rawName);
 
     return {
-        action: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.action),
-        adventure: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.adventure),
-        drama: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.drama),
-        narrative: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.narrative),
-        rpg: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.rpg),
-        platform: platformDetected,
-        racing: hasRacing,
-        open_world: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.open_world),
-        shooter: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.shooter),
-        horror: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.horror),
-        soulslike: containsAnyKeyword(allText, ACHIEVEMENT_KEYWORDS.soulslike),
-        awards: awardsByKeyword || gotyByName,
+        action: detectByGenreOrReason(
+            ["action", "acao", "action adventure", "action-adventure", "hack and slash", "beat em up", "brawler"],
+            ACHIEVEMENT_KEYWORDS.action
+        ),
+        adventure: detectByGenreOrReason(
+            ["adventure", "aventura", "action adventure", "action-adventure"],
+            ACHIEVEMENT_KEYWORDS.adventure
+        ),
+        drama: detectByGenreOrReason(["drama", "dramatic", "dramatico"], ACHIEVEMENT_KEYWORDS.drama),
+        narrative: detectByGenreOrReason(["narrative", "narrativo", "narrativa"], ACHIEVEMENT_KEYWORDS.narrative),
+        rpg: detectByGenreOrReason(["rpg", "role playing", "role-playing", "jrpg", "arpg", "action rpg"], ACHIEVEMENT_KEYWORDS.rpg),
+        platform: detectByGenreOrReason(platformGenreKeywords, platformReasonKeywords),
+        racing: detectByGenreOrReason(["racing", "corrida", "race", "automobilismo"], ACHIEVEMENT_KEYWORDS.racing),
+        open_world: detectByGenreOrReason(["open world", "mundo aberto"], ACHIEVEMENT_KEYWORDS.open_world),
+        shooter: detectByGenreOrReason(["shooter", "tiro", "fps", "tps", "first person shooter", "third person shooter"], ACHIEVEMENT_KEYWORDS.shooter),
+        horror: hasGenreKeyword(horrorStrongGenreKeywords)
+            || (hasGenreKeyword(horrorWeakGenreKeywords) && hasReasonKeyword(horrorReasonKeywords))
+            || hasReasonKeyword(horrorReasonKeywords),
+        soulslike: detectByGenreOrReason(["soulslike", "souls-like"], ACHIEVEMENT_KEYWORDS.soulslike),
+        awards: awardsDetected,
         old: effectiveYear > 0 && effectiveYear < 2010
     };
 }
@@ -3005,7 +3091,7 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
                      closed_at = NULL,
                      reopened_count = COALESCE(reopened_count, 0) + 1
                  WHERE id = ?`,
-                [nowInSeconds(), roundId]
+                [futureBrasiliaTimestamp({ days: 1 }), roundId]
             );
             emitRoundChange("round_reopened", {
                 roundId,
@@ -3025,6 +3111,14 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
                 actorUserId: Number(actorUserId || 0)
             });
             return { message: "Rodada reaberta finalizada." };
+        }
+        if (String(round.status || "") === "draft" || String(round.status || "") === "reveal") {
+            await deleteRoundCascade(roundId);
+            emitRoundChange("round_deleted", {
+                roundId,
+                actorUserId: Number(actorUserId || 0)
+            });
+            return { message: "Rodada encerrada e descartada." };
         }
         await dbRun(
             "UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?",
@@ -3091,7 +3185,7 @@ async function queueOrExecuteAdminAction(actorUser, actionType, rawPayload) {
         await createAdminActionRequest(Number(actorUser.id), actionType, preparedPayload);
         return {
             pendingApproval: true,
-            message: "Solicitacao enviada ao dono para aprovacao."
+            message: "Solicitação enviada ao dono para aprovação."
         };
     }
     const result = await executePreparedAdminAction(actionType, preparedPayload, Number(actorUser?.id) || 0);
@@ -3228,14 +3322,14 @@ const apiLimiter = rateLimit({
     max: isProduction ? 800 : 5000,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { message: "Muitas requisicoes. Tente novamente em instantes." }
+    message: { message: "Muitas requisições. Tente novamente em instantes." }
 });
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: isProduction ? 25 : 300,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { message: "Muitas tentativas de autenticacao. Aguarde e tente novamente." }
+    message: { message: "Muitas tentativas de autenticação. Aguarde e tente novamente." }
 });
 app.use("/api", apiLimiter);
 app.use("/api/auth", authLimiter);
@@ -3423,4 +3517,5 @@ initDb()
         console.error("Falha ao inicializar banco de dados.", error);
         process.exit(1);
     });
+
 

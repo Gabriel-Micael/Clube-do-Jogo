@@ -29,7 +29,10 @@
         </section>
 
         <section id="draftCreatorSection" class="card hidden">
-            <h2>Nova Rodada (Criador)</h2>
+            <div class="row-between round-draft-head">
+                <h2>Nova Rodada (Criador)</h2>
+                <button id="draftCloseRoundBtn" class="btn btn-outline hidden" type="button">Encerrar Rodada</button>
+            </div>
             <p>Adicione participantes e depois execute o sorteio.</p>
             <p id="draftReadonlyHint" class="hidden">Somente o criador e o dono podem editar esta fase.</p>
             <div class="participant-tools">
@@ -56,7 +59,10 @@
         </section>
 
         <section id="revealSection" class="card hidden">
-            <h2>Tela de Sorteio</h2>
+            <div class="row-between round-reveal-head">
+                <h2>Tela de Sorteio</h2>
+                <button id="revealCloseRoundBtn" class="btn btn-outline hidden" type="button">Encerrar Rodada</button>
+            </div>
             <p>
                 Nesta fase todos podem espectar. O nome de quem recebe fica oculto até o
                 criador revelar.
@@ -125,7 +131,8 @@
 
                 <form id="ratingForm" class="hidden">
                     <label>Jogo recebido para avaliar</label>
-                    <select id="ratingRecommendationSelect" name="recommendationId"></select>
+                    <div id="ratingRecommendationCard" class="rating-recommendation-card-shell"></div>
+                    <input id="ratingRecommendationIdInput" name="recommendationId" type="hidden" value="">
                     <div class="rating-dual-fields">
                         <div class="rating-field">
                             <label>Nota no eixo Y (A bom, J ruim)</label>

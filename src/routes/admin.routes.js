@@ -325,7 +325,7 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
             await dbRun(
                 `UPDATE admin_action_requests
                  SET status = 'denied',
-                     result_message = 'Solicitacao negada pelo dono.',
+                     result_message = 'Solicitação negada pelo dono.',
                      decided_at = ?,
                      decided_by_user_id = ?
                  WHERE id = ?`,
@@ -335,7 +335,7 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
                 requestId,
                 decision: "deny"
             });
-            return res.json({ message: "Solicitacao negada." });
+            return res.json({ message: "Solicitação negada." });
         }
 
         const payload = parseJsonSafely(row.payload_json, {});
@@ -349,13 +349,13 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
                      decided_at = ?,
                      decided_by_user_id = ?
                  WHERE id = ?`,
-                [sanitizeText(result?.message || "Solicitacao aprovada.", 400), now, req.currentUser.id, requestId]
+                [sanitizeText(result?.message || "Solicitação aprovada.", 400), now, req.currentUser.id, requestId]
             );
             emitAdminChange("admin_action_request_decided", {
                 requestId,
                 decision: "allow"
             });
-            return res.json({ message: result?.message || "Solicitacao aprovada." });
+            return res.json({ message: result?.message || "Solicitação aprovada." });
         } catch (executeError) {
             await dbRun(
                 `UPDATE admin_action_requests
@@ -364,7 +364,7 @@ app.post("/api/admin/action-requests/:requestId/decision", requireAuth, requireO
                      decided_at = ?,
                      decided_by_user_id = ?
                  WHERE id = ?`,
-                [sanitizeText(executeError?.message || "Solicitacao negada por erro na execucao.", 400), now, req.currentUser.id, requestId]
+                [sanitizeText(executeError?.message || "Solicitação negada por erro na execução.", 400), now, req.currentUser.id, requestId]
             );
             emitAdminChange("admin_action_request_decided", {
                 requestId,

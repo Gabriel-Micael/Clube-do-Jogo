@@ -3842,12 +3842,24 @@ body[data-page="round"] .round-reveal-head #revealCloseRoundBtn {
     align-items: stretch;
 }
 
-#ratingForm .rating-actions .btn {
+#ratingActionsWrap {
+    margin-top: 0.6rem;
+}
+
+#ratingActionsWrap .btn {
     margin: 0;
     width: 100%;
     min-height: 42px;
     box-sizing: border-box;
     justify-content: center;
+}
+
+#saveRatingBtn:disabled {
+    background: #4b5368;
+    border: 1px solid rgba(201, 210, 230, 0.26);
+    color: #d7ddef;
+    opacity: 1;
+    box-shadow: none;
 }
 
 @media (max-width: 600px) {
@@ -4025,9 +4037,6 @@ body[data-page="round"] .round-reveal-head #revealCloseRoundBtn {
 .naval-point-preview {
     pointer-events: none;
     cursor: default;
-    border-style: dashed;
-    border-color: rgba(146, 195, 255, 0.88);
-    opacity: 0.72;
     z-index: 16;
 }
 
@@ -4039,9 +4048,26 @@ body[data-page="round"] .round-reveal-head #revealCloseRoundBtn {
     border: 2px solid rgba(255, 255, 255, 0.25);
 }
 
-.naval-point-preview img {
+.naval-point-preview-hover {
+    border-style: dashed;
+    border-color: rgba(146, 195, 255, 0.88);
+    opacity: 0.72;
+}
+
+.naval-point-preview-hover img {
     opacity: 0.42;
     filter: grayscale(0.35) saturate(0.78);
+}
+
+.naval-point-preview-selected {
+    border-style: solid;
+    border-color: rgba(108, 190, 255, 0.95);
+    opacity: 0.94;
+}
+
+.naval-point-preview-selected img {
+    opacity: 0.96;
+    filter: none;
 }
 
 .naval-grade-badge {
@@ -4130,6 +4156,8 @@ body[data-page="round"] .round-reveal-head #revealCloseRoundBtn {
 .naval-stack-thumb {
     position: relative;
     display: inline-block;
+    cursor: pointer;
+    border-radius: 10px;
 }
 
 .naval-stack-item {
@@ -4149,6 +4177,43 @@ body[data-page="round"] .round-reveal-head #revealCloseRoundBtn {
     border-radius: 10px;
     object-fit: cover;
     margin-bottom: 0.2rem;
+}
+
+.naval-stack-giver {
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    top: 8px;
+    z-index: 3;
+    padding: 0.14rem 0.34rem;
+    border-radius: 7px;
+    border: 1px solid rgba(149, 190, 255, 0.55);
+    background: rgba(7, 12, 26, 0.88);
+    color: #eef5ff;
+    font-size: 0.64rem;
+    font-weight: 700;
+    line-height: 1.15;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.naval-stack-thumb:hover .naval-stack-giver,
+.naval-stack-thumb:focus .naval-stack-giver,
+.naval-stack-thumb:focus-visible .naval-stack-giver,
+.naval-stack-thumb:active .naval-stack-giver {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.naval-stack-thumb:focus-visible {
+    outline: 2px solid rgba(120, 194, 255, 0.9);
+    outline-offset: 2px;
 }
 
 .modal {

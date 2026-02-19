@@ -5570,11 +5570,13 @@ function renderNavalChartForHome(round) {
                 .map(
                     (rec) => {
                         const grade = navalGradeLabel(rec);
+                        const giverName = String(rec.giver_nickname || rec.giver_username || "Participante");
                         return `
                             <div class="naval-stack-item">
-                                <div class="naval-stack-thumb">
+                                <div class="naval-stack-thumb" tabindex="0" role="button" aria-label="Nota de ${escapeHtml(giverName)} para ${escapeHtml(rec.game_name || "jogo")}">
                                     <img src="${escapeHtml(rec.game_cover_url || baseAvatar)}" alt="${escapeHtml(rec.game_name)}">
                                     <span class="naval-grade-badge naval-grade-badge-stack">${escapeHtml(grade)}</span>
+                                    <span class="naval-stack-giver">${escapeHtml(giverName)}</span>
                                 </div>
                                 <div>${escapeHtml(rec.game_name)}</div>
                             </div>
@@ -6019,6 +6021,7 @@ let roundStateRenderSignature = "";
 let pairExclusionAutosaveToken = 0;
 let pairExclusionsRenderSignature = "";
 let roundRatingActionInFlight = false;
+let roundPendingRatingSelection = null;
 const navalRatingLetters = "ABCDEFGHIJ";
 
 function buildRoundStateSignature(round) {
@@ -6641,38 +6644,74 @@ function renderSelectedRatingRecommendationCard(round = currentRound) {
     setElementHtmlIfChanged(shell, nextHtml);
 }
 
-function syncRatingFormFieldsWithSelectedRecommendation(round = currentRound) {
-    const form = byId("ratingForm");
-    if (!(form instanceof HTMLFormElement)) return;
-    const selected = getSelectedRatingRecommendation(round);
-    const ratingLetterField = form.elements?.ratingLetter;
-    const interestField = form.elements?.interestScore;
-    if (!(ratingLetterField instanceof HTMLSelectElement) || !(interestField instanceof HTMLInputElement)) {
+function setRoundPendingRatingSelection(selection) {
+    const recommendationId = Number(selection?.recommendationId || 0);
+    const ratingLetter = String(selection?.ratingLetter || "").toUpperCase();
+    const interestScore = Number(selection?.interestScore || 0);
+    const left = Number(selection?.left);
+    const top = Number(selection?.top);
+    const grade = String(selection?.grade || `${ratingLetter}${interestScore}`);
+    if (
+        !Number.isInteger(recommendationId)
+        || recommendationId <= 0
+        || !navalRatingLetters.includes(ratingLetter)
+        || !Number.isInteger(interestScore)
+        || interestScore < 1
+        || interestScore > 10
+    ) {
+        roundPendingRatingSelection = null;
         return;
     }
+    roundPendingRatingSelection = {
+        recommendationId,
+        ratingLetter,
+        interestScore,
+        left: Number.isFinite(left) ? left : null,
+        top: Number.isFinite(top) ? top : null,
+        grade
+    };
+}
 
-    if (recommendationHasNavalRating(selected)) {
-        ratingLetterField.value = String(selected.rating_letter || "A").toUpperCase();
-        interestField.value = String(Math.max(1, Math.min(10, Number(selected.interest_score || 1))));
-    } else {
-        if (!navalRatingLetters.includes(String(ratingLetterField.value || "").toUpperCase())) {
-            ratingLetterField.value = "A";
-        }
-        const numeric = Number(interestField.value || 0);
-        if (!Number.isInteger(numeric) || numeric < 1 || numeric > 10) {
-            interestField.value = "1";
-        }
+function clearRoundPendingRatingSelection() {
+    roundPendingRatingSelection = null;
+}
+
+function getRoundPendingRatingSelection(round = currentRound) {
+    const selected = getSelectedRatingRecommendation(round);
+    if (!selected || !roundPendingRatingSelection) return null;
+    const selectedRecommendationId = Number(selected.id || 0);
+    if (!Number.isInteger(selectedRecommendationId) || selectedRecommendationId <= 0) return null;
+    if (Number(roundPendingRatingSelection.recommendationId || 0) !== selectedRecommendationId) return null;
+    return roundPendingRatingSelection;
+}
+
+function syncRoundPendingRatingSelection(round = currentRound) {
+    if (!roundPendingRatingSelection) return;
+    if (!getRoundPendingRatingSelection(round)) {
+        clearRoundPendingRatingSelection();
     }
 }
 
 function syncClearRatingButtonState(round = currentRound) {
     const clearBtn = byId("clearRatingBtn");
-    if (!(clearBtn instanceof HTMLButtonElement)) return;
+    const saveBtn = byId("saveRatingBtn");
     const form = byId("ratingForm");
-    const formOpen = form instanceof HTMLElement && !form.classList.contains("hidden");
+    if (!(form instanceof HTMLFormElement)) {
+        if (saveBtn instanceof HTMLButtonElement) saveBtn.disabled = true;
+        if (clearBtn instanceof HTMLButtonElement) clearBtn.disabled = true;
+        return;
+    }
+    const formOpen = !form.classList.contains("hidden");
     const selected = getSelectedRatingRecommendation(round);
+    const pendingSelection = getRoundPendingRatingSelection(round);
+    const canSave = formOpen && Boolean(selected) && Boolean(pendingSelection) && !roundRatingActionInFlight;
     const canClear = formOpen && recommendationHasNavalRating(selected) && !roundRatingActionInFlight;
-    clearBtn.disabled = !canClear;
+    if (saveBtn instanceof HTMLButtonElement) {
+        saveBtn.disabled = !canSave;
+    }
+    if (clearBtn instanceof HTMLButtonElement) {
+        clearBtn.disabled = !canClear;
+    }
 }
 
 function getNavalCoordinateFromPointerEvent(chart, event) {
@@ -6697,12 +6736,14 @@ function getNavalCoordinateFromPointerEvent(chart, event) {
     };
 }
 
-function ensureRoundNavalPreviewPoint(chart) {
+function ensureRoundNavalPreviewPoint(chart, variant = "hover") {
     if (!(chart instanceof HTMLElement)) return null;
-    let point = chart.querySelector(".naval-point-preview");
+    const isSelectedVariant = String(variant || "").toLowerCase() === "selected";
+    const variantClass = isSelectedVariant ? "naval-point-preview-selected" : "naval-point-preview-hover";
+    let point = chart.querySelector(`.naval-point-preview.${variantClass}`);
     if (point instanceof HTMLElement) return point;
     point = document.createElement("div");
-    point.className = "naval-point naval-point-preview hidden";
+    point.className = `naval-point naval-point-preview ${variantClass} hidden`;
     point.innerHTML = `
         <img src="${escapeHtml(baseAvatar)}" alt="Prévia da nota naval">
         <span class="naval-grade-badge naval-grade-badge-preview"></span>
@@ -6713,7 +6754,22 @@ function ensureRoundNavalPreviewPoint(chart) {
 
 function hideRoundNavalPreviewPoint(chart = byId("navalChart")) {
     if (!(chart instanceof HTMLElement)) return;
-    const point = chart.querySelector(".naval-point-preview");
+    chart.querySelectorAll(".naval-point-preview").forEach((point) => {
+        if (!(point instanceof HTMLElement)) return;
+        point.classList.add("hidden");
+    });
+}
+
+function hideRoundNavalHoverPreviewPoint(chart = byId("navalChart")) {
+    if (!(chart instanceof HTMLElement)) return;
+    const point = chart.querySelector(".naval-point-preview-hover");
+    if (!(point instanceof HTMLElement)) return;
+    point.classList.add("hidden");
+}
+
+function hideRoundNavalSelectedPreviewPoint(chart = byId("navalChart")) {
+    if (!(chart instanceof HTMLElement)) return;
+    const point = chart.querySelector(".naval-point-preview-selected");
     if (!(point instanceof HTMLElement)) return;
     point.classList.add("hidden");
 }
@@ -6722,10 +6778,42 @@ function canShowRoundNavalHoverPreview(round = currentRound) {
     if (!round || round.phase === "closed" || !round.ratingOpen || roundRatingActionInFlight) return false;
     const form = byId("ratingForm");
     if (!(form instanceof HTMLElement) || form.classList.contains("hidden")) return false;
-    const ratingsToDo = Array.isArray(round?.ratingsToDo) ? round.ratingsToDo : [];
-    if (ratingsToDo.some((item) => recommendationHasNavalRating(item))) return false;
     const selected = getSelectedRatingRecommendation(round);
     return Boolean(selected);
+}
+
+function showRoundPendingRatingSelectionPreview(round = currentRound) {
+    const chart = byId("navalChart");
+    if (!(chart instanceof HTMLElement)) return;
+    const selected = getSelectedRatingRecommendation(round);
+    const pending = getRoundPendingRatingSelection(round);
+    if (!selected || !pending) {
+        hideRoundNavalSelectedPreviewPoint(chart);
+        return;
+    }
+
+    const previewPoint = ensureRoundNavalPreviewPoint(chart, "selected");
+    if (!(previewPoint instanceof HTMLElement)) return;
+    const img = previewPoint.querySelector("img");
+    const badge = previewPoint.querySelector(".naval-grade-badge");
+    if (img instanceof HTMLImageElement) {
+        img.src = String(selected.game_cover_url || baseAvatar).trim() || baseAvatar;
+        img.alt = `Prévia ${selected.game_name || "nota naval"}`;
+    }
+    if (badge instanceof HTMLElement) {
+        badge.textContent = String(pending.grade || `${pending.ratingLetter}${pending.interestScore}`);
+    }
+
+    let left = Number(pending.left);
+    let top = Number(pending.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) {
+        const yIndex = Math.max(0, navalRatingLetters.indexOf(String(pending.ratingLetter || "").toUpperCase()));
+        left = ((Math.max(1, Math.min(10, Number(pending.interestScore || 1))) - 0.5) / 10) * 100;
+        top = ((yIndex + 0.5) / 10) * 100;
+    }
+    previewPoint.style.left = `${left}%`;
+    previewPoint.style.top = `${top}%`;
+    previewPoint.classList.remove("hidden");
 }
 
 function updateRoundNavalHoverPreviewFromPointer(event) {
@@ -6740,11 +6828,12 @@ function updateRoundNavalHoverPreviewFromPointer(event) {
     const coordinate = getNavalCoordinateFromPointerEvent(chart, event);
     const selected = getSelectedRatingRecommendation(currentRound);
     if (!coordinate || !selected) {
-        hideRoundNavalPreviewPoint(chart);
+        hideRoundNavalHoverPreviewPoint(chart);
+        showRoundPendingRatingSelectionPreview(currentRound);
         return;
     }
 
-    const previewPoint = ensureRoundNavalPreviewPoint(chart);
+    const previewPoint = ensureRoundNavalPreviewPoint(chart, "hover");
     if (!(previewPoint instanceof HTMLElement)) return;
     const img = previewPoint.querySelector("img");
     const badge = previewPoint.querySelector(".naval-grade-badge");
@@ -6758,6 +6847,7 @@ function updateRoundNavalHoverPreviewFromPointer(event) {
     previewPoint.style.left = `${coordinate.left}%`;
     previewPoint.style.top = `${coordinate.top}%`;
     previewPoint.classList.remove("hidden");
+    showRoundPendingRatingSelectionPreview(currentRound);
 }
 
 async function submitRoundRatingPayload(payload) {
@@ -6919,11 +7009,13 @@ function renderNavalChart(round) {
                 .map(
                     (rec) => {
                         const grade = navalGradeLabel(rec);
+                        const giverName = String(rec.giver_nickname || rec.giver_username || "Participante");
                         return `
                             <div class="naval-stack-item">
-                                <div class="naval-stack-thumb">
+                                <div class="naval-stack-thumb" tabindex="0" role="button" aria-label="Nota de ${escapeHtml(giverName)} para ${escapeHtml(rec.game_name || "jogo")}">
                                     <img src="${escapeHtml(rec.game_cover_url || baseAvatar)}" alt="${escapeHtml(rec.game_name)}">
                                     <span class="naval-grade-badge naval-grade-badge-stack">${escapeHtml(grade)}</span>
+                                    <span class="naval-stack-giver">${escapeHtml(giverName)}</span>
                                 </div>
                                 <div>${escapeHtml(rec.game_name)}</div>
                             </div>
@@ -7177,11 +7269,14 @@ function renderRoundState(round) {
         renderNavalChart(round);
         const ratingText = byId("ratingStatusText");
         const ratingForm = byId("ratingForm");
+        const ratingActionsWrap = byId("ratingActionsWrap");
 
         if (phase === "closed") {
             setElementTextIfChanged(ratingText, "Rodada encerrada. Veja o plano naval final.");
             ratingForm?.classList.add("hidden");
+            ratingActionsWrap?.classList.add("hidden");
             renderSelectedRatingRecommendationCard({ ratingsToDo: [] });
+            clearRoundPendingRatingSelection();
             syncClearRatingButtonState(round);
             hideRoundNavalPreviewPoint();
         } else if (round.ratingOpen) {
@@ -7189,13 +7284,17 @@ function renderRoundState(round) {
             if (items.length) {
                 setElementTextIfChanged(ratingText, "A sessão de notas foi liberada. Avalie os jogos que você recebeu.");
                 ratingForm?.classList.remove("hidden");
+                ratingActionsWrap?.classList.remove("hidden");
                 renderSelectedRatingRecommendationCard(round);
-                syncRatingFormFieldsWithSelectedRecommendation(round);
+                syncRoundPendingRatingSelection(round);
                 syncClearRatingButtonState(round);
+                showRoundPendingRatingSelectionPreview(round);
             } else {
                 setElementTextIfChanged(ratingText, "Você não recebeu jogos para avaliar nesta rodada.");
                 ratingForm?.classList.add("hidden");
+                ratingActionsWrap?.classList.add("hidden");
                 renderSelectedRatingRecommendationCard({ ratingsToDo: [] });
+                clearRoundPendingRatingSelection();
                 syncClearRatingButtonState(round);
                 hideRoundNavalPreviewPoint();
             }
@@ -7205,7 +7304,9 @@ function renderRoundState(round) {
                 : "data não definida";
             setElementTextIfChanged(ratingText, `Notas navais liberam em: ${dateText}.`);
             ratingForm?.classList.add("hidden");
+            ratingActionsWrap?.classList.add("hidden");
             renderSelectedRatingRecommendationCard({ ratingsToDo: [] });
+            clearRoundPendingRatingSelection();
             syncClearRatingButtonState(round);
             hideRoundNavalPreviewPoint();
         }
@@ -7276,6 +7377,7 @@ async function refreshRoundData(forceRoundId, options = {}) {
             recommendationCommentSignatureCaches.round.clear();
             recommendationCommentIdsCaches.round.clear();
             pairExclusionsRenderSignature = "";
+            clearRoundPendingRatingSelection();
         if (roundPhaseRefreshTimer) {
             clearTimeout(roundPhaseRefreshTimer);
             roundPhaseRefreshTimer = 0;
@@ -7313,6 +7415,7 @@ async function refreshRoundData(forceRoundId, options = {}) {
         roundRecommendationsStructureSignature = "";
         recommendationCommentSignatureCaches.round.clear();
         recommendationCommentIdsCaches.round.clear();
+        clearRoundPendingRatingSelection();
     }
     const shouldRenderRoundState = previousRoundId !== nextRound.id || nextRoundSignature !== roundStateRenderSignature;
     if (shouldRenderRoundState) {
@@ -7414,9 +7517,15 @@ async function handleRoundPage() {
         updateRoundNavalHoverPreviewFromPointer(event);
     });
     byId("navalChart")?.addEventListener("mouseleave", () => {
-        hideRoundNavalPreviewPoint();
+        const pending = getRoundPendingRatingSelection(currentRound);
+        hideRoundNavalHoverPreviewPoint();
+        if (pending) {
+            showRoundPendingRatingSelectionPreview(currentRound);
+            return;
+        }
+        hideRoundNavalSelectedPreviewPoint();
     });
-    byId("navalChart")?.addEventListener("click", async (event) => {
+    byId("navalChart")?.addEventListener("click", (event) => {
         if (!currentRound || currentRound.phase === "closed" || !currentRound.ratingOpen || roundRatingActionInFlight) {
             return;
         }
@@ -7429,23 +7538,19 @@ async function handleRoundPage() {
         if (!selected) return;
         const coordinate = getNavalCoordinateFromPointerEvent(event.currentTarget, event);
         if (!coordinate) return;
-
-        const ratingLetterField = form.elements?.ratingLetter;
-        const interestField = form.elements?.interestScore;
-        if (ratingLetterField instanceof HTMLSelectElement) {
-            ratingLetterField.value = coordinate.ratingLetter;
-        }
-        if (interestField instanceof HTMLInputElement) {
-            interestField.value = String(coordinate.interestScore);
-        }
+        setRoundPendingRatingSelection({
+            recommendationId: Number(selected.id),
+            ratingLetter: coordinate.ratingLetter,
+            interestScore: coordinate.interestScore,
+            left: coordinate.left,
+            top: coordinate.top,
+            grade: coordinate.grade
+        });
+        syncClearRatingButtonState(currentRound);
+        showRoundPendingRatingSelectionPreview(currentRound);
 
         event.preventDefault();
         event.stopPropagation();
-        await submitRoundRatingPayload({
-            recommendationId: Number(selected.id),
-            ratingLetter: coordinate.ratingLetter,
-            interestScore: coordinate.interestScore
-        });
     });
 
     byId("searchParticipantsBtn")?.addEventListener("click", async () => {
@@ -7788,25 +7893,45 @@ async function handleRoundPage() {
         event.preventDefault();
         if (!currentRound) return;
         const form = event.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        const selected = getSelectedRatingRecommendation(currentRound);
+        const pendingSelection = getRoundPendingRatingSelection(currentRound);
+        if (!selected || !pendingSelection) {
+            setFeedback("roundFeedback", "Escolha um ponto no plano naval antes de salvar o voto.", "error");
+            syncClearRatingButtonState(currentRound);
+            return;
+        }
         const payload = {
-            recommendationId: Number(form.elements.recommendationId.value),
-            ratingLetter: form.elements.ratingLetter.value,
-            interestScore: Number(form.elements.interestScore.value)
+            recommendationId: Number(selected.id),
+            ratingLetter: pendingSelection.ratingLetter,
+            interestScore: pendingSelection.interestScore
         };
-        const submitButton = form.querySelector("button[type='submit']");
+        const submitButton = byId("saveRatingBtn");
         if (submitButton instanceof HTMLButtonElement) {
             await withButtonLoading(submitButton, "Salvando...", async () => {
-                await submitRoundRatingPayload(payload);
+                const saved = await submitRoundRatingPayload(payload);
+                if (saved) {
+                    clearRoundPendingRatingSelection();
+                    syncClearRatingButtonState(currentRound);
+                }
             });
         } else {
-            await submitRoundRatingPayload(payload);
+            const saved = await submitRoundRatingPayload(payload);
+            if (saved) {
+                clearRoundPendingRatingSelection();
+                syncClearRatingButtonState(currentRound);
+            }
         }
     });
     byId("clearRatingBtn")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
         if (!(button instanceof HTMLButtonElement)) return;
         await withButtonLoading(button, "Limpando...", async () => {
-            await clearSelectedRoundRating();
+            const cleared = await clearSelectedRoundRating();
+            if (cleared) {
+                clearRoundPendingRatingSelection();
+                syncClearRatingButtonState(currentRound);
+            }
         });
     });
 

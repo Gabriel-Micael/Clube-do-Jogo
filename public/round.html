@@ -133,31 +133,6 @@
                     <label>Jogo recebido para avaliar</label>
                     <div id="ratingRecommendationCard" class="rating-recommendation-card-shell"></div>
                     <input id="ratingRecommendationIdInput" name="recommendationId" type="hidden" value="">
-                    <div class="rating-dual-fields">
-                        <div class="rating-field">
-                            <label>Nota no eixo Y (A bom, J ruim)</label>
-                            <select name="ratingLetter" required>
-                                <option value="A">A</option>
-                                <option value="B">B</option>
-                                <option value="C">C</option>
-                                <option value="D">D</option>
-                                <option value="E">E</option>
-                                <option value="F">F</option>
-                                <option value="G">G</option>
-                                <option value="H">H</option>
-                                <option value="I">I</option>
-                                <option value="J">J</option>
-                            </select>
-                        </div>
-                        <div class="rating-field">
-                            <label>Interesse no eixo X (1 desinteressante - 10 interessante)</label>
-                            <input name="interestScore" type="number" min="1" max="10" required>
-                        </div>
-                    </div>
-                    <div class="rating-actions">
-                        <button class="btn" type="submit">Salvar Nota Naval</button>
-                        <button id="clearRatingBtn" class="btn btn-outline" type="button">Limpar Voto</button>
-                    </div>
                 </form>
 
                 <div class="naval-chart-wrap">
@@ -170,6 +145,11 @@
                     </div>
                     <div class="naval-axis-x">Interessância</div>
                     <div class="naval-axis-y">Jogabilidade</div>
+                </div>
+
+                <div id="ratingActionsWrap" class="rating-actions hidden">
+                    <button id="clearRatingBtn" class="btn btn-outline" type="button">Limpar Voto</button>
+                    <button id="saveRatingBtn" class="btn" type="submit" form="ratingForm">Salvar Voto (aparecerá para todos participantes)</button>
                 </div>
             </section>
         </section>

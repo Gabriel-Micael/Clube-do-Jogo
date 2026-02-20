@@ -1,4 +1,4 @@
-const {
+﻿const {
     exchangeNpssoForAccessCode,
     exchangeAccessCodeForAuthTokens,
     exchangeRefreshTokenForAuthTokens,
@@ -243,7 +243,7 @@ function normalizePsnTitleList(rawTitles = []) {
 async function fetchPsnSnapshot({ npsso }) {
     const npssoToken = sanitizeText(npsso, 200);
     if (!npssoToken || npssoToken.length < 20) {
-        const error = new Error("Informe um token NPSSO valido.");
+        const error = new Error("Informe um token NPSSO válido.");
         error.statusCode = 400;
         throw error;
     }
@@ -1076,7 +1076,7 @@ app.get("/api/admin/notification-state", requireAuth, async (req, res) => {
         });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao carregar estado de notificacoes." });
+        return res.status(500).json({ message: "Erro ao carregar estado de notificações." });
     }
 });
 
@@ -1310,7 +1310,7 @@ app.put("/api/user/profile", requireAuth, async (req, res) => {
         return res.json({ message: "Perfil atualizado.", profile: { nickname } });
     } catch (error) {
         console.error(error);
-        if (String(error.message || "").includes("Nickname ja")) {
+        if (/nickname j[aá]/i.test(String(error.message || ""))) {
             return res.status(409).json({ message: error.message });
         }
         return res.status(500).json({ message: "Erro ao atualizar perfil." });
@@ -1390,7 +1390,7 @@ async function handleNicknameAvailabilityRequest(req, res) {
                 nickname: normalized,
                 available: true,
                 sameAsCurrent: true,
-                message: "Esse ja e o seu nickname atual."
+                message: "Esse já é o seu nickname atual."
             });
         }
 
@@ -1400,15 +1400,15 @@ async function handleNicknameAvailabilityRequest(req, res) {
                 nickname: normalized,
                 available: true,
                 sameAsCurrent: false,
-                message: "Nickname disponivel."
+                message: "Nickname disponível."
             });
         } catch (error) {
-            if (String(error.message || "").includes("Nickname ja")) {
+            if (/nickname j[aá]/i.test(String(error.message || ""))) {
                 return res.json({
                     nickname: normalized,
                     available: false,
                     sameAsCurrent: false,
-                    message: "Nickname ja esta em uso."
+                    message: "Nickname já está em uso."
                 });
             }
             throw error;
@@ -1475,7 +1475,7 @@ app.get("/api/users/:userId/profile-comments", requireAuth, async (req, res) => 
         return res.json({ comments });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao carregar comentarios de perfil." });
+        return res.status(500).json({ message: "Erro ao carregar comentários de perfil." });
     }
 });
 
@@ -1489,7 +1489,7 @@ app.get("/api/user/profile-comments", requireAuth, async (req, res) => {
         return res.json({ comments });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao carregar comentarios de perfil." });
+        return res.status(500).json({ message: "Erro ao carregar comentários de perfil." });
     }
 });
 
@@ -1643,7 +1643,7 @@ app.put("/api/profile-comments/:commentId", requireAuth, async (req, res) => {
         return res.json({ message: "Comentário atualizado.", comment: updated });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao atualizar comentario do perfil." });
+        return res.status(500).json({ message: "Erro ao atualizar comentário do perfil." });
     }
 });
 
@@ -1665,7 +1665,7 @@ app.delete("/api/profile-comments/:commentId", requireAuth, async (req, res) => 
         const isOwn = Number(existing.author_user_id) === Number(req.currentUser.id);
         const isProfileOwner = Number(existing.profile_user_id) === Number(req.currentUser.id);
         if (!isOwn && !isProfileOwner) {
-            return res.status(403).json({ message: "Sem permissao para excluir este comentario." });
+            return res.status(403).json({ message: "Sem permissão para excluir este comentário." });
         }
 
         await dbRun(
@@ -1683,7 +1683,7 @@ app.delete("/api/profile-comments/:commentId", requireAuth, async (req, res) => 
         return res.json({ message: "Comentário removido.", commentId });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao excluir comentario do perfil." });
+        return res.status(500).json({ message: "Erro ao excluir comentário do perfil." });
     }
 });
 
@@ -1759,7 +1759,7 @@ app.post("/api/profile-comments/:commentId/like", requireAuth, async (req, res) 
         });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Erro ao curtir comentario do perfil." });
+        return res.status(500).json({ message: "Erro ao curtir comentário do perfil." });
     }
 });
 
@@ -1851,3 +1851,4 @@ app.post("/api/auth/reset-password", async (req, res) => {
     }
 });
 };
+

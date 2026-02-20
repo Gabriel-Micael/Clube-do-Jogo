@@ -81,11 +81,14 @@
                 <button id="closeRoundBtn" class="btn btn-outline hidden" type="button">Encerrar Rodada</button>
                 <button id="finalizeRoundBtn" class="btn btn-success hidden" type="button">Finalizar Rodada</button>
             </div>
-            <p id="assignmentText"></p>
+            <div class="assignment-info-row">
+                <p id="assignmentText"></p>
+            </div>
             <div class="mini-tabs">
                 <button id="tabIndicationsBtn" class="mini-tab active" type="button">Indicações</button>
                 <button id="tabRatingsBtn" class="mini-tab" type="button">Notas Navais</button>
             </div>
+            <p id="indicationOrderText" class="phase-order-text phase-order-text-indication hidden"></p>
 
             <section id="tabIndicationsPanel" class="mini-tab-panel">
                 <form id="recommendationForm" class="hidden">
@@ -133,6 +136,7 @@
                     <label>Jogo recebido para avaliar</label>
                     <div id="ratingRecommendationCard" class="rating-recommendation-card-shell"></div>
                     <input id="ratingRecommendationIdInput" name="recommendationId" type="hidden" value="">
+                    <p id="ratingOrderText" class="phase-order-text phase-order-text-rating hidden"></p>
                 </form>
 
                 <div class="naval-chart-wrap">

@@ -41,6 +41,11 @@ const achievementKeysOrdered = [
     "CGNewba"
 ];
 let achievementClaimInFlight = false;
+let achievementClaimLastAttemptAt = 0;
+let achievementClaimSyncTimer = 0;
+let achievementClaimSyncInFlight = false;
+let achievementClaimLifecycleBound = false;
+let achievementClaimPollingTimer = 0;
 let achievementSound = null;
 const achievementAccentColorCache = new Map();
 const recentAchievementToastKeys = new Map();
@@ -48,6 +53,8 @@ const achievementToastPendingQueue = [];
 let achievementToastQueueTimer = 0;
 const achievementToastQueueIntervalMs = 2000;
 const achievementToastNavigationStateKey = "achievement-toast-navigation-state-v1";
+const ACHIEVEMENT_CLAIM_MIN_INTERVAL_MS = 22000;
+const ACHIEVEMENT_CLAIM_POLL_INTERVAL_MS = 45000;
 let adminNotificationEventSource = null;
 let adminNotificationUnloadBound = false;
 let adminNotificationSyncBound = false;
@@ -90,6 +97,7 @@ let roundPhaseRefreshTimer = 0;
 let serverClockOffsetSeconds = 0;
 const appBootOverlayStartedAt = Date.now();
 let appBootOverlayDone = false;
+let loginAccessoriesAnimationTimer = 0;
 
 function updateServerClockOffsetFromEpochSeconds(epochSeconds) {
     const parsed = Number(epochSeconds || 0);
@@ -157,6 +165,51 @@ window.addEventListener("pageshow", (event) => {
 
 function byId(id) {
     return document.getElementById(id);
+}
+
+function clearLoginAccessoriesAnimation() {
+    if (loginAccessoriesAnimationTimer) {
+        window.clearInterval(loginAccessoriesAnimationTimer);
+        loginAccessoriesAnimationTimer = 0;
+    }
+}
+
+function setupLoginAccessoriesAnimation() {
+    clearLoginAccessoriesAnimation();
+    if (page !== "login") return;
+    const accessories = Array.from(document.querySelectorAll(".login-accessory"));
+    if (!accessories.length) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (reducedMotion.matches) return;
+
+    const randomBetween = (min, max) => Math.random() * (max - min) + min;
+    const states = accessories.map((element) => ({
+        element,
+        baseX: Number(element.dataset.baseX || 0),
+        baseY: Number(element.dataset.baseY || 0),
+        baseRotate: Number(element.dataset.baseRotate || 0),
+        centeredX: element.classList.contains("login-accessory-mouse")
+    }));
+
+    const applyFrame = () => {
+        states.forEach((state) => {
+            const dx = randomBetween(-3.2, 3.2);
+            const dy = randomBetween(-2.6, 2.6);
+            const rotate = state.baseRotate + randomBetween(-1.2, 1.2);
+            const scale = 1 + randomBetween(-0.018, 0.024);
+            const prefix = state.centeredX ? "translateX(-50%) " : "";
+            state.element.style.transform =
+                `${prefix}translate3d(${(state.baseX + dx).toFixed(2)}px, ${(state.baseY + dy).toFixed(2)}px, 0) ` +
+                `rotate(${rotate.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
+        });
+    };
+
+    applyFrame();
+    loginAccessoriesAnimationTimer = window.setInterval(() => {
+        window.requestAnimationFrame(applyFrame);
+    }, 250);
+
+    window.addEventListener("pagehide", clearLoginAccessoriesAnimation, { once: true });
 }
 
 function resolveElement(target) {
@@ -1090,7 +1143,7 @@ function queueAdminNotificationStateSync(delayMs = ADMIN_NOTIFICATION_SYNC_DEBOU
     adminNotificationSyncTimer = window.setTimeout(() => {
         adminNotificationSyncTimer = 0;
         flushAdminNotificationStateSyncQueue().catch(() => {
-            // tentativa falhou; proxima alteração tenta novamente
+            // tentativa falhou; próxima alteração tenta novamente
         });
     }, Math.max(0, Number(delayMs) || 0));
 }
@@ -1182,7 +1235,7 @@ function startAdminNotificationStream() {
             }, { once: true });
         }
     } catch {
-        // EventSource indisponivel no navegador.
+        // EventSource indisponível no navegador.
     }
 }
 
@@ -1245,7 +1298,7 @@ function queueRoundRealtimeRefresh(roundId, options = {}) {
     roundRealtimeRefreshTimer = window.setTimeout(() => {
         roundRealtimeRefreshTimer = 0;
         flushRoundRealtimeRefreshQueue().catch(() => {
-            // ignora erros pontuais de sincronizacao
+            // ignora erros pontuais de sincronização
         });
     }, ROUND_REALTIME_REFRESH_DEBOUNCE_MS);
 }
@@ -1263,7 +1316,7 @@ async function flushRoundRealtimeRefreshQueue() {
             roundRealtimeRefreshTimer = window.setTimeout(() => {
                 roundRealtimeRefreshTimer = 0;
                 flushRoundRealtimeRefreshQueue().catch(() => {
-                    // ignora erros pontuais de sincronizacao
+                    // ignora erros pontuais de sincronização
                 });
             }, ROUND_REALTIME_REFRESH_DEBOUNCE_MS);
         }
@@ -1336,7 +1389,7 @@ function queueRoundRealtimeCommentSync(roundId, recommendationId, options = {}) 
     roundRealtimeCommentSyncTimer = window.setTimeout(() => {
         roundRealtimeCommentSyncTimer = 0;
         flushRoundRealtimeCommentSyncQueue().catch(() => {
-            // ignora erros pontuais de sincronizacao
+            // ignora erros pontuais de sincronização
         });
     }, ROUND_REALTIME_COMMENT_SYNC_DEBOUNCE_MS);
 }
@@ -1362,7 +1415,7 @@ async function flushRoundRealtimeCommentSyncQueue() {
             roundRealtimeCommentSyncTimer = window.setTimeout(() => {
                 roundRealtimeCommentSyncTimer = 0;
                 flushRoundRealtimeCommentSyncQueue().catch(() => {
-                    // ignora erros pontuais de sincronizacao
+                    // ignora erros pontuais de sincronização
                 });
             }, ROUND_REALTIME_COMMENT_SYNC_DEBOUNCE_MS);
         }
@@ -1459,6 +1512,7 @@ async function handleRoundRealtimeChange(rawPayload) {
 }
 
 function syncRoundRealtimePageStateNow() {
+    scheduleAchievementClaimSync(0);
     if (page === "home") {
         queueHomeRealtimeRefresh();
         return;
@@ -1522,7 +1576,7 @@ function startRoundRealtimeStream() {
         };
         stream.addEventListener("round-change", (event) => {
             handleRoundRealtimeChange(event.data).catch(() => {
-                // ignora erros pontuais de sincronizacao
+                // ignora erros pontuais de sincronização
             });
         });
         stream.onerror = () => {
@@ -1538,7 +1592,7 @@ function startRoundRealtimeStream() {
         }
         queueRoundRealtimeRecoverySync(0);
     } catch {
-        // EventSource indisponivel no navegador.
+        // EventSource indisponível no navegador.
         queueRoundRealtimeRecoverySync(0);
     }
 }
@@ -2377,7 +2431,7 @@ async function handleAdminPage() {
         try {
             await refreshAdmin();
         } catch {
-            // atualizacao por evento falhou; proxima mudanca tenta novamente
+            // atualização por evento falhou; próxima mudança tenta novamente
         } finally {
             adminEventRefreshInFlight = false;
             if (adminEventRefreshPending && !adminEventRefreshTimer) {
@@ -2838,6 +2892,7 @@ function showAchievementUnlockNotifications(achievements) {
 
 async function claimAchievementUnlocksAndNotify() {
     if (achievementClaimInFlight) return null;
+    achievementClaimLastAttemptAt = Date.now();
     achievementClaimInFlight = true;
     try {
         const data = await sendJson("/api/user/achievements?claim=1");
@@ -2853,9 +2908,8 @@ async function claimAchievementUnlocksAndNotify() {
 function setButtonLoading(button, isLoading, loadingText = "Carregando...") {
     if (!button) return;
     if (isLoading) {
-        if (!button.dataset.originalText) {
-            button.dataset.originalText = button.textContent || "";
-        }
+        button.dataset.originalText = button.textContent || "";
+        button.dataset.loadingText = loadingText ? String(loadingText) : "";
         button.classList.add("is-loading");
         button.setAttribute("aria-busy", "true");
         button.setAttribute("disabled", "disabled");
@@ -2866,9 +2920,17 @@ function setButtonLoading(button, isLoading, loadingText = "Carregando...") {
     button.classList.remove("is-loading");
     button.removeAttribute("aria-busy");
     button.removeAttribute("disabled");
-    if (button.dataset.originalText) {
-        button.textContent = button.dataset.originalText;
+    const originalText = String(button.dataset.originalText || "");
+    const activeLoadingText = String(button.dataset.loadingText || "");
+    const currentText = String(button.textContent || "");
+    const shouldRestoreOriginal =
+        currentText === activeLoadingText
+        || (!currentText && Boolean(originalText));
+    if (shouldRestoreOriginal && originalText) {
+        button.textContent = originalText;
     }
+    delete button.dataset.originalText;
+    delete button.dataset.loadingText;
 }
 
 async function withButtonLoading(button, loadingText, handler) {
@@ -2919,6 +2981,93 @@ function cloneJsonValue(value) {
     } catch {
         return value;
     }
+}
+
+function canRunAchievementClaimNow(force = false) {
+    if (document.visibilityState === "hidden") return false;
+    if (force) return true;
+    const elapsed = Date.now() - Number(achievementClaimLastAttemptAt || 0);
+    return elapsed >= ACHIEVEMENT_CLAIM_MIN_INTERVAL_MS;
+}
+
+function scheduleAchievementClaimSync(delayMs = 0, options = {}) {
+    const isAuthenticatedUiPage =
+        page === "profile"
+        || page === "home"
+        || page === "round"
+        || page === "admin";
+    if (!isAuthenticatedUiPage) return;
+    const force = Boolean(options?.force);
+    if (achievementClaimSyncTimer) return;
+    achievementClaimSyncTimer = window.setTimeout(() => {
+        achievementClaimSyncTimer = 0;
+        flushAchievementClaimSync({ force }).catch(() => {
+            // ignora falhas pontuais do claim
+        });
+    }, Math.max(0, Number(delayMs) || 0));
+}
+
+async function flushAchievementClaimSync(options = {}) {
+    if (achievementClaimSyncInFlight) return;
+    if (document.visibilityState === "hidden") return;
+    const force = Boolean(options?.force);
+    if (!canRunAchievementClaimNow(force)) {
+        const elapsed = Date.now() - Number(achievementClaimLastAttemptAt || 0);
+        const remaining = Math.max(250, ACHIEVEMENT_CLAIM_MIN_INTERVAL_MS - Math.max(0, elapsed));
+        scheduleAchievementClaimSync(remaining, { force });
+        return;
+    }
+    achievementClaimSyncInFlight = true;
+    try {
+        await claimAchievementUnlocksAndNotify();
+    } finally {
+        achievementClaimSyncInFlight = false;
+    }
+}
+
+function startAchievementClaimPolling() {
+    if (achievementClaimPollingTimer) {
+        clearTimeout(achievementClaimPollingTimer);
+        achievementClaimPollingTimer = 0;
+    }
+    const loop = () => {
+        achievementClaimPollingTimer = window.setTimeout(() => {
+            achievementClaimPollingTimer = 0;
+            scheduleAchievementClaimSync(0);
+            loop();
+        }, ACHIEVEMENT_CLAIM_POLL_INTERVAL_MS);
+    };
+    loop();
+}
+
+function ensureAchievementClaimLifecycleSync() {
+    if (achievementClaimLifecycleBound) return;
+    achievementClaimLifecycleBound = true;
+
+    const syncOnVisible = () => {
+        if (document.visibilityState !== "visible") return;
+        scheduleAchievementClaimSync(0);
+    };
+    const syncOnFocus = () => {
+        scheduleAchievementClaimSync(0);
+    };
+
+    document.addEventListener("visibilitychange", syncOnVisible);
+    window.addEventListener("focus", syncOnFocus);
+    window.addEventListener("pageshow", syncOnFocus);
+    window.addEventListener("beforeunload", () => {
+        document.removeEventListener("visibilitychange", syncOnVisible);
+        window.removeEventListener("focus", syncOnFocus);
+        window.removeEventListener("pageshow", syncOnFocus);
+        if (achievementClaimSyncTimer) {
+            clearTimeout(achievementClaimSyncTimer);
+            achievementClaimSyncTimer = 0;
+        }
+        if (achievementClaimPollingTimer) {
+            clearTimeout(achievementClaimPollingTimer);
+            achievementClaimPollingTimer = 0;
+        }
+    }, { once: true });
 }
 
 async function runJsonRequest(url, method = "GET", payload) {
@@ -4204,7 +4353,7 @@ async function loadProfile() {
                                 <img class="psn-tier-entry-tier-icon psn-tier-${escapeHtml(tier)}" src="${escapeHtml(tierIcon)}" alt="${escapeHtml(tierLabel)}">
                                 <div class="psn-tier-entry-texts">
                                     <p class="psn-tier-entry-trophy-name">${escapeHtml(trophyName)}</p>
-                                    <p class="psn-tier-entry-game-name">${escapeHtml(gameName)}${platform ? ` · ${escapeHtml(platform)}` : ""}</p>
+                                    <p class="psn-tier-entry-game-name">${escapeHtml(gameName)}${platform ? ` - ${escapeHtml(platform)}` : ""}</p>
                                     ${detail ? `<p class="psn-tier-entry-detail">${escapeHtml(detail)}</p>` : ""}
                                 </div>
                                 <span class="psn-tier-entry-date">${escapeHtml(earnedLabel)}</span>
@@ -4224,7 +4373,7 @@ async function loadProfile() {
             psnTierDetailsPagination.classList.toggle("hidden", !hasItems);
         }
         if (psnTierDetailsPageLabel) {
-            psnTierDetailsPageLabel.textContent = `Pagina ${currentPage} de ${totalPages}`;
+            psnTierDetailsPageLabel.textContent = `Página ${currentPage} de ${totalPages}`;
         }
         if (psnTierDetailsPrevBtn) {
             psnTierDetailsPrevBtn.disabled = !hasItems || currentPage <= 1;
@@ -4504,7 +4653,7 @@ async function loadProfile() {
             psnTitlesPagination.classList.toggle("hidden", !hasItems);
         }
         if (psnTitlesPageLabel) {
-            psnTitlesPageLabel.textContent = `Pagina ${currentPage} de ${totalPages}`;
+            psnTitlesPageLabel.textContent = `Página ${currentPage} de ${totalPages}`;
         }
         if (psnTitlesPrevBtn) {
             psnTitlesPrevBtn.disabled = !hasItems || currentPage <= 1;
@@ -5967,7 +6116,7 @@ async function handleHome() {
                 })
             );
             closeSuggestionModal();
-            setFeedback("homeFeedback", result?.message || "Sugestão enviada com sucesso.", "ok");
+            setFeedback("homeFeedback", result?.message || "Sugestáo enviada com sucesso.", "ok");
         } catch (error) {
             setFeedback("suggestionFormFeedback", error.message, "error");
         }
@@ -7183,6 +7332,180 @@ function renderRevealList(round) {
     setElementHtmlIfChanged(listEl, nextHtml);
 }
 
+function formatOrdinalNumberPtBr(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isInteger(numeric) || numeric <= 0) return "";
+    return `${numeric}\u00ba`;
+}
+
+function rotateArrayToStart(items, startValue) {
+    const list = Array.isArray(items) ? [...items] : [];
+    if (!list.length) return [];
+    const startIndex = list.indexOf(startValue);
+    if (startIndex <= 0) return list;
+    return [...list.slice(startIndex), ...list.slice(0, startIndex)];
+}
+
+function buildRoundAssignmentOrders(round) {
+    const assignments = Array.isArray(round?.assignments) ? round.assignments : [];
+    if (!assignments.length) return null;
+
+    const receiverByGiver = new Map();
+    const giverSeenIndex = new Map();
+    assignments.forEach((item, index) => {
+        const giverId = Number(item?.giver_user_id || 0);
+        const receiverId = Number(item?.receiver_user_id || 0);
+        if (!Number.isInteger(giverId) || !Number.isInteger(receiverId)) return;
+        if (giverId <= 0 || receiverId <= 0 || giverId === receiverId) return;
+        if (!receiverByGiver.has(giverId)) {
+            receiverByGiver.set(giverId, receiverId);
+            giverSeenIndex.set(giverId, index);
+        }
+    });
+    if (!receiverByGiver.size) return null;
+
+    const givers = [...receiverByGiver.keys()];
+    const visited = new Set();
+    const cycles = [];
+    const maxGuard = givers.length + 1;
+
+    const pickNextStart = () => {
+        const pending = givers.filter((id) => !visited.has(id));
+        if (!pending.length) return 0;
+        pending.sort((a, b) => Number(giverSeenIndex.get(a) || 0) - Number(giverSeenIndex.get(b) || 0));
+        return Number(pending[0] || 0);
+    };
+
+    while (visited.size < givers.length) {
+        const start = pickNextStart();
+        if (!start) break;
+
+        const cycle = [];
+        let current = start;
+        let guard = 0;
+        while (
+            Number.isInteger(current)
+            && current > 0
+            && receiverByGiver.has(current)
+            && !visited.has(current)
+            && guard <= maxGuard
+        ) {
+            visited.add(current);
+            cycle.push(current);
+            const next = Number(receiverByGiver.get(current) || 0);
+            if (!Number.isInteger(next) || next <= 0 || !receiverByGiver.has(next) || visited.has(next)) {
+                break;
+            }
+            current = next;
+            guard += 1;
+        }
+        if (cycle.length) cycles.push(cycle);
+    }
+    if (!cycles.length) return null;
+
+    const orderedCycles = [];
+    const remainingCycles = [...cycles];
+    const creatorId = Number(round?.creator_user_id || 0);
+    if (creatorId > 0) {
+        const creatorCycleIndex = remainingCycles.findIndex((cycle) => cycle.includes(creatorId));
+        if (creatorCycleIndex >= 0) {
+            orderedCycles.push(rotateArrayToStart(remainingCycles[creatorCycleIndex], creatorId));
+            remainingCycles.splice(creatorCycleIndex, 1);
+        }
+    }
+
+    const cycleSortKey = (cycle) => {
+        if (!Array.isArray(cycle) || !cycle.length) return Number.MAX_SAFE_INTEGER;
+        return cycle.reduce((min, memberId) => {
+            const value = Number(giverSeenIndex.get(memberId));
+            return Number.isFinite(value) ? Math.min(min, value) : min;
+        }, Number.MAX_SAFE_INTEGER);
+    };
+
+    remainingCycles.sort((a, b) => cycleSortKey(a) - cycleSortKey(b));
+    remainingCycles.forEach((cycle) => {
+        if (!cycle.length) return;
+        let startMember = cycle[0];
+        let startMemberSeen = Number(giverSeenIndex.get(startMember));
+        cycle.forEach((memberId) => {
+            const seen = Number(giverSeenIndex.get(memberId));
+            if (!Number.isFinite(startMemberSeen) || (Number.isFinite(seen) && seen < startMemberSeen)) {
+                startMember = memberId;
+                startMemberSeen = seen;
+            }
+        });
+        orderedCycles.push(rotateArrayToStart(cycle, startMember));
+    });
+
+    const indicationOrder = orderedCycles.flat().filter((id) => Number.isInteger(id) && id > 0);
+    const votingOrder = indicationOrder
+        .map((giverId) => Number(receiverByGiver.get(giverId) || 0))
+        .filter((id) => Number.isInteger(id) && id > 0);
+
+    if (!indicationOrder.length || !votingOrder.length) return null;
+    return { indicationOrder, votingOrder };
+}
+
+function resolveRoundOrderPosition(round, phase) {
+    const currentUserId = Number(sessionUserId || 0);
+    if (!currentUserId) return null;
+    const normalizedPhase = String(phase || "").trim().toLowerCase();
+    if (normalizedPhase !== "indication" && normalizedPhase !== "rating") return null;
+
+    const orders = buildRoundAssignmentOrders(round);
+    if (!orders) return null;
+
+    if (normalizedPhase === "indication") {
+        const index = orders.indicationOrder.indexOf(currentUserId);
+        if (index < 0) return null;
+        return {
+            mode: "indicar",
+            position: index + 1
+        };
+    }
+
+    const index = orders.votingOrder.indexOf(currentUserId);
+    if (index < 0) return null;
+    return {
+        mode: "votar",
+        position: index + 1
+    };
+}
+
+function renderRoundOrderHint(round, phase) {
+    const indicationOrderText = byId("indicationOrderText");
+    const ratingOrderText = byId("ratingOrderText");
+    const indicationTarget = indicationOrderText instanceof HTMLElement ? indicationOrderText : null;
+    const ratingTarget = ratingOrderText instanceof HTMLElement ? ratingOrderText : null;
+    if (!indicationTarget && !ratingTarget) return;
+
+    if (indicationTarget) {
+        setElementTextIfChanged(indicationTarget, "");
+        setElementHiddenState(indicationTarget, true);
+    }
+    if (ratingTarget) {
+        setElementTextIfChanged(ratingTarget, "");
+        setElementHiddenState(ratingTarget, true);
+    }
+
+    const info = resolveRoundOrderPosition(round, phase);
+    if (!info) {
+        return;
+    }
+
+    const ordinal = formatOrdinalNumberPtBr(info.position);
+    if (String(info.mode || "") === "indicar") {
+        if (!indicationTarget) return;
+        setElementTextIfChanged(indicationTarget, `Você é o ${ordinal} a indicar.`);
+        setElementHiddenState(indicationTarget, false);
+        return;
+    }
+
+    if (!ratingTarget) return;
+    setElementTextIfChanged(ratingTarget, `Você é o ${ordinal} a votar.`);
+    setElementHiddenState(ratingTarget, false);
+}
+
 function renderRoundState(round) {
     roundStateRenderSignature = buildRoundStateSignature(round);
     const phase = String(round?.phase || "").trim().toLowerCase();
@@ -7219,6 +7542,7 @@ function renderRoundState(round) {
     );
 
     renderRoundRecommendations(round);
+    renderRoundOrderHint(round, phase);
 
     if (phase === "draft") {
         renderParticipantList(round);
@@ -8059,7 +8383,9 @@ async function init() {
             // sem mapa de cargos, segue com nomes basicos
         }
         restorePendingAchievementToastsAfterNavigation();
-        claimAchievementUnlocksAndNotify();
+        ensureAchievementClaimLifecycleSync();
+        scheduleAchievementClaimSync(0, { force: true });
+        startAchievementClaimPolling();
         startRoundRealtimeStream();
     }
 
@@ -8068,7 +8394,10 @@ async function init() {
         setupGoogleButtonsLoading();
     }
 
-    if (page === "login") await handleLogin();
+    if (page === "login") {
+        setupLoginAccessoriesAnimation();
+        await handleLogin();
+    }
     if (page === "register") await handleRegister();
     if (page === "verify") await handleVerifyEmail();
     if (page === "forgot-password") await handleForgotPassword();
@@ -8080,7 +8409,6 @@ async function init() {
 }
 
 init();
-
 
 
 

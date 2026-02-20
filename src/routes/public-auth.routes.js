@@ -178,7 +178,7 @@ app.post("/api/auth/register", async (req, res) => {
         return res.json({ message: "Código enviado para o email informado." });
     } catch (error) {
         console.error(error);
-        if (String(error.message || "").includes("Nickname ja")) {
+        if (/nickname j[aá]/i.test(String(error.message || ""))) {
             return res.status(409).json({ message: error.message });
         }
         if (String(error.message || "").includes("Falha no envio de email")) {
@@ -230,7 +230,7 @@ app.post("/api/auth/verify-email", async (req, res) => {
 
         return res.json({ message: "Email confirmado com sucesso." });
     } catch (error) {
-        if (String(error.message || "").includes("Nickname ja")) {
+        if (/nickname j[aá]/i.test(String(error.message || ""))) {
             return res.status(409).json({ message: error.message });
         }
         if (String(error.message || "").includes("UNIQUE")) {

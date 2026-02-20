@@ -947,11 +947,128 @@ input[readonly] {
     color: var(--muted);
 }
 
+body[data-page="login"] {
+    position: relative;
+    overflow-x: hidden;
+}
+
+.login-accessories-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    user-select: none;
+    overflow: hidden;
+}
+
+.login-accessory {
+    --accessory-glow-soft: 0.16;
+    --accessory-glow-mid: 0.13;
+    position: absolute;
+    display: block;
+    width: clamp(150px, 17vw, 290px);
+    height: auto;
+    opacity: 0.28;
+    filter:
+        brightness(0)
+        saturate(100%)
+        invert(68%)
+        sepia(18%)
+        saturate(900%)
+        hue-rotate(178deg)
+        brightness(64%)
+        contrast(95%)
+        drop-shadow(0 0 6px rgba(56, 136, 235, var(--accessory-glow-soft)))
+        drop-shadow(0 0 12px rgba(56, 136, 235, var(--accessory-glow-mid)));
+    transform-origin: center center;
+    transition:
+        transform 180ms steps(1, end),
+        opacity 220ms ease;
+    will-change: transform;
+}
+
+.login-accessory-controller {
+    --accessory-glow-soft: 0.15;
+    --accessory-glow-mid: 0.12;
+    left: clamp(34px, 9vw, 190px);
+    top: clamp(72px, 14vh, 200px);
+}
+
+.login-accessory-headset {
+    --accessory-glow-soft: 0.18;
+    --accessory-glow-mid: 0.14;
+    right: clamp(44px, 11vw, 230px);
+    top: clamp(150px, 34vh, 300px);
+}
+
+.login-accessory-mouse {
+    --accessory-glow-soft: 0.16;
+    --accessory-glow-mid: 0.13;
+    left: 22%;
+    bottom: clamp(18px, 7vh, 120px);
+    transform: translateX(-50%);
+    width: clamp(92px, 9vw, 155px);
+}
+
+body[data-page="login"] .auth-shell,
+body[data-page="login"] .site-footer {
+    position: relative;
+    z-index: 1;
+}
+
 .auth-shell {
     min-height: 100vh;
     display: grid;
     place-items: center;
     padding: 1rem;
+}
+
+@media (max-width: 860px) {
+    .login-accessory {
+        opacity: 0.23;
+    }
+
+    .login-accessory-controller {
+        left: 16px;
+        top: 92px;
+        width: clamp(132px, 30vw, 190px);
+    }
+
+    .login-accessory-headset {
+        right: 12px;
+        top: clamp(220px, 43vh, 360px);
+        width: clamp(120px, 26vw, 175px);
+    }
+
+    .login-accessory-mouse {
+        left: 20%;
+        width: clamp(80px, 16vw, 114px);
+        bottom: 54px;
+    }
+}
+
+@media (max-width: 600px) {
+    .login-accessory {
+        opacity: 0.19;
+    }
+
+    .login-accessory-controller {
+        top: clamp(10px, 3vh, 24px);
+        left: calc(50% - (clamp(116px, 30vw, 160px) / 2));
+        width: clamp(116px, 30vw, 160px);
+    }
+
+    .login-accessory-headset {
+        right: 2px;
+        top: clamp(240px, 44vh, 380px);
+        width: clamp(110px, 25vw, 146px);
+    }
+
+    .login-accessory-mouse {
+        left: 18%;
+        bottom: 66px;
+        width: clamp(74px, 17vw, 98px);
+    }
 }
 
 .auth-card {
@@ -3508,6 +3625,43 @@ body[data-page="round"] .round-reveal-head #revealCloseRoundBtn {
     flex: 0 0 auto;
 }
 
+body[data-page="round"] .assignment-info-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.25rem;
+}
+
+body[data-page="round"] #assignmentText {
+    margin: 0;
+    flex: 1 1 300px;
+}
+
+body[data-page="round"] .phase-order-text {
+    margin: 0;
+    color: #ffd451;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    text-shadow: 0 0 8px rgba(255, 212, 81, 0.2);
+}
+
+body[data-page="round"] .phase-order-text-indication {
+    width: 100%;
+    margin-top: -0.15rem;
+    margin-bottom: 0.55rem;
+    text-align: center;
+    font-size: 1rem;
+}
+
+body[data-page="round"] .phase-order-text-rating {
+    margin-top: 0.1rem;
+    margin-bottom: 0.35rem;
+    text-align: center;
+    font-size: 1.06rem;
+}
+
 .search-results {
     display: grid;
     gap: 0.45rem;
@@ -4944,6 +5098,12 @@ body[data-page="round"] .round-reveal-head #revealCloseRoundBtn {
     .row-between {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    body[data-page="round"] .assignment-info-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.28rem;
     }
 
     body[data-page="round"] .round-draft-head,

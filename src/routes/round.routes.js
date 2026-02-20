@@ -1,4 +1,4 @@
-module.exports = function registerRoundRoutes(app, deps) {
+﻿module.exports = function registerRoundRoutes(app, deps) {
 const {
     cleanupRoundPairExclusions,
     coverUpload,
@@ -213,7 +213,7 @@ app.post("/api/rounds/new", requireAuth, async (req, res) => {
         const activeRound = await getActiveRound();
         if (activeRound) {
             return res.status(409).json({
-                message: "Ja existe uma rodada ativa.",
+                message: "Já existe uma rodada ativa.",
                 activeRoundId: activeRound.id
             });
         }
@@ -250,7 +250,7 @@ app.post("/api/rounds/:roundId/participants", requireAuth, async (req, res) => {
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!requireRoundCreator(round, req, res)) return;
         if (round.status !== "draft") {
-            return res.status(400).json({ message: "So e possivel editar participantes na fase de sorteio." });
+            return res.status(400).json({ message: "Só é possível editar participantes na fase de sorteio." });
         }
 
         const user = await getUserBasicById(userId);
@@ -284,7 +284,7 @@ app.delete("/api/rounds/:roundId/participants/:userId", requireAuth, async (req,
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!requireRoundCreator(round, req, res)) return;
         if (round.status !== "draft") {
-            return res.status(400).json({ message: "So e possivel editar participantes na fase de sorteio." });
+            return res.status(400).json({ message: "Só é possível editar participantes na fase de sorteio." });
         }
         if (round.creator_user_id === userId) {
             return res.status(400).json({ message: "O criador da rodada não pode ser removido." });
@@ -310,7 +310,7 @@ app.put("/api/rounds/:roundId/pair-exclusions", requireAuth, async (req, res) =>
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!requireRoundCreator(round, req, res)) return;
         if (round.status !== "draft") {
-            return res.status(400).json({ message: "So e possivel editar restricoes na fase de sorteio." });
+            return res.status(400).json({ message: "Só é possível editar restrições na fase de sorteio." });
         }
 
         const pairs = Array.isArray(req.body?.pairs) ? req.body.pairs : [];
@@ -325,7 +325,7 @@ app.put("/api/rounds/:roundId/pair-exclusions", requireAuth, async (req, res) =>
     } catch (error) {
         console.error(error);
         const status = Number(error?.statusCode) || 500;
-        return res.status(status).json({ message: error.message || "Erro ao salvar restricoes de pares." });
+        return res.status(status).json({ message: error.message || "Erro ao salvar restrições de pares." });
     }
 });
 
@@ -452,7 +452,7 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
                 Boolean(req.currentUser?.isOwner)
                 || Boolean(req.currentUser?.isModerator);
             if (!canReopenRound) {
-                return res.status(403).json({ message: "Sem permissao para reabrir essa rodada." });
+                return res.status(403).json({ message: "Sem permissão para reabrir essa rodada." });
             }
             const reopenAt = futureBrasiliaTimestamp({ days: 1 });
             await dbRun(
@@ -481,7 +481,7 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
                 Boolean(req.currentUser?.isOwner)
                 || Boolean(req.currentUser?.isModerator);
             if (!canFinalizeReopened) {
-                return res.status(403).json({ message: "Sem permissao para finalizar rodada reaberta." });
+                return res.status(403).json({ message: "Sem permissão para finalizar rodada reaberta." });
             }
             await dbRun("UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?", [
                 nowInSeconds(),
@@ -500,7 +500,7 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
             Boolean(req.currentUser?.isOwner)
             || Number(round.creator_user_id) === Number(req.currentUser.id);
         if (!canCloseRound) {
-            return res.status(403).json({ message: "Sem permissao para encerrar essa rodada." });
+            return res.status(403).json({ message: "Sem permissão para encerrar essa rodada." });
         }
 
         const isDraftOrRevealRound =
@@ -517,6 +517,29 @@ app.post("/api/rounds/:roundId/close", requireAuth, async (req, res) => {
                 redirectToHome: true,
                 roundDeleted: true
             });
+        }
+
+        const isIndicationRound = String(round.status || "") === "indication";
+        if (isIndicationRound) {
+            const recommendationCountRow = await dbGet(
+                `SELECT COUNT(*) AS total
+                 FROM recommendations
+                 WHERE round_id = ?`,
+                [roundId]
+            );
+            const recommendationCount = Number(recommendationCountRow?.total || 0);
+            if (recommendationCount <= 0) {
+                await deleteRoundCascade(roundId);
+                emitRoundChange("round_deleted", {
+                    roundId,
+                    actorUserId: Number(req.currentUser?.id) || 0
+                });
+                return res.json({
+                    message: "Rodada encerrada e descartada.",
+                    redirectToHome: true,
+                    roundDeleted: true
+                });
+            }
         }
 
         await dbRun("UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?", [
@@ -545,7 +568,7 @@ app.put("/api/rounds/:roundId", requireAuth, async (req, res) => {
             return res.status(404).json({ message: "Rodada não encontrada." });
         }
         if (!req.currentUser?.isOwner && !req.currentUser?.isModerator && round.creator_user_id !== req.currentUser.id) {
-            return res.status(403).json({ message: "Sem permissao para editar essa rodada." });
+            return res.status(403).json({ message: "Sem permissão para editar essa rodada." });
         }
 
         const updates = [];
@@ -594,7 +617,7 @@ app.delete("/api/rounds/:roundId", requireAuth, async (req, res) => {
         const round = await dbGet("SELECT * FROM rounds WHERE id = ? LIMIT 1", [roundId]);
         if (!round) return res.status(404).json({ message: "Rodada não encontrada." });
         if (!req.currentUser?.isOwner && round.creator_user_id !== req.currentUser.id) {
-            return res.status(403).json({ message: "Sem permissao para excluir essa rodada." });
+            return res.status(403).json({ message: "Sem permissão para excluir essa rodada." });
         }
         await deleteRoundCascade(roundId);
         emitRoundChange("round_deleted", {
@@ -1063,7 +1086,7 @@ app.delete("/api/recommendation-comments/:commentId", requireAuth, async (req, r
         }
         const isOwnComment = Number(existing.user_id) === Number(req.currentUser.id);
         if (!isOwnComment && !req.currentUser?.isOwner) {
-            return res.status(403).json({ message: "Sem permissao para excluir este comentario." });
+            return res.status(403).json({ message: "Sem permissão para excluir este comentário." });
         }
         await dbRun(
             `UPDATE recommendation_comments
@@ -1268,7 +1291,7 @@ app.get("/api/steam/search", requireAuth, async (req, res) => {
         return res.json({ items });
     } catch (error) {
         console.error(error);
-        return res.json({ items: [], message: "Busca Steam temporariamente indisponivel." });
+        return res.json({ items: [], message: "Busca Steam temporariamente indisponível." });
     }
 });
 
@@ -1304,3 +1327,4 @@ app.get("/api/epic/resolve-redirect", requireAuth, async (req, res) => {
     }
 });
 };
+

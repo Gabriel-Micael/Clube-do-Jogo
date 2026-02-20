@@ -1,4 +1,4 @@
-const path = require("path");
+﻿const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
@@ -605,7 +605,7 @@ async function loadSteamAppList() {
             const response = await fetch(endpoint, { signal: controller.signal });
             clearTimeout(timeout);
             if (!response.ok) {
-                lastError = new Error(`Steam app list indisponivel em ${endpoint}`);
+                lastError = new Error(`Steam app list indisponível em ${endpoint}`);
                 continue;
             }
             const data = await response.json();
@@ -1632,7 +1632,7 @@ async function sendPasswordResetEmail(email, token, linkBaseUrl) {
     const html = renderEmailShell({
         title: "Alteração de senha",
         intro: "Recebemos um pedido para alterar a senha da sua conta.",
-        bodyHtml: `<p style="margin:0;">Use o botao abaixo para continuar.</p>
+        bodyHtml: `<p style="margin:0;">Use o botão abaixo para continuar.</p>
                    <p style="margin:10px 0;color:#b9ccf4;">Se preferir, copie e cole o link no navegador:</p>
                    <p style="margin:0;word-break:break-all;"><a href="${link}" style="color:#7ed6ff;">${link}</a></p>`,
         ctaLabel: "Alterar senha",
@@ -1941,7 +1941,7 @@ function validatePairRestrictions(participantIds, blockedPairs = []) {
     const assignmentMap = findDerangementAssignments(uniqueIds, allowedMap);
     if (!assignmentMap) {
         throw createBadRequestError(
-            "Restricoes inconsistentes. Ajuste os bloqueios para permitir um sorteio valido para todos."
+            "Restrições inconsistentes. Ajuste os bloqueios para permitir um sorteio válido para todos."
         );
     }
 }
@@ -2664,7 +2664,8 @@ async function buildAllowedReceivers(participantIds, blockedPairsSet = new Set()
     return allowed;
 }
 
-function findDerangementAssignments(participantIds, allowedMap) {
+function findDerangementAssignments(participantIds, allowedMap, options = {}) {
+    const avoidTwoCycles = Boolean(options?.avoidTwoCycles);
     const givers = [...participantIds].sort((a, b) => {
         const aCount = (allowedMap.get(a) || []).length;
         const bCount = (allowedMap.get(b) || []).length;
@@ -2678,6 +2679,8 @@ function findDerangementAssignments(participantIds, allowedMap) {
         const giver = givers[index];
         const options = shuffleArray((allowedMap.get(giver) || []).filter((id) => !usedReceivers.has(id)));
         for (const receiver of options) {
+            const createsTwoCycle = avoidTwoCycles && result.get(receiver) === giver;
+            if (createsTwoCycle) continue;
             result.set(giver, receiver);
             usedReceivers.add(receiver);
             if (backtrack(index + 1)) return true;
@@ -2695,11 +2698,19 @@ async function generateAssignmentsWithRotation(participantIds, blockedPairs = []
     }
 
     const blockedPairsSet = toBlockedPairsSet(blockedPairs);
+    const shouldAvoidTwoCycles = participantIds.length > 2;
 
     await ensurePairRows(participantIds);
     await resetExhaustedGivers(participantIds, blockedPairsSet);
     let allowed = await buildAllowedReceivers(participantIds, blockedPairsSet);
-    let assignmentMap = findDerangementAssignments(participantIds, allowed);
+    let assignmentMap = findDerangementAssignments(participantIds, allowed, {
+        avoidTwoCycles: shouldAvoidTwoCycles
+    });
+    if (!assignmentMap && shouldAvoidTwoCycles) {
+        assignmentMap = findDerangementAssignments(participantIds, allowed, {
+            avoidTwoCycles: false
+        });
+    }
 
     if (!assignmentMap) {
         for (const giverId of participantIds) {
@@ -2715,7 +2726,14 @@ async function generateAssignmentsWithRotation(participantIds, blockedPairs = []
             );
         }
         allowed = await buildAllowedReceivers(participantIds, blockedPairsSet);
-        assignmentMap = findDerangementAssignments(participantIds, allowed);
+        assignmentMap = findDerangementAssignments(participantIds, allowed, {
+            avoidTwoCycles: shouldAvoidTwoCycles
+        });
+        if (!assignmentMap && shouldAvoidTwoCycles) {
+            assignmentMap = findDerangementAssignments(participantIds, allowed, {
+                avoidTwoCycles: false
+            });
+        }
     }
 
     if (!assignmentMap) {
@@ -3121,6 +3139,23 @@ async function executePreparedAdminAction(actionType, preparedPayload, actorUser
             });
             return { message: "Rodada encerrada e descartada." };
         }
+        if (String(round.status || "") === "indication") {
+            const recommendationCountRow = await dbGet(
+                `SELECT COUNT(*) AS total
+                 FROM recommendations
+                 WHERE round_id = ?`,
+                [roundId]
+            );
+            const recommendationCount = Number(recommendationCountRow?.total || 0);
+            if (recommendationCount <= 0) {
+                await deleteRoundCascade(roundId);
+                emitRoundChange("round_deleted", {
+                    roundId,
+                    actorUserId: Number(actorUserId || 0)
+                });
+                return { message: "Rodada encerrada e descartada." };
+            }
+        }
         await dbRun(
             "UPDATE rounds SET status = 'closed', closed_at = ? WHERE id = ?",
             [nowInSeconds(), roundId]
@@ -3277,7 +3312,7 @@ async function assertNicknameAvailable(nickname, excludeUserId = 0) {
 
     const inUsers = await nicknameExists(clean, excludeUserId);
     if (inUsers) {
-        throw new Error("Nickname ja esta em uso.");
+        throw new Error("Nickname já está em uso.");
     }
 }
 
@@ -3518,5 +3553,6 @@ initDb()
         console.error("Falha ao inicializar banco de dados.", error);
         process.exit(1);
     });
+
 
 

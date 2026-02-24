@@ -947,7 +947,10 @@ input[readonly] {
     color: var(--muted);
 }
 
-body[data-page="login"] {
+body[data-page="login"],
+body[data-page="register"],
+body[data-page="verify"],
+body[data-page="reset-password"] {
     position: relative;
     overflow-x: hidden;
 }
@@ -1011,7 +1014,13 @@ body[data-page="login"] {
 }
 
 body[data-page="login"] .auth-shell,
-body[data-page="login"] .site-footer {
+body[data-page="register"] .auth-shell,
+body[data-page="verify"] .auth-shell,
+body[data-page="reset-password"] .auth-shell,
+body[data-page="login"] .site-footer,
+body[data-page="register"] .site-footer,
+body[data-page="verify"] .site-footer,
+body[data-page="reset-password"] .site-footer {
     position: relative;
     z-index: 1;
 }

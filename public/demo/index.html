@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Clube do Jogo - Demonstração visual do projeto com vídeo e recursos implementados.">
+  <meta name="description" content="Clube do Jogo - Demonstração visual do projeto com vídeo, resumo técnico e áreas do sistema com screenshots.">
   <title>Clube do Jogo - Demo</title>
   <link rel="stylesheet" href="demo.css">
 </head>
@@ -21,112 +21,326 @@
       </div>
     </section>
 
-    <section class="readme-view">
-      <h2>Sobre o Projeto</h2>
-      <p>
-        O Clube do Jogo foi criado para grupos que gostam de compartilhar experiências de games.
-        Cada rodada define quem indica um jogo para quem, depois as recomendações são avaliadas em um plano naval (nota de A-J e 1-10).
-      </p>
+    <section class="project-summary" aria-labelledby="resumoTitulo">
+      <div class="section-head">
+        <h2 id="resumoTitulo">Resumo do Projeto</h2>
+        <p>
+          Plataforma web para rodadas de indicação de jogos com fluxo completo (sorteio, indicação, avaliação e fechamento),
+          recursos sociais e painel administrativo. Esta seção resume as técnicas empregadas e as funcionalidades implementadas.
+        </p>
+      </div>
 
-      <h3>Funcionalidades Principais</h3>
-      <ul>
-        <li>Autenticação com login/senha, verificação de email e recuperação de senha por link.</li>
-        <li>Login com Google (OAuth) com criação ou vinculação de conta automaticamente.</li>
-        <li>Rodadas com sorteio de pares, restrições de quem pode sair com quem e fases de indicação/nota.</li>
-        <li>Busca de jogos da Steam com preenchimento de nome, descrição e capa.</li>
-        <li>Comentários em recomendações com resposta, edição e exclusão.</li>
-        <li>Perfis com avatar, nickname e histórico de indicações feitas/recebidas.</li>
-      </ul>
+      <div class="summary-grid">
+        <article class="summary-card">
+          <h3>Técnicas empregadas</h3>
+          <ul>
+            <li>Backend em Node.js + Express com rotas web/API centralizadas.</li>
+            <li>Banco SQLite para persistência local das rodadas, usuários, comentários e avaliações.</li>
+            <li>Sessões com <code>express-session</code> + <code>connect-sqlite3</code>.</li>
+            <li>Autenticação híbrida: email/senha + Google OAuth (vinculação/criação automática).</li>
+            <li>Frontend em HTML, CSS e JavaScript puro (sem framework).</li>
+            <li>Atualizações em tempo real por SSE (<code>EventSource</code>), sem polling contínuo no cliente.</li>
+            <li>Uploads com <code>multer</code> (avatars e capas) e metadados de jogos via Steam/RAWG.</li>
+            <li>Segurança com <code>helmet</code>, rate limit, cookies HTTP-only e hash de senha com <code>bcrypt</code>.</li>
+            <li>E-mail transacional com <code>nodemailer</code> para verificação e recuperação de senha.</li>
+          </ul>
+        </article>
 
-      <h3>Arquitetura e Stack</h3>
-      <ul>
-        <li>Backend: Node.js + Express.</li>
-        <li>Banco de dados: SQLite.</li>
-        <li>Sessões: express-session + connect-sqlite3.</li>
-        <li>Frontend: HTML, CSS e JavaScript puro.</li>
-      </ul>
-
-      <h3>Segurança</h3>
-      <ul>
-        <li>Headers com Helmet, validação de origem e rate limit nas rotas sensíveis.</li>
-        <li>Hash de senha com bcrypt e controle de sessão por cookie HTTP-only.</li>
-        <li>Fluxo de confirmação por email para cadastro e troca de senha.</li>
-      </ul>
+        <article class="summary-card">
+          <h3>Features implementadas</h3>
+          <ul>
+            <li>Cadastro com verificação por e-mail e login com e-mail/senha.</li>
+            <li>Login com Google (OAuth) e fluxo de conta vinculada.</li>
+            <li>Redefinição de senha (perfil e "esqueci minha senha").</li>
+            <li>Perfis com avatar, nickname, conquistas e histórico de atividade.</li>
+            <li>Rodadas com fases: draft, reveal, indication, rating, closed e reopened.</li>
+            <li>Sorteio de pares com participantes e restrições de combinação.</li>
+            <li>Indicação de jogos com busca, preenchimento de dados e capa.</li>
+            <li>Avaliação em Plano Naval (grade de coordenadas) com notas por jogo.</li>
+            <li>Comentários em recomendações/perfis com resposta, edição, exclusão e curtidas.</li>
+            <li>Painel administrativo (usuários, rodadas, conquistas, pendências e sugestões).</li>
+            <li>Conquistas por participação e critérios de gênero/atributos.</li>
+            <li>Eventos em tempo real para rodada e painel administrativo.</li>
+          </ul>
+        </article>
+      </div>
     </section>
 
-    <section class="gallery-wrap" aria-label="Capturas de tela do sistema">
-      <div class="gallery-head">
-        <h2>Screenshots</h2>
-        <p>Carrossel automático (troca a cada 5 segundos).</p>
+    <section class="areas-showcase" aria-labelledby="areasTitulo">
+      <div class="section-head">
+        <h2 id="areasTitulo">Áreas do Site</h2>
+        <p>
+          Abaixo, a demonstração foi organizada por área do sistema. Cada bloco traz screenshots em carrossel e um resumo
+          do que acontece naquela parte da aplicação.
+        </p>
       </div>
 
-      <div class="carousel" id="shotsCarousel" data-interval="5000">
-        <button class="carousel-nav prev" id="carouselPrev" type="button" aria-label="Imagem anterior">&#10094;</button>
-        <button class="carousel-nav next" id="carouselNext" type="button" aria-label="Próxima imagem">&#10095;</button>
+      <article class="area-section" id="area-login">
+        <h3>Login</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="6000" data-label="Login">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
 
-        <figure class="carousel-slide is-active">
-          <img src="screenshots/login.jpg" alt="Tela de login">
-          <figcaption>Login</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/home.jpg" alt="Home do projeto">
-          <figcaption>Home</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/home2.jpg" alt="Home com feed de rodadas">
-          <figcaption>Home - Feed</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/home3.jpg" alt="Home com destaques">
-          <figcaption>Home - Destaques</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/sorteio.jpg" alt="Tela de sorteio da rodada">
-          <figcaption>Sorteio</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/sorteio2.jpg" alt="Tela de sorteio com participantes">
-          <figcaption>Sorteio - Participantes</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/sorteio3.jpg" alt="Tela de sorteio com resultados">
-          <figcaption>Sorteio - Resultado</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/indicacao1.jpg" alt="Tela de indicação de jogo 1">
-          <figcaption>Indicação 1</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/indicacao2.jpg" alt="Tela de indicação de jogo 2">
-          <figcaption>Indicação 2</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/indicacao3.jpg" alt="Tela de indicação de jogo 3">
-          <figcaption>Indicação 3</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/indicacao4.jpg" alt="Tela de indicação de jogo 4">
-          <figcaption>Indicação 4</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/indicacao5.jpg" alt="Tela de indicação de jogo 5">
-          <figcaption>Indicação 5</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/notanaval1.jpg" alt="Tela de nota naval 1">
-          <figcaption>Nota Naval 1</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/notanaval2.jpg" alt="Tela de nota naval 2">
-          <figcaption>Nota Naval 2</figcaption>
-        </figure>
-        <figure class="carousel-slide">
-          <img src="screenshots/perfil.jpg" alt="Tela de perfil do usuário">
-          <figcaption>Perfil</figcaption>
-        </figure>
-      </div>
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/login.jpg" alt="Tela de login do Clube do Jogo" loading="lazy">
+              <figcaption>Login</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            Porta de entrada da aplicação com autenticação por e-mail/senha e suporte a login social.
+            O foco aqui é acesso rápido e seguro ao sistema.
+          </p>
+          <ul>
+            <li>Autenticação tradicional com sessão persistida no backend.</li>
+            <li>Integração com Google OAuth para login alternativo.</li>
+            <li>Base para fluxos de recuperação de senha e verificação de conta.</li>
+          </ul>
+        </div>
+      </article>
 
-      <div class="carousel-dots" id="carouselDots" aria-hidden="true"></div>
+      <article class="area-section" id="area-cadastro">
+        <h3>Cadastro</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="6000" data-label="Cadastro">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
+
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/cadastro.jpg" alt="Tela de cadastro de usuário" loading="lazy">
+              <figcaption>Cadastro</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            Fluxo de criação de conta para novos participantes do clube, conectado à etapa de validação por e-mail.
+          </p>
+          <ul>
+            <li>Criação de conta com dados básicos do usuário.</li>
+            <li>Integração com verificação de e-mail para ativação da conta.</li>
+            <li>Preparação para perfil, avatar e participação nas rodadas.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="area-section" id="area-home">
+        <h3>Home</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="5000" data-label="Home">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
+
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/home1.jpg" alt="Tela inicial do sistema com visão geral das rodadas" loading="lazy">
+              <figcaption>Home - Visão Geral</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/home2.jpg" alt="Tela inicial com cards e status de rodada" loading="lazy">
+              <figcaption>Home - Status e Ações</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            A home centraliza o estado atual da experiência: rodada em andamento, acessos rápidos e informações relevantes
+            para o participante continuar o fluxo sem se perder.
+          </p>
+          <ul>
+            <li>Resumo do andamento da rodada e fase atual.</li>
+            <li>Acesso rápido para indicação, avaliação e perfil.</li>
+            <li>Feedback visual para eventos e atualizações em tempo real.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="area-section" id="area-sorteio">
+        <h3>Sorteio</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="5000" data-label="Sorteio">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
+
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/sorteio1.jpg" alt="Tela de configuração da rodada e sorteio" loading="lazy">
+              <figcaption>Sorteio - Configuração</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/sorteio2.jpg" alt="Tela de participantes e regras de sorteio" loading="lazy">
+              <figcaption>Sorteio - Participantes e Restrições</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/sorteio3.jpg" alt="Tela com resultado do sorteio da rodada" loading="lazy">
+              <figcaption>Sorteio - Resultado</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            Área responsável por montar a rodada antes das recomendações: definição de participantes, restrições e geração
+            dos pares de indicação.
+          </p>
+          <ul>
+            <li>Fase <code>draft</code> para preparação da rodada.</li>
+            <li>Configuração de participantes e restrições de combinação.</li>
+            <li>Revelação dos pares e transição para próximas fases do fluxo.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="area-section" id="area-indicacao">
+        <h3>Indicação</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="4500" data-label="Indicação">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
+
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/indicacao1.jpg" alt="Tela de indicação de jogo passo 1" loading="lazy">
+              <figcaption>Indicação - Início</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/indicacao2.jpg" alt="Tela de indicação com busca de jogos" loading="lazy">
+              <figcaption>Indicação - Busca</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/indicacao3.jpg" alt="Tela de indicação com preenchimento de detalhes" loading="lazy">
+              <figcaption>Indicação - Detalhes</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/indicacao4.jpg" alt="Tela de indicação com conteúdo adicional" loading="lazy">
+              <figcaption>Indicação - Conteúdo</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/indicacao5.jpg" alt="Tela de indicação finalizada" loading="lazy">
+              <figcaption>Indicação - Finalização</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            Tela principal para recomendar um jogo ao par sorteado. O fluxo cobre escolha do jogo, preenchimento de
+            informações e contexto da recomendação.
+          </p>
+          <ul>
+            <li>Busca de jogos por integração com metadados (Steam/RAWG).</li>
+            <li>Preenchimento de descrição, motivo da indicação e mídia/capa.</li>
+            <li>Persistência da recomendação e continuidade do acompanhamento da rodada.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="area-section" id="area-avaliacao">
+        <h3>Avaliação</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="5000" data-label="Avaliação">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
+
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/avaliacao1.jpg" alt="Tela de avaliação no plano naval" loading="lazy">
+              <figcaption>Avaliação - Plano Naval</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/avaliacao2.jpg" alt="Tela de avaliação com seleção de coordenadas" loading="lazy">
+              <figcaption>Avaliação - Notas por Coordenada</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/avaliacao3.jpg" alt="Tela de avaliação com resultados e organização visual" loading="lazy">
+              <figcaption>Avaliação - Resultado</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            A etapa de avaliação usa o formato de Plano Naval para registrar notas de forma visual, com coordenadas e
+            organização das recomendações na grade.
+          </p>
+          <ul>
+            <li>Fase <code>rating</code> com interface visual baseada em coordenadas.</li>
+            <li>Registro de notas e posicionamento das recomendações na grade.</li>
+            <li>Visão consolidada para fechamento da rodada e histórico.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="area-section" id="area-perfil">
+        <h3>Perfil</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="4500" data-label="Perfil">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
+
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/perfil1.jpg" alt="Tela de perfil com visão geral do usuário" loading="lazy">
+              <figcaption>Perfil - Visão Geral</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/perfil2.jpg" alt="Tela de perfil com histórico e estatísticas" loading="lazy">
+              <figcaption>Perfil - Histórico</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/perfil3.jpg" alt="Tela de perfil com comentários e interação social" loading="lazy">
+              <figcaption>Perfil - Interações</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/perfil4.jpg" alt="Tela de perfil com conquistas e progresso" loading="lazy">
+              <figcaption>Perfil - Conquistas</figcaption>
+            </figure>
+            <figure class="carousel-slide">
+              <img src="screenshots/perfil5.jpg" alt="Tela de perfil com detalhes adicionais" loading="lazy">
+              <figcaption>Perfil - Detalhes</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            O perfil reúne identidade do usuário e histórico social no clube, incluindo atividade, conquistas e interações
+            com recomendações e comentários.
+          </p>
+          <ul>
+            <li>Avatar, nickname e informações públicas do participante.</li>
+            <li>Histórico de indicações feitas/recebidas e atividade recente.</li>
+            <li>Comentários, curtidas e acompanhamento de conquistas.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="area-section" id="area-admin">
+        <h3>Administração</h3>
+        <div class="carousel-shell">
+          <div class="carousel" data-interval="6000" data-label="Administração">
+            <button class="carousel-nav prev" type="button" aria-label="Imagem anterior">&#10094;</button>
+            <button class="carousel-nav next" type="button" aria-label="Próxima imagem">&#10095;</button>
+
+            <figure class="carousel-slide is-active">
+              <img src="screenshots/adm.jpg" alt="Painel administrativo do sistema" loading="lazy">
+              <figcaption>Painel Administrativo</figcaption>
+            </figure>
+          </div>
+          <div class="carousel-dots" aria-hidden="true"></div>
+        </div>
+        <div class="area-description">
+          <p>
+            Área de gestão para dono/moderadores acompanharem usuários, rodadas, pendências e elementos administrativos
+            que sustentam o funcionamento do clube.
+          </p>
+          <ul>
+            <li>Gestão de usuários, rodadas e conquistas.</li>
+            <li>Acompanhamento de pendências e solicitações.</li>
+            <li>Visão operacional para manutenção do fluxo do sistema.</li>
+          </ul>
+        </div>
+      </article>
     </section>
   </main>
 

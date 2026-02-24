@@ -98,6 +98,7 @@ let serverClockOffsetSeconds = 0;
 const appBootOverlayStartedAt = Date.now();
 let appBootOverlayDone = false;
 let loginAccessoriesAnimationTimer = 0;
+const loginAccessoriesEnabledPages = new Set(["login", "register", "verify", "reset-password"]);
 
 function updateServerClockOffsetFromEpochSeconds(epochSeconds) {
     const parsed = Number(epochSeconds || 0);
@@ -176,7 +177,7 @@ function clearLoginAccessoriesAnimation() {
 
 function setupLoginAccessoriesAnimation() {
     clearLoginAccessoriesAnimation();
-    if (page !== "login") return;
+    if (!loginAccessoriesEnabledPages.has(page)) return;
     const accessories = Array.from(document.querySelectorAll(".login-accessory"));
     if (!accessories.length) return;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -8394,10 +8395,8 @@ async function init() {
         setupGoogleButtonsLoading();
     }
 
-    if (page === "login") {
-        setupLoginAccessoriesAnimation();
-        await handleLogin();
-    }
+    setupLoginAccessoriesAnimation();
+    if (page === "login") await handleLogin();
     if (page === "register") await handleRegister();
     if (page === "verify") await handleVerifyEmail();
     if (page === "forgot-password") await handleForgotPassword();

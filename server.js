@@ -15,11 +15,15 @@ const rateLimit = require("express-rate-limit");
 require("dotenv").config();
 
 const app = express();
+app.set("trust proxy", Number(process.env.TRUST_PROXY ?? 1));
 const port = Number(process.env.PORT || 3000);
 const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
 const OWNER_EMAIL = "gabrielmicaelhenrique@gmail.com";
 const BRAND_NAME = "Clube do Jogo";
 const isProduction = process.env.NODE_ENV === "production";
+const sessionCookieSecureEnv = String(process.env.SESSION_COOKIE_SECURE || "").trim().toLowerCase();
+const sessionCookieSameSiteEnv = String(process.env.SESSION_COOKIE_SAMESITE || "").trim().toLowerCase();
+const sessionCookieDomain = String(process.env.SESSION_COOKIE_DOMAIN || "").trim();
 const publicDir = path.join(__dirname, "public");
 const ACHIEVEMENT_DEFINITIONS = [
     {
@@ -270,6 +274,20 @@ const parseOrigin = (value) => {
         return null;
     }
 };
+
+function parseBooleanEnv(value, fallback = false) {
+    if (value === "true" || value === "1") return true;
+    if (value === "false" || value === "0") return false;
+    return fallback;
+}
+
+function normalizeSameSite(value, fallback = "lax") {
+    if (["lax", "strict", "none"].includes(value)) return value;
+    return fallback;
+}
+
+const sessionCookieSecure = parseBooleanEnv(sessionCookieSecureEnv, isProduction);
+const sessionCookieSameSite = normalizeSameSite(sessionCookieSameSiteEnv || "lax");
 
 const publicAppUrl = parseOrigin(process.env.PUBLIC_APP_URL || process.env.PUBLIC_BASE_URL || "");
 
@@ -3322,7 +3340,6 @@ if (!sessionSecret) {
 }
 
 app.disable("x-powered-by");
-app.set("trust proxy", 1);
 app.use(
     helmet({
         contentSecurityPolicy: {
@@ -3408,8 +3425,9 @@ app.use(
         saveUninitialized: false,
         cookie: {
             httpOnly: true,
-            sameSite: "lax",
-            secure: isProduction,
+            sameSite: sessionCookieSameSite,
+            secure: sessionCookieSecure,
+            ...(sessionCookieDomain ? { domain: sessionCookieDomain } : {}),
             maxAge: 1000 * 60 * 60 * 24 * 7
         }
     })

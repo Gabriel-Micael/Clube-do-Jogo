@@ -3346,11 +3346,16 @@ app.use(
             useDefaults: true,
             directives: {
                 defaultSrc: ["'self'"],
-                scriptSrc: ["'self'"],
+                scriptSrc: ["'self'", "https://static.cloudflareinsights.com"],
                 styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
                 fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
                 imgSrc: ["'self'", "data:", "blob:", "https:"],
-                connectSrc: ["'self'", "https://ca.account.sony.com"],
+                connectSrc: [
+                    "'self'",
+                    "https://ca.account.sony.com",
+                    "https://cloudflareinsights.com",
+                    "https://static.cloudflareinsights.com"
+                ],
                 objectSrc: ["'none'"],
                 frameAncestors: ["'none'"],
                 baseUri: ["'self'"],
